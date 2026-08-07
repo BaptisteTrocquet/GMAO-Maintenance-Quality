@@ -107,7 +107,7 @@ export async function listApiKeys(input: { organizationId: string; siteId: strin
     where: {
       entityType: "PublicMaintenanceRequestToken",
       action: "CREATED",
-      afterJson: { contains: `\"credentialKind\":\"${API_KEY_KIND}\"` },
+      afterJson: { contains: `"credentialKind":"${API_KEY_KIND}"` },
     },
     select: { entityId: true },
   });
