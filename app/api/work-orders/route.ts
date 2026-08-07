@@ -67,6 +67,13 @@ export async function POST(request: Request) {
     if (!asset) return apiError(404, "ASSET_NOT_FOUND", "Asset not found in tenant scope");
   }
 
-  const { organizationId: _organizationId, siteId: _siteId, ...data } = parsed.data;
+  const data = {
+    assetId: parsed.data.assetId,
+    title: parsed.data.title,
+    description: parsed.data.description,
+    type: parsed.data.type,
+    priority: parsed.data.priority,
+  };
+
   return apiData(await db.workOrder.create({ data: { ...data, requesterId: auth.session.user.id, number: await nextNumber() } }), { status: 201 });
 }
