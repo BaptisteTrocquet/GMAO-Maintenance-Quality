@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { db } from "@/lib/db";
 import { advanceCalendarDue, type CalendarFrequencyUnit } from "@/lib/maintenance/calendar";
+import { calculateMaintenanceForecast } from "@/lib/maintenance/forecast";
 
 function formatDate(value: Date | null) {
   return value ? value.toISOString().slice(0, 10) : "—";
@@ -28,6 +29,26 @@ export default async function MaintenancePage() {
     }),
   ]);
   const now = new Date();
+  const forecast = calculateMaintenanceForecast({
+    now,
+    horizonDays: 30,
+    plans,
+    workOrders: workOrders
+      .filter(
+        (workOrder) =>
+          workOrder.type === "PREVENTIVE" &&
+          workOrder.status !== "COMPLETED" &&
+          workOrder.status !== "CANCELLED" &&
+          workOrder.dueAt !== null,
+      )
+      .map((workOrder) => ({
+        id: workOrder.id,
+        number: workOrder.number,
+        title: workOrder.title,
+        dueAt: workOrder.dueAt,
+        asset: workOrder.asset ? { code: workOrder.asset.code } : null,
+      })),
+  });
 
   return (
     <>
@@ -37,6 +58,75 @@ export default async function MaintenancePage() {
           <div className="muted">Corrective and preventive maintenance.</div>
         </div>
       </div>
+
+      <div className="section card">
+        <h2>Maintenance health</h2>
+        <div className="responsive-table">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Score</th>
+                <th>Status</th>
+                <th>Overdue plans</th>
+                <th>Overdue preventive WOs</th>
+                <th>Due within 30 days / soon</th>
+                <th>Paused plans</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>{forecast.health.score}/100</strong></td>
+                <td><span className="badge">{forecast.health.status}</span></td>
+                <td>{forecast.health.overduePlans}</td>
+                <td>{forecast.health.overdueWorkOrders}</td>
+                <td>{forecast.health.dueSoon}</td>
+                <td>{forecast.health.pausedPlans}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div className="muted">
+          Score starts at 100 and applies transparent penalties for overdue plans, overdue preventive work orders and near-term due work.
+        </div>
+      </div>
+
+      <div className="section card">
+        <h2>30-day preventive forecast</h2>
+        <div className="responsive-table">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>State</th>
+                <th>Type</th>
+                <th>Asset</th>
+                <th>Item</th>
+                <th>Due / threshold</th>
+              </tr>
+            </thead>
+            <tbody>
+              {forecast.entries.slice(0, 10).map((entry) => (
+                <tr key={`${entry.kind}-${entry.id}`}>
+                  <td><span className="badge">{entry.state}</span></td>
+                  <td>{entry.kind}</td>
+                  <td>{entry.assetCode ?? "—"}</td>
+                  <td>{entry.title}</td>
+                  <td>
+                    {entry.kind === "METER_PLAN"
+                      ? `${formatMeterValue(entry.currentMeterValue, entry.meterUnit)} / ${formatMeterValue(entry.dueMeterValue, entry.meterUnit)}`
+                      : formatDate(entry.dueAt)}
+                  </td>
+                </tr>
+              ))}
+              {forecast.entries.length === 0 ? (
+                <tr>
+                  <td colSpan={5}>No preventive maintenance items in the current forecast.</td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
       <div className="section card">
         <h2>Work orders</h2>
         <div className="responsive-table">
