@@ -8,7 +8,25 @@ A central goal is to let an organization integrate selected GMAO capabilities in
 The simplest integration: link from the existing site to the full application. Later SSO can remove the second login.
 
 ### Level B — iframe widgets
-Fastest general-purpose embed. The iframe runtime itself is part of E10; it will use the same scoped public-request capability described below rather than an administrator credential.
+Fastest general-purpose embed. The maintenance-request iframe is available at `/embed/maintenance-request` and uses scoped `EMBEDDED` request tokens rather than an administrator credential.
+
+Example:
+
+```html
+<iframe
+  title="Maintenance request"
+  src="https://gmao.example.test/embed/maintenance-request?tokenId=TOKEN_ID#token=SCOPED_TOKEN_SECRET"
+  referrerpolicy="strict-origin"
+  sandbox="allow-scripts allow-same-origin"
+  style="width:100%;max-width:720px;height:650px;border:0"
+></iframe>
+```
+
+Use an exact allowed origin matching the host page. The non-secret token id is in the query string; the scoped secret is in the URL fragment, which browsers do not send in the iframe HTTP request. The iframe reads it once, removes the fragment from visible history, and submits through the proof-bound `/api/v1/embed/maintenance-requests` endpoint.
+
+The server validates the browser-supplied parent `Referer` before rendering the iframe and signs a short-lived proof binding `tokenId + parent origin + expiry`. The iframe API requires both that proof and the scoped bearer secret. Copying an iframe URL to a different parent origin therefore does not create a valid embed session.
+
+The iframe response applies a restrictive CSP with dynamic `frame-ancestors`, no inline scripts, no inline styles, no object/embed content and `base-uri 'none'`. A complete static host example lives in `examples/maintenance-request-iframe.html`.
 
 ### Level C — script-loader widgets
 Target developer experience:
