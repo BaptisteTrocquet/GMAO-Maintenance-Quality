@@ -6,14 +6,17 @@ import { authenticateRequest } from "@/lib/auth/request-auth";
 
 const createSchema = z.object({
   organizationId: z.string().min(1),
-  code: z.string().min(1).max(80),
-  title: z.string().min(1).max(240),
-  type: z.string().min(1).max(80),
-  owner: z.string().optional(),
-  description: z.string().optional(),
+  code: z.string().trim().min(1).max(80),
+  title: z.string().trim().min(1).max(240),
+  type: z.string().trim().min(1).max(80),
+  owner: z.string().trim().max(200).nullable().optional(),
+  description: z.string().max(5000).nullable().optional(),
 });
 
-function authorize(scope: Parameters<typeof assertPermission>[0], permission: "document:read" | "document:manage") {
+function authorize(
+  scope: Parameters<typeof assertPermission>[0],
+  permission: "document:read" | "document:manage",
+) {
   try {
     assertPermission(scope, permission);
     return null;
@@ -38,9 +41,26 @@ export async function GET(request: Request) {
   const denied = authorize(auth.tenant.scope, "document:read");
   if (denied) return denied;
 
+  const q = url.searchParams.get("q")?.trim();
+  const type = url.searchParams.get("type")?.trim();
+  const owner = url.searchParams.get("owner")?.trim();
+
   return apiData(
     await db.document.findMany({
-      where: { organizationId },
+      where: {
+        organizationId,
+        ...(type ? { type } : {}),
+        ...(owner ? { owner } : {}),
+        ...(q
+          ? {
+              OR: [
+                { code: { contains: q, mode: "insensitive" } },
+                { title: { contains: q, mode: "insensitive" } },
+                { description: { contains: q, mode: "insensitive" } },
+              ],
+            }
+          : {}),
+      },
       include: {
         revisions: { orderBy: { createdAt: "desc" } },
         assetDocuments: {
@@ -54,7 +74,14 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const parsed = createSchema.safeParse(await request.json());
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return apiError(400, "INVALID_JSON", "Request body must be valid JSON");
+  }
+
+  const parsed = createSchema.safeParse(body);
   if (!parsed.success) {
     return apiError(400, "INVALID_PAYLOAD", "Invalid document payload", parsed.error.flatten());
   }
@@ -79,8 +106,18 @@ export async function POST(request: Request) {
       code: parsed.data.code,
       title: parsed.data.title,
       type: parsed.data.type,
-      owner: parsed.data.owner,
-      description: parsed.data.description,
+      owner: parsed.data.owner ?? null,
+      description: parsed.data.description ?? null,
+    },
+  });
+
+  await db.auditLog.create({
+    data: {
+      actorId: auth.session.user.id,
+      entityType: "Document",
+      entityId: row.id,
+      action: "CREATED",
+      afterJson: JSON.stringify(row),
     },
   });
 
