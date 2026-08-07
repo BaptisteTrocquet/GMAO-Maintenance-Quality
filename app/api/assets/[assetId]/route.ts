@@ -19,6 +19,7 @@ const updateSchema = z.object({
   model: z.string().max(150).nullable().optional(),
   serialNumber: z.string().max(150).nullable().optional(),
   status: z.enum(["ACTIVE", "INACTIVE", "OUT_OF_SERVICE", "DECOMMISSIONED"]).optional(),
+  statusNote: z.string().max(500).nullable().optional(),
   criticality: z.enum(["LOW", "MEDIUM", "HIGH", "CRITICAL"]).optional(),
   installedAt: z.coerce.date().nullable().optional(),
   commissionedAt: z.coerce.date().nullable().optional(),
