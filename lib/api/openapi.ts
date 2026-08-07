@@ -1,4 +1,19 @@
-export const PUBLIC_API_VERSION = "1.2.0";
+export const PUBLIC_API_VERSION = "1.3.0";
+
+const tokenIdParameter = {
+  name: "tokenId",
+  in: "query",
+  required: true,
+  schema: { type: "string", minLength: 1 },
+} as const;
+
+const originParameter = {
+  name: "Origin",
+  in: "header",
+  required: false,
+  schema: { type: "string", format: "uri" },
+  description: "Required for EMBEDDED tokens and validated against exact allowed origins.",
+} as const;
 
 export const publicOpenApiSpec = {
   openapi: "3.1.0",
@@ -18,27 +33,17 @@ export const publicOpenApiSpec = {
       name: "Public assets",
       description: "Read a minimal site-scoped asset card using an integration token with asset:read capability.",
     },
+    {
+      name: "Public controlled documents",
+      description: "Read only effective, integrity-verified controlled documents applicable to the scoped token site.",
+    },
   ],
   paths: {
     "/api/v1/public/maintenance-requests": {
       options: {
         tags: ["Public maintenance requests"],
         summary: "Validate CORS preflight for a scoped request token",
-        parameters: [
-          {
-            name: "tokenId",
-            in: "query",
-            required: true,
-            schema: { type: "string", minLength: 1 },
-            description: "Non-secret public request token identifier.",
-          },
-          {
-            name: "Origin",
-            in: "header",
-            required: true,
-            schema: { type: "string", format: "uri" },
-          },
-        ],
+        parameters: [tokenIdParameter, { ...originParameter, required: true }],
         responses: {
           "204": { description: "Origin is allowed for the active token." },
           "400": { description: "tokenId or Origin is missing." },
@@ -53,26 +58,14 @@ export const publicOpenApiSpec = {
         operationId: "createPublicMaintenanceRequestV1",
         security: [{ scopedPublicRequestToken: [] }],
         parameters: [
-          {
-            name: "tokenId",
-            in: "query",
-            required: true,
-            schema: { type: "string", minLength: 1 },
-            description: "Non-secret token identifier paired with the bearer secret.",
-          },
+          tokenIdParameter,
           {
             name: "Idempotency-Key",
             in: "header",
             required: true,
             schema: { type: "string", minLength: 8, maxLength: 200 },
           },
-          {
-            name: "Origin",
-            in: "header",
-            required: false,
-            schema: { type: "string", format: "uri" },
-            description: "Required for EMBEDDED tokens and validated against exact allowed origins.",
-          },
+          originParameter,
         ],
         requestBody: {
           required: true,
@@ -93,19 +86,11 @@ export const publicOpenApiSpec = {
         responses: {
           "201": {
             description: "Maintenance request created.",
-            content: {
-              "application/json": {
-                schema: { $ref: "#/components/schemas/PublicMaintenanceRequestResult" },
-              },
-            },
+            content: { "application/json": { schema: { $ref: "#/components/schemas/PublicMaintenanceRequestResult" } } },
           },
           "200": {
             description: "Idempotent replay; original work order and trackingId returned.",
-            content: {
-              "application/json": {
-                schema: { $ref: "#/components/schemas/PublicMaintenanceRequestResult" },
-              },
-            },
+            content: { "application/json": { schema: { $ref: "#/components/schemas/PublicMaintenanceRequestResult" } } },
           },
           "400": { $ref: "#/components/responses/BadRequest" },
           "401": { $ref: "#/components/responses/Unauthorized" },
@@ -120,10 +105,7 @@ export const publicOpenApiSpec = {
       options: {
         tags: ["Public maintenance requests"],
         summary: "Validate CORS preflight for request-status lookup",
-        parameters: [
-          { name: "tokenId", in: "query", required: true, schema: { type: "string", minLength: 1 } },
-          { name: "Origin", in: "header", required: true, schema: { type: "string", format: "uri" } },
-        ],
+        parameters: [tokenIdParameter, { ...originParameter, required: true }],
         responses: {
           "204": { description: "Origin is allowed for the active token." },
           "400": { description: "tokenId or Origin is missing." },
@@ -138,24 +120,14 @@ export const publicOpenApiSpec = {
         operationId: "getPublicMaintenanceRequestStatusV1",
         security: [{ scopedPublicRequestToken: [] }],
         parameters: [
-          { name: "tokenId", in: "query", required: true, schema: { type: "string", minLength: 1 } },
+          tokenIdParameter,
           { name: "trackingId", in: "query", required: true, schema: { type: "string", minLength: 1 } },
-          {
-            name: "Origin",
-            in: "header",
-            required: false,
-            schema: { type: "string", format: "uri" },
-            description: "Required for EMBEDDED tokens and validated against exact allowed origins.",
-          },
+          originParameter,
         ],
         responses: {
           "200": {
             description: "Minimal public work-order status.",
-            content: {
-              "application/json": {
-                schema: { $ref: "#/components/schemas/PublicMaintenanceStatusResult" },
-              },
-            },
+            content: { "application/json": { schema: { $ref: "#/components/schemas/PublicMaintenanceStatusResult" } } },
           },
           "400": { $ref: "#/components/responses/BadRequest" },
           "401": { $ref: "#/components/responses/Unauthorized" },
@@ -170,10 +142,7 @@ export const publicOpenApiSpec = {
       options: {
         tags: ["Public assets"],
         summary: "Validate CORS preflight for asset-card lookup",
-        parameters: [
-          { name: "tokenId", in: "query", required: true, schema: { type: "string", minLength: 1 } },
-          { name: "Origin", in: "header", required: true, schema: { type: "string", format: "uri" } },
-        ],
+        parameters: [tokenIdParameter, { ...originParameter, required: true }],
         responses: {
           "204": { description: "Origin is allowed and the active token has asset:read." },
           "400": { description: "tokenId or Origin is missing." },
@@ -188,28 +157,67 @@ export const publicOpenApiSpec = {
         operationId: "getPublicAssetCardV1",
         security: [{ scopedPublicRequestToken: [] }],
         parameters: [
-          { name: "tokenId", in: "query", required: true, schema: { type: "string", minLength: 1 } },
+          tokenIdParameter,
           { name: "assetCode", in: "query", required: true, schema: { type: "string", minLength: 1, maxLength: 50 } },
-          {
-            name: "Origin",
-            in: "header",
-            required: false,
-            schema: { type: "string", format: "uri" },
-            description: "Required for EMBEDDED tokens and validated against exact allowed origins.",
-          },
+          originParameter,
         ],
         responses: {
           "200": {
             description: "Minimal public asset card.",
-            content: {
-              "application/json": { schema: { $ref: "#/components/schemas/PublicAssetCardResult" } },
-            },
+            content: { "application/json": { schema: { $ref: "#/components/schemas/PublicAssetCardResult" } } },
           },
           "400": { $ref: "#/components/responses/BadRequest" },
           "401": { $ref: "#/components/responses/Unauthorized" },
           "403": { $ref: "#/components/responses/Forbidden" },
           "404": { description: "Asset is not available in the scoped token site." },
           "429": { description: "Scoped token exceeded its hourly asset-card lookup limit." },
+        },
+      },
+    },
+    "/api/v1/public/documents": {
+      options: {
+        tags: ["Public controlled documents"],
+        summary: "Validate CORS preflight for controlled-document lookup",
+        parameters: [tokenIdParameter, { ...originParameter, required: true }],
+        responses: {
+          "204": { description: "Origin is allowed and the active token has document:read." },
+          "400": { description: "tokenId or Origin is missing." },
+          "403": { description: "Token is inactive, lacks document:read, or the origin is not allowed." },
+        },
+      },
+      get: {
+        tags: ["Public controlled documents"],
+        summary: "Read the effective controlled copy applicable to the token site",
+        description:
+          "Requires document:read. documentCode must be applicable to at least one non-archived asset in the token site. The server resolves the effective revision at asOf, verifies stored-file SHA-256 integrity, audits issuance and returns only that controlled binary.",
+        operationId: "getPublicControlledDocumentV1",
+        security: [{ scopedPublicRequestToken: [] }],
+        parameters: [
+          tokenIdParameter,
+          { name: "documentCode", in: "query", required: true, schema: { type: "string", minLength: 1 } },
+          { name: "asOf", in: "query", required: false, schema: { type: "string", format: "date-time" } },
+          originParameter,
+        ],
+        responses: {
+          "200": {
+            description: "Integrity-verified effective controlled file.",
+            headers: {
+              "X-Controlled-Copy": { schema: { type: "string", const: "true" } },
+              "X-Document-Code": { schema: { type: "string" } },
+              "X-Document-Revision": { schema: { type: "string" } },
+              "X-Document-Effective-At": { schema: { type: "string" } },
+              "X-Content-SHA256": { schema: { type: "string", pattern: "^[a-fA-F0-9]{64}$" } },
+            },
+            content: {
+              "application/octet-stream": { schema: { type: "string", format: "binary" } },
+            },
+          },
+          "400": { $ref: "#/components/responses/BadRequest" },
+          "401": { $ref: "#/components/responses/Unauthorized" },
+          "403": { $ref: "#/components/responses/Forbidden" },
+          "404": { description: "Document is not site-applicable or no revision is effective at asOf." },
+          "409": { description: "The effective file is unavailable or failed integrity verification." },
+          "429": { description: "Scoped token exceeded its hourly controlled-document lookup limit." },
         },
       },
     },
@@ -316,9 +324,7 @@ export const publicOpenApiSpec = {
       PublicAssetCardResult: {
         type: "object",
         required: ["data"],
-        properties: {
-          data: { $ref: "#/components/schemas/PublicAssetCard" },
-        },
+        properties: { data: { $ref: "#/components/schemas/PublicAssetCard" } },
       },
       ApiError: {
         type: "object",
