@@ -76,7 +76,7 @@ describe("maintenance teams API", () => {
   });
 
   it("creates a site-scoped team from active maintenance members", async () => {
-    const response = await POST(request(), undefined as never);
+    const response = await POST(request());
 
     await expectStatus(response, 201);
     expect(mocks.membershipFindMany).toHaveBeenCalledWith({
@@ -104,7 +104,7 @@ describe("maintenance teams API", () => {
   it("rejects a member without valid maintenance access to the site", async () => {
     mocks.membershipFindMany.mockResolvedValue([]);
 
-    const response = await POST(request(), undefined as never);
+    const response = await POST(request());
 
     await expectStatus(response, 400);
     expect(mocks.teamCreate).not.toHaveBeenCalled();
@@ -113,7 +113,7 @@ describe("maintenance teams API", () => {
   it("rejects a duplicate team code within the site", async () => {
     mocks.teamFindFirst.mockResolvedValue({ id: "team-existing" });
 
-    const response = await POST(request(), undefined as never);
+    const response = await POST(request());
 
     await expectStatus(response, 409);
     expect(mocks.teamCreate).not.toHaveBeenCalled();
