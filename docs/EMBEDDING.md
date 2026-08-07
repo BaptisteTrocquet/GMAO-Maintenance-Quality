@@ -44,6 +44,24 @@ The asset-card iframe requires `asset:read` and is available at:
 
 Asset codes are resolved only inside the site bound to the token. The card exposes code, name, status, criticality, category, manufacturer/model, location and update time. It deliberately excludes description, serial number, internal IDs, work-order assignments and other internal maintenance data. Asset-card lookups are rate-limited and audited, including failed lookups, to reduce enumeration risk.
 
+The controlled-document iframe requires `document:read` and is available at:
+
+```html
+<iframe
+  title="Controlled document"
+  src="https://gmao.example.test/embed/controlled-document?tokenId=TOKEN_ID&documentCode=SOP-100#token=SCOPED_TOKEN_SECRET"
+  referrerpolicy="strict-origin"
+  sandbox="allow-scripts allow-same-origin"
+  style="width:100%;max-width:900px;height:760px;border:0"
+></iframe>
+```
+
+A document is exposed only when it is applicable to at least one non-archived asset in the site bound to the token. The server then reuses the E6 controlled-copy service: it resolves the revision effective at the optional `asOf` date, reads the stored file, verifies its SHA-256 digest and audits controlled-copy issuance. Missing effective revisions and failed file-integrity checks are never silently replaced by another revision.
+
+The viewer displays traceability metadata and always provides the verified controlled copy for download. It previews only PDF, PNG, JPEG and WebP blobs. Other file types remain downloadable but are not rendered inside the iframe. PDF preview is placed in a sandboxed nested frame; arbitrary object/embed content remains disabled by CSP. Failed and successful document-code lookups consume a 60/hour/token limit and are audited to reduce enumeration risk.
+
+Dynamic `assetCode`, `documentCode` and proof values are HTML-attribute escaped before iframe markup is emitted.
+
 ### Level C — script-loader widgets
 Target developer experience:
 
@@ -69,12 +87,13 @@ await gmao.workRequests.create({ assetCode, title, description });
 
 ## Versioned public API
 
-New integrations should target the stable versioned prefix `/api/v1`. Public operations include maintenance request creation/status and the `asset:read` asset-card endpoint:
+New integrations should target the stable versioned prefix `/api/v1`:
 
 ```text
 POST /api/v1/public/maintenance-requests?tokenId=<non-secret token id>
 GET  /api/v1/public/request-status?tokenId=<token id>&trackingId=<opaque tracking id>
 GET  /api/v1/public/assets?tokenId=<token id>&assetCode=<asset code>
+GET  /api/v1/public/documents?tokenId=<token id>&documentCode=<document code>&asOf=<optional ISO date>
 ```
 
 The pre-version endpoint `/api/public/maintenance-requests` remains available for backward compatibility and delegates to the same handler as v1. Compatibility tests prevent the two routes from drifting.
@@ -98,7 +117,7 @@ Supported capabilities are:
 - `maintenance:request:create` — submit a maintenance request
 - `maintenance:request:status` — read the minimal public status for a request created by the same token
 - `asset:read` — read minimal asset cards from the token's site
-- `document:read` — reserved for the controlled-document viewer contract
+- `document:read` — read effective, integrity-verified controlled documents applicable to the token's site
 - `kpi:read` — reserved for embeddable KPI cards
 
 Example token creation payload:
@@ -113,7 +132,8 @@ Example token creation payload:
   "scopes": [
     "maintenance:request:create",
     "maintenance:request:status",
-    "asset:read"
+    "asset:read",
+    "document:read"
   ],
   "expiresInDays": 30
 }

@@ -37,6 +37,23 @@ describe("public OpenAPI specification", () => {
     );
   });
 
+  it("documents the effective integrity-verified document:read contract", () => {
+    const route = publicOpenApiSpec.paths["/api/v1/public/documents"];
+    expect(route.get.operationId).toBe("getPublicControlledDocumentV1");
+    expect(route.get.description).toContain("document:read");
+    expect(route.get.description).toContain("effective revision");
+    expect(route.get.description).toContain("SHA-256");
+    expect(route.get.parameters).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "tokenId", in: "query", required: true }),
+        expect.objectContaining({ name: "documentCode", in: "query", required: true }),
+        expect.objectContaining({ name: "asOf", in: "query", required: false }),
+      ]),
+    );
+    expect(route.get.responses["200"].headers).toHaveProperty("X-Content-SHA256");
+    expect(route.get.responses).toHaveProperty("409");
+  });
+
   it("documents scoped bearer credentials rather than administrator secrets", () => {
     expect(publicOpenApiSpec.components.securitySchemes.scopedPublicRequestToken).toMatchObject({
       type: "http",
