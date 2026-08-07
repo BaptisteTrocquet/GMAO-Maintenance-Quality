@@ -48,6 +48,9 @@ jobs:
       - name: Apply schema to disposable database
         run: npx prisma db push
 
+      - name: Seed synthetic demo data
+        run: npm run prisma:seed
+
       - name: Database integration smoke check
         run: npm run test:db
 
