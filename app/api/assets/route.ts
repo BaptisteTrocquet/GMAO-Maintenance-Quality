@@ -16,13 +16,21 @@ const createSchema = z.object({
   code: z.string().min(1).max(50),
   name: z.string().min(1).max(200),
   description: z.string().optional(),
+  category: z.string().max(100).optional(),
+  manufacturer: z.string().max(150).optional(),
+  model: z.string().max(150).optional(),
+  serialNumber: z.string().max(150).optional(),
   criticality: z.enum(["LOW", "MEDIUM", "HIGH", "CRITICAL"]).optional(),
+  status: z.enum(["ACTIVE", "INACTIVE", "OUT_OF_SERVICE", "DECOMMISSIONED"]).optional(),
+  installedAt: z.coerce.date().optional(),
+  commissionedAt: z.coerce.date().optional(),
 });
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const organizationId = url.searchParams.get("organizationId");
   const siteId = url.searchParams.get("siteId");
+  const includeArchived = url.searchParams.get("includeArchived") === "true";
   if (!organizationId || !siteId) {
     return apiError(400, "INVALID_SCOPE", "organizationId and siteId are required");
   }
@@ -47,7 +55,7 @@ export async function GET(request: Request) {
 
   return apiData(
     await db.asset.findMany({
-      where: { siteId },
+      where: { siteId, ...(includeArchived ? {} : { archivedAt: null }) },
       include: { site: true, location: true, parentAsset: true },
     }),
   );
@@ -101,8 +109,26 @@ export async function POST(request: Request) {
     code: parsed.data.code,
     name: parsed.data.name,
     description: parsed.data.description,
+    category: parsed.data.category,
+    manufacturer: parsed.data.manufacturer,
+    model: parsed.data.model,
+    serialNumber: parsed.data.serialNumber,
+    status: parsed.data.status,
     criticality: parsed.data.criticality,
+    installedAt: parsed.data.installedAt,
+    commissionedAt: parsed.data.commissionedAt,
   };
 
-  return apiData(await db.asset.create({ data }), { status: 201 });
+  const created = await db.asset.create({ data });
+  await db.auditLog.create({
+    data: {
+      actorId: auth.session.user.id,
+      entityType: "Asset",
+      entityId: created.id,
+      action: "CREATED",
+      afterJson: JSON.stringify(created),
+    },
+  });
+
+  return apiData(created, { status: 201 });
 }
