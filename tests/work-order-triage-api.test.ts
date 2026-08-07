@@ -70,6 +70,11 @@ function request(body: unknown) {
 
 const params = { params: Promise.resolve({ workOrderId: "wo-1" }) };
 
+async function expectStatus(response: Response | undefined, status: number) {
+  expect(response).toBeDefined();
+  expect(response?.status).toBe(status);
+}
+
 describe("work order triage API", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -92,7 +97,7 @@ describe("work order triage API", () => {
       params,
     );
 
-    expect(response.status).toBe(200);
+    await expectStatus(response, 200);
     expect(mocks.workOrderUpdate).toHaveBeenCalledWith({
       where: { id: "wo-1" },
       data: expect.objectContaining({ status: "APPROVED" }),
@@ -122,7 +127,7 @@ describe("work order triage API", () => {
       params,
     );
 
-    expect(response.status).toBe(200);
+    await expectStatus(response, 200);
     expect(mocks.membershipFindFirst).toHaveBeenCalled();
     expect(mocks.workOrderUpdate).toHaveBeenCalledWith({
       where: { id: "wo-1" },
@@ -141,7 +146,7 @@ describe("work order triage API", () => {
       params,
     );
 
-    expect(response.status).toBe(403);
+    await expectStatus(response, 403);
     expect(mocks.workOrderUpdate).not.toHaveBeenCalled();
   });
 
@@ -158,7 +163,7 @@ describe("work order triage API", () => {
       params,
     );
 
-    expect(response.status).toBe(200);
+    await expectStatus(response, 200);
     expect(mocks.workOrderUpdate).toHaveBeenCalledWith({
       where: { id: "wo-1" },
       data: expect.objectContaining({ status: "IN_PROGRESS", startedAt: expect.any(Date) }),
@@ -174,7 +179,7 @@ describe("work order triage API", () => {
       params,
     );
 
-    expect(response.status).toBe(403);
+    await expectStatus(response, 403);
     expect(mocks.workOrderUpdate).not.toHaveBeenCalled();
   });
 
@@ -184,7 +189,7 @@ describe("work order triage API", () => {
       params,
     );
 
-    expect(response.status).toBe(409);
+    await expectStatus(response, 409);
     expect(mocks.workOrderUpdate).not.toHaveBeenCalled();
   });
 
@@ -195,7 +200,7 @@ describe("work order triage API", () => {
       params,
     );
 
-    expect(response.status).toBe(404);
+    await expectStatus(response, 404);
     expect(mocks.workOrderUpdate).not.toHaveBeenCalled();
   });
 });
