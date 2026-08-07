@@ -54,6 +54,15 @@ export async function POST(request: Request) {
   const site = await db.site.findFirst({ where: { id: parsed.data.siteId, organizationId: parsed.data.organizationId, active: true }, select: { id: true } });
   if (!site) return apiError(404, "SITE_NOT_FOUND", "Site not found");
 
-  const { organizationId: _organizationId, ...data } = parsed.data;
+  const data = {
+    siteId: parsed.data.siteId,
+    locationId: parsed.data.locationId,
+    parentAssetId: parsed.data.parentAssetId,
+    code: parsed.data.code,
+    name: parsed.data.name,
+    description: parsed.data.description,
+    criticality: parsed.data.criticality,
+  };
+
   return apiData(await db.asset.create({ data }), { status: 201 });
 }
