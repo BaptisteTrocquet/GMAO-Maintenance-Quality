@@ -22,10 +22,18 @@ export class LocalStorageAdapter implements StorageAdapter {
   }
 
   private resolveKey(key: string) {
-    if (!key || path.isAbsolute(key) || key.includes("\0")) {
+    const segments = key.split("/");
+    if (
+      !key ||
+      path.isAbsolute(key) ||
+      key.includes("\\") ||
+      key.includes("\0") ||
+      segments.some((segment) => !segment || segment === "." || segment === "..")
+    ) {
       throw new InvalidStorageKeyError();
     }
-    const filePath = path.resolve(this.root, key);
+
+    const filePath = path.resolve(this.root, ...segments);
     if (filePath === this.root || !filePath.startsWith(`${this.root}${path.sep}`)) {
       throw new InvalidStorageKeyError();
     }
