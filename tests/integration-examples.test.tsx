@@ -24,7 +24,7 @@ describe("integration examples", () => {
     expect(html).toContain("themeAccent=%232563eb");
     expect(html).toContain("#token=scoped-secret");
     expect(html).not.toContain("token=scoped-secret&amp;");
-    expect(html).toContain('referrerPolicy="strict-origin"');
+    expect(html.toLowerCase()).toContain('referrerpolicy="strict-origin"');
     expect(html).toContain('sandbox="allow-scripts allow-same-origin"');
   });
 
