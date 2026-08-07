@@ -39,12 +39,21 @@ export default async function DocumentDetailPage({
           entityType: "DocumentRevision",
           entityId: { in: document.revisions.map((revision) => revision.id) },
         },
+        {
+          entityType: "AssetDocument",
+          entityId: { endsWith: `:${document.id}` },
+        },
       ],
     },
+    include: { actor: { select: { id: true, displayName: true, email: true } } },
     orderBy: { createdAt: "desc" },
-    take: 30,
+    take: 100,
   });
   const latest = document.revisions[0];
+  const revisionById = new Map(document.revisions.map((revision) => [revision.id, revision]));
+  const readAcknowledgements = audit.filter(
+    (entry) => entry.entityType === "DocumentRevision" && entry.action === "READ_ACKNOWLEDGED",
+  );
 
   return (
     <>
@@ -157,6 +166,23 @@ export default async function DocumentDetailPage({
       </section>
 
       <section className="card section">
+        <h2>Read acknowledgements</h2>
+        {readAcknowledgements.length ? (
+          <div className="stack-list">
+            {readAcknowledgements.map((entry) => (
+              <div key={entry.id}>
+                <strong>Rev {revisionById.get(entry.entityId)?.revision ?? entry.entityId}</strong>
+                <span> · {entry.actor?.displayName ?? "Unknown user"}</span>
+                <span className="muted"> · {formatDateTime(entry.createdAt)}</span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="muted">No read acknowledgements recorded yet.</div>
+        )}
+      </section>
+
+      <section className="card section">
         <h2>Audit timeline</h2>
         {audit.length ? (
           <ol className="timeline">
@@ -164,7 +190,10 @@ export default async function DocumentDetailPage({
               <li key={entry.id}>
                 <time>{formatDateTime(entry.createdAt)}</time>
                 <strong>{entry.entityType} · {entry.action}</strong>
-                <span>{entry.entityId}</span>
+                <span>
+                  {entry.entityId}
+                  {entry.actor ? ` · ${entry.actor.displayName}` : ""}
+                </span>
               </li>
             ))}
           </ol>
