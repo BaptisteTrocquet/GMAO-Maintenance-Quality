@@ -1,4 +1,4 @@
-export const PUBLIC_API_VERSION = "1.1.0";
+export const PUBLIC_API_VERSION = "1.2.0";
 
 export const publicOpenApiSpec = {
   openapi: "3.1.0",
@@ -13,6 +13,10 @@ export const publicOpenApiSpec = {
     {
       name: "Public maintenance requests",
       description: "Create and track tenant/site-scoped maintenance requests from public or embedded clients.",
+    },
+    {
+      name: "Public assets",
+      description: "Read a minimal site-scoped asset card using an integration token with asset:read capability.",
     },
   ],
   paths: {
@@ -38,14 +42,14 @@ export const publicOpenApiSpec = {
         responses: {
           "204": { description: "Origin is allowed for the active token." },
           "400": { description: "tokenId or Origin is missing." },
-          "403": { description: "Token is inactive or the origin is not allowed." },
+          "403": { description: "Token is inactive, lacks the required capability, or the origin is not allowed." },
         },
       },
       post: {
         tags: ["Public maintenance requests"],
         summary: "Create a scoped maintenance request",
         description:
-          "Creates a REQUESTED, NORMAL-priority CORRECTIVE work order in the site bound to the scoped token. Replays with the same Idempotency-Key return the original work order and trackingId.",
+          "Requires maintenance:request:create. Creates a REQUESTED, NORMAL-priority CORRECTIVE work order in the site bound to the scoped token. Replays with the same Idempotency-Key return the original work order and trackingId.",
         operationId: "createPublicMaintenanceRequestV1",
         security: [{ scopedPublicRequestToken: [] }],
         parameters: [
@@ -123,14 +127,14 @@ export const publicOpenApiSpec = {
         responses: {
           "204": { description: "Origin is allowed for the active token." },
           "400": { description: "tokenId or Origin is missing." },
-          "403": { description: "Token is inactive or the origin is not allowed." },
+          "403": { description: "Token is inactive, lacks maintenance:request:status, or the origin is not allowed." },
         },
       },
       get: {
         tags: ["Public maintenance requests"],
         summary: "Read the public status of a previously created maintenance request",
         description:
-          "Requires the same active scoped token used to create the request plus the opaque trackingId returned by request creation. Only a minimal public status projection is returned.",
+          "Requires maintenance:request:status on the same active scoped token used to create the request plus the opaque trackingId returned by request creation. Only a minimal public status projection is returned.",
         operationId: "getPublicMaintenanceRequestStatusV1",
         security: [{ scopedPublicRequestToken: [] }],
         parameters: [
@@ -162,6 +166,53 @@ export const publicOpenApiSpec = {
         },
       },
     },
+    "/api/v1/public/assets": {
+      options: {
+        tags: ["Public assets"],
+        summary: "Validate CORS preflight for asset-card lookup",
+        parameters: [
+          { name: "tokenId", in: "query", required: true, schema: { type: "string", minLength: 1 } },
+          { name: "Origin", in: "header", required: true, schema: { type: "string", format: "uri" } },
+        ],
+        responses: {
+          "204": { description: "Origin is allowed and the active token has asset:read." },
+          "400": { description: "tokenId or Origin is missing." },
+          "403": { description: "Token is inactive, lacks asset:read, or the origin is not allowed." },
+        },
+      },
+      get: {
+        tags: ["Public assets"],
+        summary: "Read a minimal public asset card",
+        description:
+          "Requires asset:read. The asset code is resolved only inside the site bound to the scoped token. Archived assets and sensitive internal fields are not exposed.",
+        operationId: "getPublicAssetCardV1",
+        security: [{ scopedPublicRequestToken: [] }],
+        parameters: [
+          { name: "tokenId", in: "query", required: true, schema: { type: "string", minLength: 1 } },
+          { name: "assetCode", in: "query", required: true, schema: { type: "string", minLength: 1, maxLength: 50 } },
+          {
+            name: "Origin",
+            in: "header",
+            required: false,
+            schema: { type: "string", format: "uri" },
+            description: "Required for EMBEDDED tokens and validated against exact allowed origins.",
+          },
+        ],
+        responses: {
+          "200": {
+            description: "Minimal public asset card.",
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/PublicAssetCardResult" } },
+            },
+          },
+          "400": { $ref: "#/components/responses/BadRequest" },
+          "401": { $ref: "#/components/responses/Unauthorized" },
+          "403": { $ref: "#/components/responses/Forbidden" },
+          "404": { description: "Asset is not available in the scoped token site." },
+          "429": { description: "Scoped token exceeded its hourly asset-card lookup limit." },
+        },
+      },
+    },
   },
   components: {
     securitySchemes: {
@@ -170,7 +221,7 @@ export const publicOpenApiSpec = {
         scheme: "bearer",
         bearerFormat: "opaque scoped token",
         description:
-          "Short-lived/revocable site-scoped token. The raw secret is returned only when the token is created and is not an administrator credential.",
+          "Short-lived/revocable site-scoped token with immutable least-privilege capabilities. The raw secret is returned only when the token is created and is not an administrator credential.",
       },
     },
     schemas: {
@@ -240,6 +291,35 @@ export const publicOpenApiSpec = {
           },
         },
       },
+      PublicAssetLocation: {
+        type: ["object", "null"],
+        properties: {
+          code: { type: "string" },
+          name: { type: "string" },
+        },
+      },
+      PublicAssetCard: {
+        type: "object",
+        required: ["code", "name", "status", "criticality", "updatedAt"],
+        properties: {
+          code: { type: "string" },
+          name: { type: "string" },
+          status: { type: "string" },
+          criticality: { type: "string" },
+          category: { type: ["string", "null"] },
+          manufacturer: { type: ["string", "null"] },
+          model: { type: ["string", "null"] },
+          updatedAt: { type: "string", format: "date-time" },
+          location: { $ref: "#/components/schemas/PublicAssetLocation" },
+        },
+      },
+      PublicAssetCardResult: {
+        type: "object",
+        required: ["data"],
+        properties: {
+          data: { $ref: "#/components/schemas/PublicAssetCard" },
+        },
+      },
       ApiError: {
         type: "object",
         required: ["error"],
@@ -266,7 +346,7 @@ export const publicOpenApiSpec = {
         content: { "application/json": { schema: { $ref: "#/components/schemas/ApiError" } } },
       },
       Forbidden: {
-        description: "Origin is not allowed for this token.",
+        description: "Token capability or origin policy does not allow this operation.",
         content: { "application/json": { schema: { $ref: "#/components/schemas/ApiError" } } },
       },
     },
