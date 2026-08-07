@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { db } from "@/lib/db";
+import { advanceCalendarDue, type CalendarFrequencyUnit } from "@/lib/maintenance/calendar";
 
 function formatDate(value: Date | null) {
   return value ? value.toISOString().slice(0, 10) : "—";
@@ -12,10 +13,14 @@ export default async function MaintenancePage() {
       orderBy: { requestedAt: "desc" },
     }),
     db.maintenancePlan.findMany({
-      include: { asset: true, checklistItems: true },
+      include: {
+        asset: { include: { site: { include: { organization: { select: { timezone: true } } } } } },
+        checklistItems: true,
+      },
       orderBy: { nextDueAt: "asc" },
     }),
   ]);
+  const now = new Date();
 
   return (
     <>
@@ -69,17 +74,40 @@ export default async function MaintenancePage() {
         <div className="responsive-table">
           <table className="table">
             <thead>
-              <tr><th>Asset</th><th>Plan</th><th>Frequency</th><th>Checklist</th></tr>
+              <tr>
+                <th>Asset</th>
+                <th>Plan</th>
+                <th>Frequency</th>
+                <th>Next due</th>
+                <th>Following due</th>
+                <th>Status</th>
+                <th>Checklist</th>
+              </tr>
             </thead>
             <tbody>
-              {plans.map((plan) => (
-                <tr key={plan.id}>
-                  <td>{plan.asset.code}</td>
-                  <td>{plan.name}</td>
-                  <td>{plan.frequencyValue} {plan.frequencyUnit}</td>
-                  <td>{plan.checklistItems.length}</td>
-                </tr>
-              ))}
+              {plans.map((plan) => {
+                const followingDueAt =
+                  plan.nextDueAt && plan.frequencyUnit !== "METER"
+                    ? advanceCalendarDue({
+                        currentDueAt: plan.nextDueAt,
+                        frequencyValue: plan.frequencyValue,
+                        frequencyUnit: plan.frequencyUnit as CalendarFrequencyUnit,
+                        timeZone: plan.asset.site.organization.timezone,
+                      })
+                    : null;
+                const overdue = plan.active && plan.nextDueAt ? plan.nextDueAt < now : false;
+                return (
+                  <tr key={plan.id}>
+                    <td>{plan.asset.code}</td>
+                    <td>{plan.name}</td>
+                    <td>{plan.frequencyValue} {plan.frequencyUnit}</td>
+                    <td>{formatDate(plan.nextDueAt)}</td>
+                    <td>{formatDate(followingDueAt)}</td>
+                    <td><span className="badge">{plan.active ? (overdue ? "OVERDUE" : "ACTIVE") : "PAUSED"}</span></td>
+                    <td>{plan.checklistItems.length}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
