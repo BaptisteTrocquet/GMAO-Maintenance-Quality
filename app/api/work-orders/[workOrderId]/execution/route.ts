@@ -5,6 +5,16 @@ import { authenticateRequest } from "@/lib/auth/request-auth";
 import { db } from "@/lib/db";
 import { can } from "@/lib/permissions";
 
+const checklistUpdateSchema = z
+  .object({
+    id: z.string().min(1),
+    completed: z.boolean().optional(),
+    note: z.string().max(2000).nullable().optional(),
+  })
+  .refine((item) => item.completed !== undefined || item.note !== undefined, {
+    message: "Checklist update must change completed or note",
+  });
+
 const updateSchema = z.object({
   organizationId: z.string().min(1),
   siteId: z.string().min(1),
@@ -12,16 +22,7 @@ const updateSchema = z.object({
   downtimeMinutes: z.number().int().min(0).nullable().optional(),
   completionNote: z.string().max(5000).nullable().optional(),
   checklistAdd: z.array(z.string().trim().min(1).max(500)).max(50).optional(),
-  checklistUpdates: z
-    .array(
-      z.object({
-        id: z.string().min(1),
-        completed: z.boolean().optional(),
-        note: z.string().max(2000).nullable().optional(),
-      }),
-    )
-    .max(100)
-    .optional(),
+  checklistUpdates: z.array(checklistUpdateSchema).max(100).optional(),
 });
 
 function hasOwn(input: object, key: string) {
@@ -88,7 +89,8 @@ export async function PATCH(
   );
   const hasChecklistAdd = Boolean(parsed.data.checklistAdd?.length);
   const hasChecklistUpdates = Boolean(parsed.data.checklistUpdates?.length);
-  if (!hasExecutionFields && !hasChecklistAdd && !hasChecklistUpdates) {
+  const hasExecutionCapture = hasExecutionFields || hasChecklistUpdates;
+  if (!hasExecutionCapture && !hasChecklistAdd) {
     return apiError(400, "NO_CHANGES", "At least one execution field must change");
   }
 
@@ -108,7 +110,18 @@ export async function PATCH(
     return apiError(404, "WORK_ORDER_NOT_FOUND", "Work order not found in site scope");
   }
 
-  if (existing.status !== "IN_PROGRESS" && existing.status !== "BLOCKED") {
+  if (
+    hasChecklistAdd &&
+    !["APPROVED", "PLANNED", "IN_PROGRESS", "BLOCKED"].includes(existing.status)
+  ) {
+    return apiError(
+      409,
+      "CHECKLIST_NOT_CONFIGURABLE",
+      "Checklist can only be configured after approval and before closure",
+    );
+  }
+
+  if (hasExecutionCapture && existing.status !== "IN_PROGRESS" && existing.status !== "BLOCKED") {
     return apiError(
       409,
       "WORK_NOT_ACTIVE",
@@ -124,7 +137,7 @@ export async function PATCH(
     }
   }
 
-  if (hasExecutionFields || hasChecklistUpdates) {
+  if (hasExecutionCapture) {
     try {
       assertSitePermission(auth.tenant.scope, existing.siteId, "work:update");
     } catch (error) {
@@ -201,9 +214,8 @@ export async function PATCH(
       actorId: auth.session.user.id,
       entityType: "WorkOrder",
       entityId: existing.id,
-      action: hasChecklistAdd && !hasExecutionFields && !hasChecklistUpdates
-        ? "CHECKLIST_CONFIGURED"
-        : "EXECUTION_UPDATED",
+      action:
+        hasChecklistAdd && !hasExecutionCapture ? "CHECKLIST_CONFIGURED" : "EXECUTION_UPDATED",
       beforeJson: JSON.stringify(existing),
       afterJson: JSON.stringify(updated),
     },
