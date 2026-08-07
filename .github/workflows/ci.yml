@@ -8,6 +8,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+
     services:
       postgres:
         image: postgres:16
@@ -25,14 +27,28 @@ jobs:
 
     env:
       DATABASE_URL: postgresql://opengmao:opengmao@localhost:5432/opengmao?schema=public
+      CI: true
 
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-      - run: npm install
-      - run: npm run prisma:generate
-      - run: npx prisma db push
-      - run: npm run build
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Generate Prisma client
+        run: npm run prisma:generate
+
+      - name: Apply schema to disposable database
+        run: npx prisma db push
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
