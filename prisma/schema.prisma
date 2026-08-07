@@ -98,6 +98,13 @@ enum MaintenanceReminderStatus {
   EXPIRED
 }
 
+enum StockMovementType {
+  RECEIPT
+  ISSUE
+  ADJUSTMENT
+  WORK_ORDER_CONSUMPTION
+}
+
 model User {
   id                  String                   @id @default(cuid())
   email               String                   @unique
@@ -378,7 +385,7 @@ model WorkOrderAttachment {
   id          String    @id @default(cuid())
   workOrderId String
   fileName    String
-  storageKey  String
+  storageKey String
   mimeType    String?
   sizeBytes   Int?
   kind        String    @default("ATTACHMENT")
@@ -456,6 +463,8 @@ model Part {
   assetParts            AssetPart[]
   workOrderParts        WorkOrderPart[]
   workOrderConsumptions WorkOrderPartConsumption[]
+  stockBalances         StockBalance[]
+  stockMovements        StockMovement[]
 
   @@unique([organizationId, sku])
   @@index([organizationId, active])
@@ -478,18 +487,59 @@ model Warehouse {
 }
 
 model StockBin {
-  id          String    @id @default(cuid())
-  warehouseId String
-  code        String
-  name        String
-  description String?
-  active      Boolean   @default(true)
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  warehouse   Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  id                    String                     @id @default(cuid())
+  warehouseId           String
+  code                  String
+  name                  String
+  description           String?
+  active                Boolean                    @default(true)
+  createdAt             DateTime                   @default(now())
+  updatedAt             DateTime                   @updatedAt
+  warehouse             Warehouse                  @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  balances              StockBalance[]
+  movements             StockMovement[]
+  workOrderConsumptions WorkOrderPartConsumption[]
 
   @@unique([warehouseId, code])
   @@index([warehouseId, active])
+}
+
+model StockBalance {
+  id        String   @id @default(cuid())
+  binId     String
+  partId    String
+  quantity  Float    @default(0)
+  updatedAt DateTime @updatedAt
+  bin       StockBin @relation(fields: [binId], references: [id], onDelete: Cascade)
+  part      Part     @relation(fields: [partId], references: [id], onDelete: Cascade)
+
+  @@unique([binId, partId])
+  @@index([partId])
+}
+
+model StockMovement {
+  id                String            @id @default(cuid())
+  binId             String
+  partId            String
+  type              StockMovementType
+  delta             Float
+  balanceAfter      Float
+  partQuantityAfter Float
+  unitCost          Decimal?          @db.Decimal(14, 4)
+  referenceType     String?
+  referenceId       String?
+  idempotencyKey    String
+  requestHash       String
+  actorId           String?
+  note              String?
+  createdAt         DateTime          @default(now())
+  bin               StockBin          @relation(fields: [binId], references: [id], onDelete: Restrict)
+  part              Part              @relation(fields: [partId], references: [id], onDelete: Restrict)
+
+  @@unique([binId, idempotencyKey])
+  @@index([binId, createdAt])
+  @@index([partId, createdAt])
+  @@index([referenceType, referenceId])
 }
 
 model AssetPart {
@@ -517,6 +567,7 @@ model WorkOrderPartConsumption {
   id             String    @id @default(cuid())
   workOrderId    String
   partId         String
+  binId          String?
   quantity       Float
   unitCost       Decimal?  @db.Decimal(14, 4)
   idempotencyKey String
@@ -524,10 +575,12 @@ model WorkOrderPartConsumption {
   createdAt      DateTime  @default(now())
   workOrder      WorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
   part           Part      @relation(fields: [partId], references: [id])
+  bin            StockBin? @relation(fields: [binId], references: [id])
 
   @@unique([workOrderId, idempotencyKey])
   @@index([workOrderId, createdAt])
   @@index([partId, createdAt])
+  @@index([binId, createdAt])
 }
 
 model Document {

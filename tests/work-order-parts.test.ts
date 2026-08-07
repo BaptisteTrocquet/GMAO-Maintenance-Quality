@@ -1,22 +1,39 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({
-  transaction: vi.fn(),
-  dbConsumptionFindUnique: vi.fn(),
-  txConsumptionFindUnique: vi.fn(),
-  partFindFirst: vi.fn(),
-  partUpdateMany: vi.fn(),
-  workOrderPartUpsert: vi.fn(),
-  consumptionCreate: vi.fn(),
-  auditCreate: vi.fn(),
-}));
+const mocks = vi.hoisted(() => {
+  class StockMovementError extends Error {
+    constructor(
+      public readonly code:
+        | "PART_NOT_FOUND"
+        | "BIN_NOT_FOUND"
+        | "INSUFFICIENT_STOCK"
+        | "IDEMPOTENCY_CONFLICT"
+        | "BALANCE_DIVERGENCE",
+      message: string,
+    ) {
+      super(message);
+    }
+  }
+
+  return {
+    transaction: vi.fn(),
+    dbConsumptionFindUnique: vi.fn(),
+    txConsumptionFindUnique: vi.fn(),
+    partFindFirst: vi.fn(),
+    workOrderPartUpsert: vi.fn(),
+    consumptionCreate: vi.fn(),
+    auditCreate: vi.fn(),
+    applyStockMovement: vi.fn(),
+    StockMovementError,
+  };
+});
 
 const tx = {
   workOrderPartConsumption: {
     findUnique: mocks.txConsumptionFindUnique,
     create: mocks.consumptionCreate,
   },
-  part: { findFirst: mocks.partFindFirst, updateMany: mocks.partUpdateMany },
+  part: { findFirst: mocks.partFindFirst },
   workOrderPart: { upsert: mocks.workOrderPartUpsert },
   auditLog: { create: mocks.auditCreate },
 };
@@ -27,13 +44,19 @@ vi.mock("@/lib/db", () => ({
     workOrderPartConsumption: { findUnique: mocks.dbConsumptionFindUnique },
   },
 }));
+vi.mock("@/lib/inventory/stock", () => ({
+  applyStockMovement: mocks.applyStockMovement,
+  StockMovementError: mocks.StockMovementError,
+}));
 
 import { consumeWorkOrderPart } from "@/lib/work-orders/parts";
 
 const input = {
   organizationId: "org-a",
+  siteId: "site-a",
   workOrderId: "wo-1",
   partId: "part-1",
+  binId: "bin-1",
   quantity: 2,
   idempotencyKey: "consume-0001",
   actorId: "tech-1",
@@ -53,57 +76,78 @@ describe("work order part consumption", () => {
       name: "Generic spare",
       unitCost: null,
     });
-    mocks.partUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.applyStockMovement.mockResolvedValue({
+      movement: { id: "movement-1" },
+      idempotent: false,
+    });
     mocks.workOrderPartUpsert.mockResolvedValue({ workOrderId: "wo-1", partId: "part-1", quantity: 2 });
     mocks.consumptionCreate.mockResolvedValue({
       id: "consumption-1",
       workOrderId: "wo-1",
       partId: "part-1",
+      binId: "bin-1",
       quantity: 2,
       idempotencyKey: "consume-0001",
       part: { id: "part-1", sku: "SP-001" },
+      bin: { id: "bin-1" },
     });
     mocks.auditCreate.mockResolvedValue({ id: "audit-1" });
   });
 
-  it("atomically decrements stock and records aggregate and transaction history", async () => {
+  it("routes consumption through the immutable stock ledger and records the bin", async () => {
     const result = await consumeWorkOrderPart(input);
 
     expect(result.idempotent).toBe(false);
-    expect(mocks.partUpdateMany).toHaveBeenCalledWith({
-      where: {
-        id: "part-1",
+    expect(mocks.applyStockMovement).toHaveBeenCalledWith(
+      tx,
+      expect.objectContaining({
         organizationId: "org-a",
-        quantityOnHand: { gte: 2 },
-      },
-      data: { quantityOnHand: { decrement: 2 } },
-    });
-    expect(mocks.workOrderPartUpsert).toHaveBeenCalledWith({
-      where: { workOrderId_partId: { workOrderId: "wo-1", partId: "part-1" } },
-      create: expect.objectContaining({ quantity: 2 }),
-      update: expect.objectContaining({ quantity: { increment: 2 } }),
+        siteId: "site-a",
+        binId: "bin-1",
+        partId: "part-1",
+        type: "WORK_ORDER_CONSUMPTION",
+        quantity: 2,
+        referenceType: "WorkOrder",
+        referenceId: "wo-1",
+      }),
+    );
+    expect(mocks.consumptionCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        workOrderId: "wo-1",
+        partId: "part-1",
+        binId: "bin-1",
+        quantity: 2,
+      }),
+      include: { part: true, bin: true },
     });
     expect(mocks.auditCreate).toHaveBeenCalledWith({
-      data: expect.objectContaining({ action: "PART_CONSUMED", actorId: "tech-1" }),
+      data: expect.objectContaining({
+        action: "PART_CONSUMED",
+        actorId: "tech-1",
+        afterJson: expect.stringContaining('"stockMovementId":"movement-1"'),
+      }),
     });
   });
 
-  it("returns an existing consumption without decrementing stock on an idempotent retry", async () => {
+  it("returns an existing consumption without touching the ledger on an idempotent retry", async () => {
     mocks.txConsumptionFindUnique.mockResolvedValue({
       id: "consumption-1",
       idempotencyKey: "consume-0001",
       part: { id: "part-1" },
+      bin: { id: "bin-1" },
     });
 
     const result = await consumeWorkOrderPart(input);
 
     expect(result.idempotent).toBe(true);
-    expect(mocks.partUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.applyStockMovement).not.toHaveBeenCalled();
     expect(mocks.consumptionCreate).not.toHaveBeenCalled();
   });
 
-  it("rejects consumption when the conditional stock decrement cannot be applied", async () => {
-    mocks.partUpdateMany.mockResolvedValue({ count: 0 });
+  it("propagates insufficient bin stock without recording consumption", async () => {
+    mocks.applyStockMovement.mockRejectedValue(
+      new mocks.StockMovementError("INSUFFICIENT_STOCK", "Not enough stock in bin"),
+    );
 
     await expect(consumeWorkOrderPart(input)).rejects.toMatchObject({
       code: "INSUFFICIENT_STOCK",
@@ -118,6 +162,7 @@ describe("work order part consumption", () => {
       id: "consumption-1",
       idempotencyKey: "consume-0001",
       part: { id: "part-1" },
+      bin: { id: "bin-1" },
     });
 
     const result = await consumeWorkOrderPart(input);

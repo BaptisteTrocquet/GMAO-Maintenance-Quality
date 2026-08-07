@@ -102,11 +102,11 @@ async function main() {
     });
   }
 
-  const existingBin = await prisma.stockBin.findFirst({
+  let stockBin = await prisma.stockBin.findFirst({
     where: { warehouseId: warehouse.id, code: "A-01" },
   });
-  if (!existingBin) {
-    await prisma.stockBin.create({
+  if (!stockBin) {
+    stockBin = await prisma.stockBin.create({
       data: {
         warehouseId: warehouse.id,
         code: "A-01",
@@ -211,10 +211,48 @@ async function main() {
       name: "Generic seal kit",
       description: "Synthetic spare part for demo BOM.",
       unit: "EA",
-      quantityOnHand: 4,
+      quantityOnHand: 0,
       reorderPoint: 1,
     },
   });
+
+  const openingKey = "synthetic-seed-opening-SP-001";
+  const existingOpening = await prisma.stockMovement.findUnique({
+    where: {
+      binId_idempotencyKey: {
+        binId: stockBin.id,
+        idempotencyKey: openingKey,
+      },
+    },
+  });
+  if (!existingOpening) {
+    await prisma.$transaction(async (tx) => {
+      await tx.stockBalance.upsert({
+        where: { binId_partId: { binId: stockBin.id, partId: sealKit.id } },
+        create: { binId: stockBin.id, partId: sealKit.id, quantity: 4 },
+        update: { quantity: 4 },
+      });
+      await tx.part.update({
+        where: { id: sealKit.id },
+        data: { quantityOnHand: 4 },
+      });
+      await tx.stockMovement.create({
+        data: {
+          binId: stockBin.id,
+          partId: sealKit.id,
+          type: "ADJUSTMENT",
+          delta: 4,
+          balanceAfter: 4,
+          partQuantityAfter: 4,
+          idempotencyKey: openingKey,
+          requestHash: "synthetic-seed-opening-v1",
+          referenceType: "Seed",
+          referenceId: "SP-001",
+          note: "Synthetic opening balance",
+        },
+      });
+    });
+  }
 
   await prisma.assetPart.upsert({
     where: { assetId_partId: { assetId: pump.id, partId: sealKit.id } },

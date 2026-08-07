@@ -10,6 +10,7 @@ const consumeSchema = z.object({
   organizationId: z.string().min(1),
   siteId: z.string().min(1),
   partId: z.string().min(1),
+  binId: z.string().min(1),
   quantity: z.number().positive().max(1_000_000),
 });
 
@@ -56,7 +57,7 @@ export async function GET(
   return apiData(
     await db.workOrderPartConsumption.findMany({
       where: { workOrderId: workOrder.id },
-      include: { part: true },
+      include: { part: true, bin: { include: { warehouse: true } } },
       orderBy: { createdAt: "desc" },
     }),
   );
@@ -129,8 +130,10 @@ export async function POST(
   try {
     const result = await consumeWorkOrderPart({
       organizationId: parsed.data.organizationId,
+      siteId: workOrder.siteId,
       workOrderId: workOrder.id,
       partId: parsed.data.partId,
+      binId: parsed.data.binId,
       quantity: parsed.data.quantity,
       idempotencyKey,
       actorId: auth.session.user.id,
@@ -138,7 +141,9 @@ export async function POST(
     return apiData(result, { status: result.idempotent ? 200 : 201 });
   } catch (error) {
     if (error instanceof WorkOrderPartError) {
-      return apiError(error.code === "PART_NOT_FOUND" ? 404 : 409, error.code, error.message);
+      const status =
+        error.code === "PART_NOT_FOUND" || error.code === "BIN_NOT_FOUND" ? 404 : 409;
+      return apiError(status, error.code, error.message);
     }
     throw error;
   }

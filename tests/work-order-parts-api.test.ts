@@ -35,7 +35,13 @@ function auth(role: "MAINTENANCE_MANAGER" | "TECHNICIAN") {
 }
 
 function workOrder(assigneeId: string | null = "tech-1") {
-  return { id: "wo-1", siteId: "site-a", status: "IN_PROGRESS", assigneeId };
+  return {
+    id: "wo-1",
+    siteId: "site-a",
+    status: "IN_PROGRESS",
+    assigneeId,
+    teamId: null,
+  };
 }
 
 function request(options?: { key?: string; quantity?: number }) {
@@ -48,6 +54,7 @@ function request(options?: { key?: string; quantity?: number }) {
       organizationId: "org-a",
       siteId: "site-a",
       partId: "part-1",
+      binId: "bin-1",
       quantity: options?.quantity ?? 2,
     }),
   });
@@ -67,7 +74,7 @@ describe("work order parts API", () => {
     mocks.workOrderFindFirst.mockResolvedValue(workOrder());
     mocks.consumeWorkOrderPart.mockResolvedValue({
       idempotent: false,
-      consumption: { id: "consumption-1", partId: "part-1", quantity: 2 },
+      consumption: { id: "consumption-1", partId: "part-1", binId: "bin-1", quantity: 2 },
     });
   });
 
@@ -79,14 +86,16 @@ describe("work order parts API", () => {
     expect(mocks.consumeWorkOrderPart).not.toHaveBeenCalled();
   });
 
-  it("consumes stock for the assigned technician with the supplied idempotency key", async () => {
+  it("consumes stock for the assigned technician from the explicit bin", async () => {
     const response = await POST(request({ key: "consume-0001" }), params);
 
     await expectStatus(response, 201);
     expect(mocks.consumeWorkOrderPart).toHaveBeenCalledWith({
       organizationId: "org-a",
+      siteId: "site-a",
       workOrderId: "wo-1",
       partId: "part-1",
+      binId: "bin-1",
       quantity: 2,
       idempotencyKey: "consume-0001",
       actorId: "tech-1",
@@ -96,7 +105,7 @@ describe("work order parts API", () => {
   it("returns 200 without a second write for an idempotent retry", async () => {
     mocks.consumeWorkOrderPart.mockResolvedValue({
       idempotent: true,
-      consumption: { id: "consumption-1", partId: "part-1", quantity: 2 },
+      consumption: { id: "consumption-1", partId: "part-1", binId: "bin-1", quantity: 2 },
     });
 
     const response = await POST(request({ key: "consume-0001" }), params);
