@@ -1,11 +1,12 @@
 import { db } from "@/lib/db";
 import { escapeHtmlAttribute } from "@/lib/embed/html";
 import { createEmbedProof, parentOriginFromReferrer } from "@/lib/embed/proof";
+import { embedThemeStylesheetHref } from "@/lib/embed/theme";
 import { getPublicRequestTokenScopes, hasPublicRequestScope, isOriginAllowed } from "@/lib/public-requests/tokens";
 
-function htmlPage(proof: string) {
+function htmlPage(proof: string, themeHref: string) {
   return `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Maintenance KPIs</title><link rel="stylesheet" href="/embed/kpi-card/styles.css"></head>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Maintenance KPIs</title><link rel="stylesheet" href="/embed/kpi-card/styles.css"><link rel="stylesheet" href="${escapeHtmlAttribute(themeHref)}"></head>
 <body><main class="kpi-card" id="gmao-kpi-card" data-embed-proof="${escapeHtmlAttribute(proof)}">
 <p class="eyebrow">Site maintenance</p><h1>Live KPI snapshot</h1>
 <div class="grid"><div><strong id="open">—</strong><span>Open work orders</span></div><div><strong id="overdue">—</strong><span>Overdue</span></div><div><strong id="in-progress">—</strong><span>In progress</span></div><div><strong id="out-of-service">—</strong><span>Assets out of service</span></div></div>
@@ -46,5 +47,5 @@ export async function GET(request: Request) {
   }
 
   const proof = createEmbedProof({ tokenId: token.id, tokenHash: token.tokenHash, parentOrigin, now });
-  return new Response(htmlPage(proof), { status: 200, headers: securityHeaders(token.allowedOrigins) });
+  return new Response(htmlPage(proof, embedThemeStylesheetHref(url)), { status: 200, headers: securityHeaders(token.allowedOrigins) });
 }
