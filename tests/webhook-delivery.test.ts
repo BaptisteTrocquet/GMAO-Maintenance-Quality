@@ -23,8 +23,9 @@ vi.mock("@/lib/db", () => ({
 }));
 
 import { deliverWebhook } from "@/lib/webhooks/delivery";
+import type { WebhookSubscription } from "@/lib/webhooks/subscriptions";
 
-const subscription = {
+const subscription: WebhookSubscription = {
   id: "11111111-1111-4111-8111-111111111111",
   organizationId: "org-a",
   siteId: "site-a",
@@ -110,7 +111,7 @@ describe("webhook delivery", () => {
     expect(mocks.auditCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({
         action: "FAILED",
-        afterJson: expect.stringContaining('\"attempt\":1'),
+        afterJson: expect.stringContaining('"attempt":1'),
       }),
     });
   });
