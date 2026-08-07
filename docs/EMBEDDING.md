@@ -28,6 +28,8 @@ The server validates the browser-supplied parent `Referer` before rendering the 
 
 The iframe response applies a restrictive CSP with dynamic `frame-ancestors`, no inline scripts, no inline styles, no object/embed content and `base-uri 'none'`. A complete static host example lives in `examples/maintenance-request-iframe.html`.
 
+The request-status iframe is available at `/embed/request-status?tokenId=TOKEN_ID&trackingId=TRACKING_ID#token=SCOPED_TOKEN_SECRET`. It exposes only the public work-order number, status and lifecycle timestamps; internal descriptions, assignment data and completion notes are not returned.
+
 ### Level C — script-loader widgets
 Target developer experience:
 
@@ -69,11 +71,40 @@ GET /api/openapi.json
 
 Its `info.version` identifies the public API contract version independently from the application release version.
 
+## Scoped integration tokens
+
+A site manager creates a scoped token through `POST /api/public-request-tokens`. Tokens are bound to one organization/site, expire, can be revoked, and store only a SHA-256 hash server-side. `EMBEDDED` tokens require one or more exact allowed origins. The raw token is returned only when the token is created.
+
+Each token also receives an immutable capability list. Changing capabilities requires token rotation rather than silently widening an existing browser credential.
+
+Supported capabilities are:
+
+- `maintenance:request:create` — submit a maintenance request
+- `maintenance:request:status` — read the minimal public status for a request created by the same token
+- `asset:read` — reserved for the embeddable asset-card contract
+- `document:read` — reserved for the controlled-document viewer contract
+- `kpi:read` — reserved for embeddable KPI cards
+
+Example token creation payload:
+
+```json
+{
+  "organizationId": "org-id",
+  "siteId": "site-id",
+  "name": "Maintenance portal",
+  "mode": "EMBEDDED",
+  "allowedOrigins": ["https://portal.example.test"],
+  "scopes": [
+    "maintenance:request:create",
+    "maintenance:request:status"
+  ],
+  "expiresInDays": 30
+}
+```
+
+The server verifies that the authenticated site manager is allowed to delegate every requested capability. Existing legacy request tokens without capability metadata retain only the two maintenance capabilities. New tokens without valid capability metadata fail closed with no capabilities.
+
 ## Scoped public maintenance requests
-
-E3 provides the backend primitive for public and embedded maintenance-request forms.
-
-A maintenance manager creates a scoped token through `POST /api/public-request-tokens`. Tokens are bound to one organization/site, expire, can be revoked, and store only a SHA-256 hash server-side. `EMBEDDED` tokens require one or more exact allowed origins. The raw token is returned only when the token is created.
 
 External applications submit to:
 
@@ -112,7 +143,7 @@ Browser integrations use exact-origin CORS. Preflight requests include the non-s
 ## Security requirements
 
 - never expose administrator credentials to browser widgets
-- scoped embed tokens
+- scoped embed tokens with immutable least-privilege capabilities
 - expiration and revocation
 - explicit allowed origins
 - rate limiting

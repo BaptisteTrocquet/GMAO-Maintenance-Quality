@@ -7,6 +7,7 @@ import {
   PublicMaintenanceRequestError,
 } from "@/lib/public-requests/create-request";
 import {
+  hasPublicRequestScope,
   isOriginAllowed,
   resolvePublicRequestToken,
 } from "@/lib/public-requests/tokens";
@@ -40,6 +41,9 @@ export async function POST(request: Request) {
   const token = await resolvePublicRequestToken({ tokenId, token: rawToken });
   if (!token || token.mode !== "EMBEDDED") {
     return apiError(401, "INVALID_TOKEN", "Embedded request token is invalid, expired or revoked");
+  }
+  if (!hasPublicRequestScope(token, "maintenance:request:create")) {
+    return apiError(403, "TOKEN_SCOPE_DENIED", "Scoped token cannot create maintenance requests");
   }
 
   const proofPayload = verifyEmbedProof({

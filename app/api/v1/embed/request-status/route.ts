@@ -5,6 +5,7 @@ import {
   PublicRequestStatusError,
 } from "@/lib/public-requests/status";
 import {
+  hasPublicRequestScope,
   isOriginAllowed,
   resolvePublicRequestToken,
 } from "@/lib/public-requests/tokens";
@@ -32,6 +33,9 @@ export async function GET(request: Request) {
   const token = await resolvePublicRequestToken({ tokenId, token: rawToken });
   if (!token || token.mode !== "EMBEDDED") {
     return apiError(401, "INVALID_TOKEN", "Embedded request token is invalid, expired or revoked");
+  }
+  if (!hasPublicRequestScope(token, "maintenance:request:status")) {
+    return apiError(403, "TOKEN_SCOPE_DENIED", "Scoped token cannot read maintenance request status");
   }
 
   const proofPayload = verifyEmbedProof({
