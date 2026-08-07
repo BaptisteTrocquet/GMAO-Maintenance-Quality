@@ -6,13 +6,23 @@ const DEMO_WORK_ORDER_DUE_AT = new Date("2026-02-01T00:00:00.000Z");
 const DEMO_PM_NEXT_DUE_AT = new Date("2026-02-15T00:00:00.000Z");
 
 async function main() {
+  const organization = await prisma.organization.upsert({
+    where: { slug: "demo-operations" },
+    update: {},
+    create: {
+      slug: "demo-operations",
+      name: "Demo Operations",
+      timezone: "Europe/Paris",
+      locale: "en",
+    },
+  });
+
   const manager = await prisma.user.upsert({
     where: { email: "manager@example.local" },
     update: {},
     create: {
       email: "manager@example.local",
       displayName: "Demo Maintenance Manager",
-      role: "MAINTENANCE_MANAGER",
     },
   });
 
@@ -22,7 +32,6 @@ async function main() {
     create: {
       email: "technician@example.local",
       displayName: "Demo Technician",
-      role: "TECHNICIAN",
     },
   });
 
@@ -32,14 +41,67 @@ async function main() {
     create: {
       email: "approver@example.local",
       displayName: "Demo Document Approver",
-      role: "APPROVER",
+    },
+  });
+
+  await prisma.organizationMembership.upsert({
+    where: {
+      organizationId_userId: {
+        organizationId: organization.id,
+        userId: manager.id,
+      },
+    },
+    update: { role: "MAINTENANCE_MANAGER", allSites: true, active: true },
+    create: {
+      organizationId: organization.id,
+      userId: manager.id,
+      role: "MAINTENANCE_MANAGER",
+      allSites: true,
+    },
+  });
+
+  await prisma.organizationMembership.upsert({
+    where: {
+      organizationId_userId: {
+        organizationId: organization.id,
+        userId: technician.id,
+      },
+    },
+    update: { role: "TECHNICIAN", allSites: true, active: true },
+    create: {
+      organizationId: organization.id,
+      userId: technician.id,
+      role: "TECHNICIAN",
+      allSites: true,
+    },
+  });
+
+  await prisma.organizationMembership.upsert({
+    where: {
+      organizationId_userId: {
+        organizationId: organization.id,
+        userId: approver.id,
+      },
+    },
+    update: { role: "QUALITY_MANAGER", allSites: true, active: true },
+    create: {
+      organizationId: organization.id,
+      userId: approver.id,
+      role: "QUALITY_MANAGER",
+      allSites: true,
     },
   });
 
   const site = await prisma.site.upsert({
-    where: { code: "NORTH" },
+    where: {
+      organizationId_code: {
+        organizationId: organization.id,
+        code: "NORTH",
+      },
+    },
     update: {},
     create: {
+      organizationId: organization.id,
       code: "NORTH",
       name: "North Plant",
       description: "Synthetic demonstration site",
