@@ -4,6 +4,7 @@ import { apiData, apiError } from "@/lib/api-response";
 import { AccessDeniedError, assertSitePermission } from "@/lib/access-control";
 import { authenticateRequest } from "@/lib/auth/request-auth";
 import { db } from "@/lib/db";
+import { can, type Permission } from "@/lib/permissions";
 import {
   assertTransitionRequirements,
   deriveTransitionDates,
@@ -14,9 +15,21 @@ import {
 const updateSchema = z.object({
   organizationId: z.string().min(1),
   siteId: z.string().min(1),
-  status: z.enum(["REQUESTED", "APPROVED", "PLANNED", "IN_PROGRESS", "BLOCKED", "COMPLETED", "CANCELLED"]).optional(),
+  status: z
+    .enum([
+      "REQUESTED",
+      "APPROVED",
+      "PLANNED",
+      "IN_PROGRESS",
+      "BLOCKED",
+      "COMPLETED",
+      "CANCELLED",
+    ])
+    .optional(),
   priority: z.enum(["LOW", "NORMAL", "HIGH", "URGENT"]).optional(),
-  type: z.enum(["CORRECTIVE", "PREVENTIVE", "INSPECTION", "IMPROVEMENT", "SAFETY", "OTHER"]).optional(),
+  type: z
+    .enum(["CORRECTIVE", "PREVENTIVE", "INSPECTION", "IMPROVEMENT", "SAFETY", "OTHER"])
+    .optional(),
   assigneeId: z.string().min(1).nullable().optional(),
   plannedStart: z.coerce.date().nullable().optional(),
   dueAt: z.coerce.date().nullable().optional(),
@@ -55,9 +68,15 @@ export async function PATCH(
   if ("error" in auth) return auth.error;
 
   const existing = await db.workOrder.findFirst({
-    where: { id: workOrderId, siteId: parsed.data.siteId, site: { organizationId: parsed.data.organizationId, active: true } },
+    where: {
+      id: workOrderId,
+      siteId: parsed.data.siteId,
+      site: { organizationId: parsed.data.organizationId, active: true },
+    },
   });
-  if (!existing) return apiError(404, "WORK_ORDER_NOT_FOUND", "Work order not found in site scope");
+  if (!existing) {
+    return apiError(404, "WORK_ORDER_NOT_FOUND", "Work order not found in site scope");
+  }
 
   const triageFields = ["priority", "type", "assigneeId", "plannedStart", "dueAt"];
   const hasTriageUpdate = triageFields.some((field) => hasOwn(parsed.data, field));
@@ -75,18 +94,28 @@ export async function PATCH(
     }
   }
 
+  let requiredStatusPermission: Permission | null = null;
   if (hasStatusTransition && parsed.data.status) {
     try {
-      assertSitePermission(
-        auth.tenant.scope,
-        existing.siteId,
-        transitionPermission(existing.status, parsed.data.status),
-      );
+      requiredStatusPermission = transitionPermission(existing.status, parsed.data.status);
+      assertSitePermission(auth.tenant.scope, existing.siteId, requiredStatusPermission);
     } catch (error) {
       if (error instanceof WorkOrderWorkflowError) {
         return apiError(409, error.code, error.message);
       }
       return accessError(error);
+    }
+
+    if (
+      requiredStatusPermission === "work:update" &&
+      !can(auth.tenant.scope.role, "work:manage") &&
+      existing.assigneeId !== auth.session.user.id
+    ) {
+      return apiError(
+        403,
+        "NOT_ASSIGNED",
+        "Only the assigned technician can execute this work order",
+      );
     }
   }
 
@@ -103,7 +132,11 @@ export async function PATCH(
       select: { id: true },
     });
     if (!membership) {
-      return apiError(404, "ASSIGNEE_NOT_FOUND", "Assignee is not an active maintenance member for this site");
+      return apiError(
+        404,
+        "ASSIGNEE_NOT_FOUND",
+        "Assignee is not an active maintenance member for this site",
+      );
     }
   }
 
@@ -117,8 +150,8 @@ export async function PATCH(
   }
 
   const data: Prisma.WorkOrderUncheckedUpdateInput = {};
-  if (hasOwn(parsed.data, "priority")) data.priority = parsed.data.priority;
-  if (hasOwn(parsed.data, "type")) data.type = parsed.data.type;
+  if (parsed.data.priority !== undefined) data.priority = parsed.data.priority;
+  if (parsed.data.type !== undefined) data.type = parsed.data.type;
   if (hasOwn(parsed.data, "assigneeId")) data.assigneeId = parsed.data.assigneeId ?? null;
   if (hasOwn(parsed.data, "plannedStart")) data.plannedStart = parsed.data.plannedStart ?? null;
   if (hasOwn(parsed.data, "dueAt")) data.dueAt = parsed.data.dueAt ?? null;
