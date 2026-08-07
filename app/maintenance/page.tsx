@@ -12,7 +12,7 @@ function formatMeterValue(value: number | null, unit?: string | null) {
 }
 
 export default async function MaintenancePage() {
-  const [workOrders, plans] = await Promise.all([
+  const [workOrders, plans, reminders] = await Promise.all([
     db.workOrder.findMany({
       include: { site: true, asset: true, assignee: true, team: true },
       orderBy: { requestedAt: "desc" },
@@ -26,6 +26,15 @@ export default async function MaintenancePage() {
         checklistItems: true,
       },
       orderBy: [{ nextDueAt: "asc" }, { nextDueMeterValue: "asc" }],
+    }),
+    db.maintenanceReminder.findMany({
+      where: { status: "ACTIVE" },
+      include: {
+        site: { select: { code: true } },
+        workOrder: { select: { id: true, number: true, status: true } },
+      },
+      orderBy: { dueAt: "asc" },
+      take: 20,
     }),
   ]);
   const now = new Date();
@@ -87,6 +96,45 @@ export default async function MaintenancePage() {
         </div>
         <div className="muted">
           Score starts at 100 and applies transparent penalties for overdue plans, overdue preventive work orders and near-term due work.
+        </div>
+      </div>
+
+      <div className="section card">
+        <h2>Preventive reminders</h2>
+        <div className="responsive-table">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Site</th>
+                <th>Asset</th>
+                <th>Reminder</th>
+                <th>Due</th>
+                <th>Lead</th>
+                <th>WO status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {reminders.map((reminder) => (
+                <tr key={reminder.id}>
+                  <td>{reminder.site.code}</td>
+                  <td>{reminder.assetCode ?? "—"}</td>
+                  <td>
+                    <Link className="table-link" href={`/maintenance/${reminder.workOrder.id}`}>
+                      {reminder.title}
+                    </Link>
+                  </td>
+                  <td>{formatDate(reminder.dueAt)}</td>
+                  <td>{reminder.leadDays} day{reminder.leadDays === 1 ? "" : "s"}</td>
+                  <td><span className="badge">{reminder.workOrder.status}</span></td>
+                </tr>
+              ))}
+              {reminders.length === 0 ? (
+                <tr>
+                  <td colSpan={6}>No active preventive reminders.</td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
         </div>
       </div>
 
