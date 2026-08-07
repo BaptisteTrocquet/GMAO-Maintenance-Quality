@@ -27,6 +27,7 @@ jobs:
 
     env:
       DATABASE_URL: postgresql://opengmao:opengmao@localhost:5432/opengmao?schema=public
+      NODE_ENV: test
       CI: true
 
     steps:
@@ -49,6 +50,12 @@ jobs:
 
       - name: Typecheck
         run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit tests
+        run: npm run test
 
       - name: Build
         run: npm run build
