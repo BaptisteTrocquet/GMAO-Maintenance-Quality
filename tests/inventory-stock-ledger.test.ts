@@ -13,9 +13,13 @@ const mocks = vi.hoisted(() => ({
   balanceUpsert: vi.fn(),
   balanceCreate: vi.fn(),
   auditCreate: vi.fn(),
+  reservedQuantityForOthers: vi.fn(),
 }));
 
 vi.mock("@/lib/db", () => ({ db: {} }));
+vi.mock("@/lib/inventory/reservations", () => ({
+  reservedQuantityForOthers: mocks.reservedQuantityForOthers,
+}));
 
 import { applyStockMovement } from "@/lib/inventory/stock";
 
@@ -66,6 +70,7 @@ describe("inventory stock ledger", () => {
     mocks.balanceUpdateMany.mockResolvedValue({ count: 1 });
     mocks.balanceUpsert.mockResolvedValue({ id: "balance-a" });
     mocks.balanceCreate.mockResolvedValue({ id: "balance-a" });
+    mocks.reservedQuantityForOthers.mockResolvedValue(0);
     mocks.movementCreate.mockImplementation(async ({ data }) => ({
       id: "movement-a",
       ...data,
@@ -110,6 +115,11 @@ describe("inventory stock ledger", () => {
     });
 
     expect(result.idempotent).toBe(false);
+    expect(mocks.reservedQuantityForOthers).toHaveBeenCalledWith(tx, {
+      binId: "bin-a",
+      partId: "part-a",
+      workOrderId: null,
+    });
     expect(mocks.balanceUpdateMany).toHaveBeenCalledWith({
       where: { id: "balance-a", quantity: { gte: 2 } },
       data: { quantity: { decrement: 2 } },
@@ -125,6 +135,36 @@ describe("inventory stock ledger", () => {
     expect(mocks.movementCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({ delta: -2, balanceAfter: 3, partQuantityAfter: 8 }),
     });
+  });
+
+  it("prevents a generic issue from consuming stock reserved for work orders", async () => {
+    mocks.reservedQuantityForOthers.mockResolvedValue(4);
+
+    await expect(
+      applyStockMovement(tx, { ...baseInput, type: "ISSUE", quantity: 2 }),
+    ).rejects.toMatchObject({ code: "INSUFFICIENT_STOCK" });
+
+    expect(mocks.balanceUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.movementCreate).not.toHaveBeenCalled();
+  });
+
+  it("lets a work order consume its own reservation while protecting other reservations", async () => {
+    mocks.reservedQuantityForOthers.mockResolvedValue(2);
+
+    await applyStockMovement(tx, {
+      ...baseInput,
+      type: "WORK_ORDER_CONSUMPTION",
+      quantity: 3,
+      referenceType: "WorkOrder",
+      referenceId: "wo-1",
+    });
+
+    expect(mocks.reservedQuantityForOthers).toHaveBeenCalledWith(tx, {
+      binId: "bin-a",
+      partId: "part-a",
+      workOrderId: "wo-1",
+    });
+    expect(mocks.balanceUpdateMany).toHaveBeenCalled();
   });
 
   it("prevents silent negative stock when a concurrent issue exhausts the bin", async () => {
