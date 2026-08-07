@@ -200,12 +200,6 @@ export async function generateMeterMaintenanceWorkOrders(input: {
     select: { id: true, allowRollover: true },
   });
   if (!meter) return { meterFound: false as const, generated: [], existing: [] };
-  if (meter.allowRollover) {
-    throw new MeterMaintenanceSchedulerError(
-      "ROLLOVER_UNSUPPORTED",
-      "Meter recurrence currently requires a monotonic meter without rollover",
-    );
-  }
 
   const plans = await db.maintenancePlan.findMany({
     where: {
@@ -222,6 +216,13 @@ export async function generateMeterMaintenanceWorkOrders(input: {
     },
     orderBy: { nextDueMeterValue: "asc" },
   });
+
+  if (meter.allowRollover && plans.length > 0) {
+    throw new MeterMaintenanceSchedulerError(
+      "ROLLOVER_UNSUPPORTED",
+      "Meter recurrence currently requires a monotonic meter without rollover",
+    );
+  }
 
   const generated: Array<{ id: string; number: string; threshold: number }> = [];
   const existing: Array<{ id: string; number: string; threshold: number }> = [];
