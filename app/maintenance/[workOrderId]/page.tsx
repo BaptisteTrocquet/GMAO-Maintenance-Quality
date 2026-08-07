@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { db } from "@/lib/db";
+import { listWorkOrderReservations } from "@/lib/inventory/reservations";
 
 function formatDate(value: Date | null | undefined) {
   return value ? value.toISOString().replace("T", " ").slice(0, 16) : "—";
@@ -38,18 +39,55 @@ export default async function WorkOrderDetailPage({
       team: true,
       checkItems: true,
       parts: { include: { part: true } },
-      partConsumptions: { include: { part: true }, orderBy: { createdAt: "desc" } },
+      partConsumptions: {
+        include: { part: true, bin: { include: { warehouse: true } } },
+        orderBy: { createdAt: "desc" },
+      },
       attachments: { orderBy: { createdAt: "desc" } },
       documents: { include: { document: true } },
     },
   });
   if (!workOrder) notFound();
 
-  const audit = await db.auditLog.findMany({
-    where: { entityType: "WorkOrder", entityId: workOrder.id },
-    include: { actor: { select: { displayName: true } } },
-    orderBy: { createdAt: "desc" },
-  });
+  const [audit, reservations] = await Promise.all([
+    db.auditLog.findMany({
+      where: { entityType: "WorkOrder", entityId: workOrder.id },
+      include: { actor: { select: { displayName: true } } },
+      orderBy: { createdAt: "desc" },
+    }),
+    listWorkOrderReservations({
+      organizationId: workOrder.site.organizationId,
+      siteId: workOrder.siteId,
+      workOrderId: workOrder.id,
+    }),
+  ]);
+
+  const partIds = [...new Set(reservations.map((reservation) => reservation.partId))];
+  const binIds = [...new Set(reservations.map((reservation) => reservation.binId))];
+  const [reservationParts, reservationBins] = await Promise.all([
+    partIds.length
+      ? db.part.findMany({
+          where: { id: { in: partIds }, organizationId: workOrder.site.organizationId },
+          select: { id: true, sku: true, name: true, unit: true },
+        })
+      : [],
+    binIds.length
+      ? db.stockBin.findMany({
+          where: {
+            id: { in: binIds },
+            warehouse: { siteId: workOrder.siteId },
+          },
+          select: {
+            id: true,
+            code: true,
+            name: true,
+            warehouse: { select: { code: true, name: true } },
+          },
+        })
+      : [],
+  ]);
+  const partById = new Map(reservationParts.map((part) => [part.id, part]));
+  const binById = new Map(reservationBins.map((bin) => [bin.id, bin]));
 
   return (
     <>
@@ -110,13 +148,42 @@ export default async function WorkOrderDetailPage({
         </section>
 
         <section className="card">
+          <h2>Reserved parts</h2>
+          {reservations.length ? (
+            <div className="stack-list">
+              {reservations.map((reservation) => {
+                const part = partById.get(reservation.partId);
+                const bin = binById.get(reservation.binId);
+                const remaining = reservation.status === "ACTIVE"
+                  ? Math.max(reservation.quantity - reservation.consumedQuantity, 0)
+                  : 0;
+                return (
+                  <div key={reservation.id}>
+                    <strong>{part?.sku ?? reservation.partId}</strong> · {part?.name ?? "Part"}
+                    <span className="muted">
+                      {` · ${reservation.status} · reserved ${reservation.quantity}${part?.unit ? ` ${part.unit}` : ""}`}
+                      {` · consumed ${reservation.consumedQuantity} · remaining ${remaining}`}
+                      {bin ? ` · ${bin.warehouse.code}/${bin.code}` : ""}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          ) : <div className="muted">No stock reservations.</div>}
+        </section>
+
+        <section className="card">
           <h2>Parts consumed</h2>
           {workOrder.partConsumptions.length ? (
             <div className="stack-list">
               {workOrder.partConsumptions.map((consumption) => (
                 <div key={consumption.id}>
                   <strong>{consumption.part.sku}</strong> · {consumption.part.name}
-                  <span className="muted"> · {consumption.quantity} {consumption.part.unit} · {formatDate(consumption.createdAt)}</span>
+                  <span className="muted">
+                    {` · ${consumption.quantity} ${consumption.part.unit}`}
+                    {consumption.bin ? ` · ${consumption.bin.warehouse.code}/${consumption.bin.code}` : ""}
+                    {` · ${formatDate(consumption.createdAt)}`}
+                  </span>
                 </div>
               ))}
             </div>

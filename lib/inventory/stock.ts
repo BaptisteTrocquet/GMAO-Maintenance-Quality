@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { Prisma, type StockMovementType } from "@prisma/client";
 import { db } from "@/lib/db";
+import { reservedQuantityForOthers } from "@/lib/inventory/reservations";
 
 const MAX_TRANSACTION_ATTEMPTS = 4;
 
@@ -158,6 +159,24 @@ export async function applyStockMovement(
     if (!current) {
       throw new StockMovementError("INSUFFICIENT_STOCK", "No stock is available in this bin");
     }
+
+    const workOrderId =
+      input.type === "WORK_ORDER_CONSUMPTION" && input.referenceType === "WorkOrder"
+        ? input.referenceId
+        : null;
+    const reservedForOthers = await reservedQuantityForOthers(tx, {
+      binId: input.binId,
+      partId: input.partId,
+      workOrderId,
+    });
+    const availableToMovement = currentBalance - reservedForOthers;
+    if (availableToMovement < Math.abs(delta)) {
+      throw new StockMovementError(
+        "INSUFFICIENT_STOCK",
+        "Stock movement would consume quantity reserved for another work order",
+      );
+    }
+
     const balanceUpdate = await tx.stockBalance.updateMany({
       where: {
         id: current.id,
