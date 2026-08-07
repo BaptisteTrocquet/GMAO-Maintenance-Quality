@@ -74,6 +74,7 @@ const clientSource = String.raw`(() => {
       }
 
       const workOrder = body?.data?.workOrder;
+      const trackingId = body?.data?.trackingId || null;
       status.textContent = workOrder?.number
         ? "Request sent: " + workOrder.number
         : "Request sent successfully.";
@@ -84,6 +85,7 @@ const clientSource = String.raw`(() => {
         window.parent.postMessage(
           {
             type: "opengmao:maintenance-request-created",
+            trackingId,
             workOrder: workOrder ? { number: workOrder.number, status: workOrder.status } : null,
           },
           origin,
