@@ -62,6 +62,20 @@ The viewer displays traceability metadata and always provides the verified contr
 
 Dynamic `assetCode`, `documentCode` and proof values are HTML-attribute escaped before iframe markup is emitted.
 
+The KPI iframe requires `kpi:read` and is available at:
+
+```html
+<iframe
+  title="Maintenance KPIs"
+  src="https://gmao.example.test/embed/kpi-card?tokenId=TOKEN_ID#token=SCOPED_TOKEN_SECRET"
+  referrerpolicy="strict-origin"
+  sandbox="allow-scripts allow-same-origin"
+  style="width:100%;max-width:760px;height:330px;border:0"
+></iframe>
+```
+
+The KPI contract is aggregate-only and site-scoped. It returns four counts: open work orders, overdue work orders, work orders currently in progress, and non-archived assets out of service, plus the generation timestamp. It never exposes work-order titles/numbers, user identities, asset codes/names, assignees, teams or internal IDs. KPI reads use the same exact-origin, bearer-token and proof model and are limited to 120 views/hour/token.
+
 ### Level C — script-loader widgets
 Target developer experience:
 
@@ -94,6 +108,7 @@ POST /api/v1/public/maintenance-requests?tokenId=<non-secret token id>
 GET  /api/v1/public/request-status?tokenId=<token id>&trackingId=<opaque tracking id>
 GET  /api/v1/public/assets?tokenId=<token id>&assetCode=<asset code>
 GET  /api/v1/public/documents?tokenId=<token id>&documentCode=<document code>&asOf=<optional ISO date>
+GET  /api/v1/public/kpis?tokenId=<token id>
 ```
 
 The pre-version endpoint `/api/public/maintenance-requests` remains available for backward compatibility and delegates to the same handler as v1. Compatibility tests prevent the two routes from drifting.
@@ -118,7 +133,7 @@ Supported capabilities are:
 - `maintenance:request:status` — read the minimal public status for a request created by the same token
 - `asset:read` — read minimal asset cards from the token's site
 - `document:read` — read effective, integrity-verified controlled documents applicable to the token's site
-- `kpi:read` — reserved for embeddable KPI cards
+- `kpi:read` — read aggregate maintenance KPIs for the token's site
 
 Example token creation payload:
 
@@ -133,7 +148,8 @@ Example token creation payload:
     "maintenance:request:create",
     "maintenance:request:status",
     "asset:read",
-    "document:read"
+    "document:read",
+    "kpi:read"
   ],
   "expiresInDays": 30
 }
