@@ -15,7 +15,7 @@ const requestSchema = z.object({
   description: z.string().max(5000).nullable().optional(),
   assetCode: z.string().trim().min(1).max(50).nullable().optional(),
   requesterName: z.string().trim().min(1).max(150).nullable().optional(),
-  requesterEmail: z.email().max(320).nullable().optional(),
+  requesterEmail: z.string().email().max(320).nullable().optional(),
   requesterRef: z.string().trim().min(1).max(150).nullable().optional(),
 });
 
