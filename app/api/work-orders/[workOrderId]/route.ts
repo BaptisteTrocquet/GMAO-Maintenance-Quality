@@ -4,7 +4,8 @@ import { apiData, apiError } from "@/lib/api-response";
 import { AccessDeniedError, assertSitePermission } from "@/lib/access-control";
 import { authenticateRequest } from "@/lib/auth/request-auth";
 import { db } from "@/lib/db";
-import { can, type Permission } from "@/lib/permissions";
+import type { Permission } from "@/lib/permissions";
+import { canExecuteWorkOrder } from "@/lib/work-orders/authorization";
 import {
   assertTransitionRequirements,
   deriveTransitionDates,
@@ -31,6 +32,7 @@ const updateSchema = z.object({
     .enum(["CORRECTIVE", "PREVENTIVE", "INSPECTION", "IMPROVEMENT", "SAFETY", "OTHER"])
     .optional(),
   assigneeId: z.string().min(1).nullable().optional(),
+  teamId: z.string().min(1).nullable().optional(),
   plannedStart: z.coerce.date().nullable().optional(),
   dueAt: z.coerce.date().nullable().optional(),
   statusNote: z.string().max(1000).nullable().optional(),
@@ -79,7 +81,7 @@ export async function PATCH(
     return apiError(404, "WORK_ORDER_NOT_FOUND", "Work order not found in site scope");
   }
 
-  const triageFields = ["priority", "type", "assigneeId", "plannedStart", "dueAt"];
+  const triageFields = ["priority", "type", "assigneeId", "teamId", "plannedStart", "dueAt"];
   const hasTriageUpdate = triageFields.some((field) => hasOwn(parsed.data, field));
   const hasStatusTransition = parsed.data.status !== undefined && parsed.data.status !== existing.status;
 
@@ -109,13 +111,18 @@ export async function PATCH(
 
     if (
       requiredStatusPermission === "work:update" &&
-      !can(auth.tenant.scope.role, "work:manage") &&
-      existing.assigneeId !== auth.session.user.id
+      !(await canExecuteWorkOrder({
+        role: auth.tenant.scope.role,
+        userId: auth.session.user.id,
+        siteId: existing.siteId,
+        assigneeId: existing.assigneeId,
+        teamId: existing.teamId ?? null,
+      }))
     ) {
       return apiError(
         403,
         "NOT_ASSIGNED",
-        "Only the assigned technician can execute this work order",
+        "Only the assigned technician or an assigned team member can execute this work order",
       );
     }
   }
@@ -154,6 +161,16 @@ export async function PATCH(
     }
   }
 
+  if (hasOwn(parsed.data, "teamId") && parsed.data.teamId) {
+    const team = await db.maintenanceTeam.findFirst({
+      where: { id: parsed.data.teamId, siteId: existing.siteId, active: true },
+      select: { id: true },
+    });
+    if (!team) {
+      return apiError(404, "TEAM_NOT_FOUND", "Maintenance team not found in site scope");
+    }
+  }
+
   const plannedStart = hasOwn(parsed.data, "plannedStart")
     ? (parsed.data.plannedStart ?? null)
     : existing.plannedStart;
@@ -167,6 +184,7 @@ export async function PATCH(
   if (parsed.data.priority !== undefined) data.priority = parsed.data.priority;
   if (parsed.data.type !== undefined) data.type = parsed.data.type;
   if (hasOwn(parsed.data, "assigneeId")) data.assigneeId = parsed.data.assigneeId ?? null;
+  if (hasOwn(parsed.data, "teamId")) data.teamId = parsed.data.teamId ?? null;
   if (hasOwn(parsed.data, "plannedStart")) data.plannedStart = parsed.data.plannedStart ?? null;
   if (hasOwn(parsed.data, "dueAt")) data.dueAt = parsed.data.dueAt ?? null;
 
