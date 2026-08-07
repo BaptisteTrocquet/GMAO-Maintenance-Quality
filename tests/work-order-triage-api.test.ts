@@ -25,18 +25,23 @@ import { PATCH } from "@/app/api/work-orders/[workOrderId]/route";
 function auth(role: "MAINTENANCE_MANAGER" | "TECHNICIAN") {
   return {
     session: { user: { id: role === "TECHNICIAN" ? "tech-1" : "manager-1" } },
-    tenant: { scope: { organizationId: "org-a", role, allSites: true, siteIds: [], active: true } },
+    tenant: {
+      scope: { organizationId: "org-a", role, allSites: true, siteIds: [], active: true },
+    },
   };
 }
 
-function existing(status: "REQUESTED" | "APPROVED" | "PLANNED" | "IN_PROGRESS" = "REQUESTED") {
+function existing(
+  status: "REQUESTED" | "APPROVED" | "PLANNED" | "IN_PROGRESS" = "REQUESTED",
+  assigneeId: string | null = null,
+) {
   return {
     id: "wo-1",
     number: "WO-000001",
     siteId: "site-a",
     assetId: null,
     requesterId: "requester-1",
-    assigneeId: null,
+    assigneeId,
     title: "Inspect utility area",
     description: null,
     type: "CORRECTIVE",
@@ -70,16 +75,20 @@ describe("work order triage API", () => {
     vi.clearAllMocks();
     mocks.authenticateRequest.mockResolvedValue(auth("MAINTENANCE_MANAGER"));
     mocks.workOrderFindFirst.mockResolvedValue(existing());
-    mocks.workOrderUpdate.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({
-      ...existing(),
-      ...data,
-    }));
+    mocks.workOrderUpdate.mockImplementation(
+      async ({ data }: { data: Record<string, unknown> }) => ({ ...existing(), ...data }),
+    );
     mocks.auditCreate.mockResolvedValue({ id: "audit-1" });
   });
 
   it("lets a maintenance manager approve and audit a requested work order", async () => {
     const response = await PATCH(
-      request({ organizationId: "org-a", siteId: "site-a", status: "APPROVED", statusNote: "Validated" }),
+      request({
+        organizationId: "org-a",
+        siteId: "site-a",
+        status: "APPROVED",
+        statusNote: "Validated",
+      }),
       params,
     );
 
@@ -136,10 +145,13 @@ describe("work order triage API", () => {
     expect(mocks.workOrderUpdate).not.toHaveBeenCalled();
   });
 
-  it("lets a technician start a planned work order", async () => {
+  it("lets the assigned technician start a planned work order", async () => {
     mocks.authenticateRequest.mockResolvedValue(auth("TECHNICIAN"));
-    mocks.workOrderFindFirst.mockResolvedValue(existing("PLANNED"));
-    mocks.workOrderUpdate.mockResolvedValue({ ...existing("PLANNED"), status: "IN_PROGRESS" });
+    mocks.workOrderFindFirst.mockResolvedValue(existing("PLANNED", "tech-1"));
+    mocks.workOrderUpdate.mockResolvedValue({
+      ...existing("PLANNED", "tech-1"),
+      status: "IN_PROGRESS",
+    });
 
     const response = await PATCH(
       request({ organizationId: "org-a", siteId: "site-a", status: "IN_PROGRESS" }),
@@ -151,6 +163,19 @@ describe("work order triage API", () => {
       where: { id: "wo-1" },
       data: expect.objectContaining({ status: "IN_PROGRESS", startedAt: expect.any(Date) }),
     });
+  });
+
+  it("blocks a technician from executing a work order assigned to someone else", async () => {
+    mocks.authenticateRequest.mockResolvedValue(auth("TECHNICIAN"));
+    mocks.workOrderFindFirst.mockResolvedValue(existing("PLANNED", "tech-2"));
+
+    const response = await PATCH(
+      request({ organizationId: "org-a", siteId: "site-a", status: "IN_PROGRESS" }),
+      params,
+    );
+
+    expect(response.status).toBe(403);
+    expect(mocks.workOrderUpdate).not.toHaveBeenCalled();
   });
 
   it("rejects an invalid direct transition from requested to completed", async () => {
