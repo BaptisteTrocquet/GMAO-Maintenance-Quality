@@ -29,6 +29,11 @@ function request(siteId = "site-a", horizonDays = "30") {
   );
 }
 
+async function expectStatus(response: Response | undefined, status: number) {
+  expect(response).toBeDefined();
+  expect(response?.status).toBe(status);
+}
+
 describe("maintenance forecast API", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -45,7 +50,7 @@ describe("maintenance forecast API", () => {
   it("returns a site-scoped forecast to a user with maintenance read access", async () => {
     const response = await GET(request());
 
-    expect(response.status).toBe(200);
+    await expectStatus(response, 200);
     expect(mocks.getMaintenanceForecast).toHaveBeenCalledWith({
       organizationId: "org-a",
       siteId: "site-a",
@@ -56,14 +61,14 @@ describe("maintenance forecast API", () => {
   it("rejects a site outside the user's tenant scope", async () => {
     const response = await GET(request("site-b"));
 
-    expect(response.status).toBe(403);
+    await expectStatus(response, 403);
     expect(mocks.getMaintenanceForecast).not.toHaveBeenCalled();
   });
 
   it("rejects an excessive forecast horizon", async () => {
     const response = await GET(request("site-a", "365"));
 
-    expect(response.status).toBe(400);
+    await expectStatus(response, 400);
     expect(mocks.authenticateRequest).not.toHaveBeenCalled();
   });
 });
