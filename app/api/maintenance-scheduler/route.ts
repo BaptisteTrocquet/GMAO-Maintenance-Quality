@@ -2,12 +2,17 @@ import { z } from "zod";
 import { apiData, apiError } from "@/lib/api-response";
 import { AccessDeniedError, assertSitePermission } from "@/lib/access-control";
 import { authenticateRequest } from "@/lib/auth/request-auth";
-import { generateCalendarMaintenanceWorkOrders, MaintenanceSchedulerError } from "@/lib/maintenance/scheduler";
+import { generatePreventiveMaintenanceReminders } from "@/lib/maintenance/reminders";
+import {
+  generateCalendarMaintenanceWorkOrders,
+  MaintenanceSchedulerError,
+} from "@/lib/maintenance/scheduler";
 
 const runSchema = z.object({
   organizationId: z.string().min(1),
   siteId: z.string().min(1),
   throughDate: z.coerce.date().optional(),
+  reminderLeadDays: z.number().int().min(1).max(30).default(7),
 });
 
 export async function POST(request: Request) {
@@ -54,7 +59,17 @@ export async function POST(request: Request) {
       actorId: auth.session.user.id,
     });
     if (!result.siteFound) return apiError(404, "SITE_NOT_FOUND", "Site not found");
-    return apiData(result);
+
+    const reminders = await generatePreventiveMaintenanceReminders({
+      organizationId: parsed.data.organizationId,
+      siteId: parsed.data.siteId,
+      leadDays: parsed.data.reminderLeadDays,
+      now,
+      actorId: auth.session.user.id,
+    });
+    if (!reminders.siteFound) return apiError(404, "SITE_NOT_FOUND", "Site not found");
+
+    return apiData({ ...result, reminders });
   } catch (error) {
     if (error instanceof MaintenanceSchedulerError) {
       return apiError(409, error.code, error.message);

@@ -92,6 +92,12 @@ enum PublicRequestMode {
   EMBEDDED
 }
 
+enum MaintenanceReminderStatus {
+  ACTIVE
+  DISMISSED
+  EXPIRED
+}
+
 model User {
   id                  String                   @id @default(cuid())
   email               String                   @unique
@@ -192,20 +198,21 @@ model SiteMembership {
 }
 
 model Site {
-  id               String            @id @default(cuid())
-  organizationId   String
-  name             String
-  code             String
-  description      String?
-  active           Boolean           @default(true)
-  createdAt        DateTime           @default(now())
-  updatedAt        DateTime           @updatedAt
-  organization     Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  memberships      SiteMembership[]
-  maintenanceTeams MaintenanceTeam[]
-  locations        Location[]
-  assets           Asset[]
-  workOrders       WorkOrder[]
+  id                   String                @id @default(cuid())
+  organizationId       String
+  name                 String
+  code                 String
+  description          String?
+  active               Boolean               @default(true)
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+  organization         Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  memberships          SiteMembership[]
+  maintenanceTeams     MaintenanceTeam[]
+  maintenanceReminders MaintenanceReminder[]
+  locations            Location[]
+  assets               Asset[]
+  workOrders           WorkOrder[]
 
   @@unique([organizationId, code])
   @@index([organizationId, active])
@@ -351,6 +358,7 @@ model WorkOrder {
   checkItems       WorkOrderCheckItem[]
   documents        WorkOrderDocument[]
   attachments      WorkOrderAttachment[]
+  reminders        MaintenanceReminder[]
 
   @@index([siteId, status, requestedAt])
   @@index([teamId])
@@ -378,6 +386,26 @@ model WorkOrderAttachment {
   workOrder   WorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
 
   @@index([workOrderId, createdAt])
+}
+
+model MaintenanceReminder {
+  id            String                    @id @default(cuid())
+  siteId        String
+  workOrderId   String
+  occurrenceKey String                    @unique
+  title         String
+  assetCode     String?
+  dueAt         DateTime
+  remindAt      DateTime
+  leadDays      Int
+  status        MaintenanceReminderStatus @default(ACTIVE)
+  createdAt     DateTime                  @default(now())
+  dismissedAt   DateTime?
+  site          Site                      @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  workOrder     WorkOrder                 @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+
+  @@index([siteId, status, dueAt])
+  @@index([workOrderId, status])
 }
 
 model MaintenancePlan {
