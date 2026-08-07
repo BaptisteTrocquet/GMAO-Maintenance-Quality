@@ -7,6 +7,16 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum MembershipRole {
+  OWNER
+  ADMIN
+  MAINTENANCE_MANAGER
+  TECHNICIAN
+  QUALITY_MANAGER
+  OPERATOR
+  VIEWER
+}
+
 enum AssetStatus {
   ACTIVE
   INACTIVE
@@ -71,27 +81,77 @@ enum MaintenanceFrequencyUnit {
 }
 
 model User {
-  id                  String             @id @default(cuid())
-  email               String             @unique
+  id                  String                   @id @default(cuid())
+  email               String                   @unique
   displayName         String
-  role                String
-  createdAt           DateTime           @default(now())
-  updatedAt           DateTime           @updatedAt
-  assignedWorkOrders  WorkOrder[]        @relation("AssignedWorkOrders")
-  requestedWorkOrders WorkOrder[]        @relation("RequestedWorkOrders")
+  active              Boolean                  @default(true)
+  createdAt           DateTime                 @default(now())
+  updatedAt           DateTime                 @updatedAt
+  memberships         OrganizationMembership[]
+  assignedWorkOrders  WorkOrder[]              @relation("AssignedWorkOrders")
+  requestedWorkOrders WorkOrder[]              @relation("RequestedWorkOrders")
   documentApprovals   DocumentApproval[]
   auditLogs           AuditLog[]
 }
 
-model Site {
-  id          String     @id @default(cuid())
+model Organization {
+  id          String                   @id @default(cuid())
+  slug        String                   @unique
   name        String
-  code        String     @unique
-  description String?
-  createdAt   DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
-  locations   Location[]
-  assets      Asset[]
+  timezone    String                   @default("UTC")
+  locale      String                   @default("en")
+  active      Boolean                  @default(true)
+  createdAt   DateTime                 @default(now())
+  updatedAt   DateTime                 @updatedAt
+  sites       Site[]
+  memberships OrganizationMembership[]
+}
+
+model OrganizationMembership {
+  id             String           @id @default(cuid())
+  organizationId String
+  userId         String
+  role           MembershipRole   @default(VIEWER)
+  allSites       Boolean          @default(false)
+  active         Boolean          @default(true)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user           User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  siteMemberships SiteMembership[]
+
+  @@unique([organizationId, userId])
+  @@index([userId, active])
+}
+
+model SiteMembership {
+  id                       String                 @id @default(cuid())
+  organizationMembershipId String
+  siteId                   String
+  createdAt                DateTime               @default(now())
+  organizationMembership   OrganizationMembership @relation(fields: [organizationMembershipId], references: [id], onDelete: Cascade)
+  site                     Site                   @relation(fields: [siteId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationMembershipId, siteId])
+  @@index([siteId])
+}
+
+model Site {
+  id             String           @id @default(cuid())
+  organizationId String
+  name           String
+  code           String
+  description    String?
+  active         Boolean          @default(true)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  memberships    SiteMembership[]
+  locations      Location[]
+  assets         Asset[]
+
+  @@unique([organizationId, code])
+  @@index([organizationId, active])
 }
 
 model Location {
@@ -178,18 +238,18 @@ model WorkOrderCheckItem {
 }
 
 model MaintenancePlan {
-  id               String                    @id @default(cuid())
+  id               String                   @id @default(cuid())
   assetId          String
   name             String
   description      String?
   frequencyValue   Int
   frequencyUnit    MaintenanceFrequencyUnit
   nextDueAt        DateTime?
-  active           Boolean                   @default(true)
+  active           Boolean                  @default(true)
   estimatedMinutes Int?
-  createdAt        DateTime                  @default(now())
-  updatedAt        DateTime                  @updatedAt
-  asset            Asset                     @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  createdAt        DateTime                 @default(now())
+  updatedAt        DateTime                 @updatedAt
+  asset            Asset                    @relation(fields: [assetId], references: [id], onDelete: Cascade)
   checklistItems   MaintenancePlanCheckItem[]
 }
 
@@ -203,26 +263,26 @@ model MaintenancePlanCheckItem {
 }
 
 model Part {
-  id                 String          @id @default(cuid())
-  sku                String          @unique
-  name               String
-  description        String?
-  unit               String          @default("EA")
-  quantityOnHand     Float           @default(0)
-  reorderPoint       Float           @default(0)
-  unitCost           Decimal?        @db.Decimal(14, 4)
-  createdAt          DateTime        @default(now())
-  updatedAt          DateTime        @updatedAt
-  assetParts         AssetPart[]
-  workOrderParts     WorkOrderPart[]
+  id             String          @id @default(cuid())
+  sku            String          @unique
+  name           String
+  description    String?
+  unit           String          @default("EA")
+  quantityOnHand Float           @default(0)
+  reorderPoint   Float           @default(0)
+  unitCost       Decimal?        @db.Decimal(14, 4)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  assetParts     AssetPart[]
+  workOrderParts WorkOrderPart[]
 }
 
 model AssetPart {
-  assetId              String
-  partId               String
-  quantityRecommended  Float?
-  asset                 Asset @relation(fields: [assetId], references: [id], onDelete: Cascade)
-  part                  Part  @relation(fields: [partId], references: [id], onDelete: Cascade)
+  assetId             String
+  partId              String
+  quantityRecommended Float?
+  asset                Asset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  part                 Part  @relation(fields: [partId], references: [id], onDelete: Cascade)
 
   @@id([assetId, partId])
 }
