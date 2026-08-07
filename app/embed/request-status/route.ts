@@ -1,6 +1,10 @@
 import { db } from "@/lib/db";
 import { createEmbedProof, parentOriginFromReferrer } from "@/lib/embed/proof";
-import { isOriginAllowed } from "@/lib/public-requests/tokens";
+import {
+  getPublicRequestTokenScopes,
+  hasPublicRequestScope,
+  isOriginAllowed,
+} from "@/lib/public-requests/tokens";
 
 function htmlPage(proof: string, trackingId: string) {
   return `<!doctype html>
@@ -69,6 +73,11 @@ export async function GET(request: Request) {
     token.revokedAt ||
     (token.expiresAt && token.expiresAt <= now)
   ) {
+    return new Response("Embed unavailable", { status: 404 });
+  }
+
+  const scopes = await getPublicRequestTokenScopes(token.id);
+  if (!hasPublicRequestScope({ scopes }, "maintenance:request:status")) {
     return new Response("Embed unavailable", { status: 404 });
   }
 
