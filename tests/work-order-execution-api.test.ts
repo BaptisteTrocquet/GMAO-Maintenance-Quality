@@ -134,8 +134,12 @@ describe("work order execution API", () => {
     expect(mocks.transaction).not.toHaveBeenCalled();
   });
 
-  it("allows a maintenance manager to configure checklist items", async () => {
+  it("allows a maintenance manager to configure checklist items while planned", async () => {
     mocks.authenticateRequest.mockResolvedValue(auth("MAINTENANCE_MANAGER"));
+    mocks.workOrderFindFirst.mockReset();
+    mocks.workOrderFindFirst
+      .mockResolvedValueOnce(workOrder({ status: "PLANNED" }))
+      .mockResolvedValueOnce(workOrder({ status: "PLANNED" }));
 
     const response = await PATCH(
       request({
