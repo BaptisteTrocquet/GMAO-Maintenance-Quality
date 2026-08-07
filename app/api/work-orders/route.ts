@@ -19,11 +19,20 @@ async function nextNumber() {
   return `WO-${String(count + 1).padStart(6, "0")}`;
 }
 
+async function findActiveSite(organizationId: string, siteId: string) {
+  return db.site.findFirst({
+    where: { id: siteId, organizationId, active: true },
+    select: { id: true },
+  });
+}
+
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const organizationId = url.searchParams.get("organizationId");
   const siteId = url.searchParams.get("siteId");
-  if (!organizationId || !siteId) return apiError(400, "INVALID_SCOPE", "organizationId and siteId are required");
+  if (!organizationId || !siteId) {
+    return apiError(400, "INVALID_SCOPE", "organizationId and siteId are required");
+  }
 
   const auth = await authenticateRequest(request, organizationId);
   if ("error" in auth) return auth.error;
@@ -35,19 +44,24 @@ export async function GET(request: Request) {
     throw error;
   }
 
-  const site = await db.site.findFirst({ where: { id: siteId, organizationId, active: true }, select: { id: true } });
-  if (!site) return apiError(404, "SITE_NOT_FOUND", "Site not found");
+  if (!(await findActiveSite(organizationId, siteId))) {
+    return apiError(404, "SITE_NOT_FOUND", "Site not found");
+  }
 
-  return apiData(await db.workOrder.findMany({
-    where: { asset: { siteId } },
-    include: { asset: true, assignee: true },
-    orderBy: { requestedAt: "desc" },
-  }));
+  return apiData(
+    await db.workOrder.findMany({
+      where: { siteId },
+      include: { site: true, asset: true, assignee: true },
+      orderBy: { requestedAt: "desc" },
+    }),
+  );
 }
 
 export async function POST(request: Request) {
   const parsed = createSchema.safeParse(await request.json());
-  if (!parsed.success) return apiError(400, "INVALID_PAYLOAD", "Invalid work order payload", parsed.error.flatten());
+  if (!parsed.success) {
+    return apiError(400, "INVALID_PAYLOAD", "Invalid work order payload", parsed.error.flatten());
+  }
 
   const auth = await authenticateRequest(request, parsed.data.organizationId);
   if ("error" in auth) return auth.error;
@@ -59,21 +73,44 @@ export async function POST(request: Request) {
     throw error;
   }
 
-  if (parsed.data.assetId) {
-    const asset = await db.asset.findFirst({
-      where: { id: parsed.data.assetId, siteId: parsed.data.siteId, site: { organizationId: parsed.data.organizationId } },
-      select: { id: true },
-    });
-    if (!asset) return apiError(404, "ASSET_NOT_FOUND", "Asset not found in tenant scope");
+  if (!(await findActiveSite(parsed.data.organizationId, parsed.data.siteId))) {
+    return apiError(404, "SITE_NOT_FOUND", "Site not found");
   }
 
-  const data = {
-    assetId: parsed.data.assetId,
-    title: parsed.data.title,
-    description: parsed.data.description,
-    type: parsed.data.type,
-    priority: parsed.data.priority,
-  };
+  if (parsed.data.assetId) {
+    const asset = await db.asset.findFirst({
+      where: {
+        id: parsed.data.assetId,
+        siteId: parsed.data.siteId,
+        archivedAt: null,
+      },
+      select: { id: true },
+    });
+    if (!asset) return apiError(404, "ASSET_NOT_FOUND", "Asset not found in site scope");
+  }
 
-  return apiData(await db.workOrder.create({ data: { ...data, requesterId: auth.session.user.id, number: await nextNumber() } }), { status: 201 });
+  const created = await db.workOrder.create({
+    data: {
+      siteId: parsed.data.siteId,
+      assetId: parsed.data.assetId,
+      requesterId: auth.session.user.id,
+      number: await nextNumber(),
+      title: parsed.data.title,
+      description: parsed.data.description,
+      type: parsed.data.type,
+      priority: parsed.data.priority,
+    },
+  });
+
+  await db.auditLog.create({
+    data: {
+      actorId: auth.session.user.id,
+      entityType: "WorkOrder",
+      entityId: created.id,
+      action: "CREATED",
+      afterJson: JSON.stringify(created),
+    },
+  });
+
+  return apiData(created, { status: 201 });
 }

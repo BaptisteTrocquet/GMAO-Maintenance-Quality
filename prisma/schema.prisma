@@ -198,6 +198,7 @@ model Site {
   memberships    SiteMembership[]
   locations      Location[]
   assets         Asset[]
+  workOrders     WorkOrder[]
 
   @@unique([organizationId, code])
   @@index([organizationId, active])
@@ -255,14 +256,14 @@ model Asset {
 }
 
 model AssetStatusHistory {
-  id        String      @id @default(cuid())
-  assetId   String
-  fromStatus AssetStatus?
-  toStatus   AssetStatus
-  note       String?
+  id          String       @id @default(cuid())
+  assetId     String
+  fromStatus  AssetStatus?
+  toStatus    AssetStatus
+  note        String?
   changedById String?
-  changedAt   DateTime    @default(now())
-  asset       Asset       @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  changedAt   DateTime     @default(now())
+  asset       Asset        @relation(fields: [assetId], references: [id], onDelete: Cascade)
 
   @@index([assetId, changedAt])
 }
@@ -285,6 +286,7 @@ model AssetAttachment {
 model WorkOrder {
   id              String          @id @default(cuid())
   number          String          @unique
+  siteId          String
   assetId         String?
   requesterId     String?
   assigneeId      String?
@@ -303,12 +305,15 @@ model WorkOrder {
   completionNote  String?
   createdAt       DateTime        @default(now())
   updatedAt       DateTime        @updatedAt
+  site            Site            @relation(fields: [siteId], references: [id], onDelete: Cascade)
   asset           Asset?          @relation(fields: [assetId], references: [id])
   requester       User?           @relation("RequestedWorkOrders", fields: [requesterId], references: [id])
   assignee        User?           @relation("AssignedWorkOrders", fields: [assigneeId], references: [id])
   parts           WorkOrderPart[]
   checkItems      WorkOrderCheckItem[]
   documents       WorkOrderDocument[]
+
+  @@index([siteId, status, requestedAt])
 }
 
 model WorkOrderCheckItem {
@@ -433,7 +438,7 @@ model DocumentApproval {
   comment            String?
   decidedAt          DateTime?
   revision           DocumentRevision @relation(fields: [documentRevisionId], references: [id], onDelete: Cascade)
-  approver           User             @relation(fields: [approverId], references: [id])
+  approver           User              @relation(fields: [approverId], references: [id])
 
   @@unique([documentRevisionId, approverId])
 }

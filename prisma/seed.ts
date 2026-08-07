@@ -47,30 +47,52 @@ async function main() {
   await prisma.organizationMembership.upsert({
     where: { organizationId_userId: { organizationId: organization.id, userId: manager.id } },
     update: { role: "MAINTENANCE_MANAGER", allSites: true, active: true },
-    create: { organizationId: organization.id, userId: manager.id, role: "MAINTENANCE_MANAGER", allSites: true },
+    create: {
+      organizationId: organization.id,
+      userId: manager.id,
+      role: "MAINTENANCE_MANAGER",
+      allSites: true,
+    },
   });
 
   await prisma.organizationMembership.upsert({
     where: { organizationId_userId: { organizationId: organization.id, userId: technician.id } },
     update: { role: "TECHNICIAN", allSites: true, active: true },
-    create: { organizationId: organization.id, userId: technician.id, role: "TECHNICIAN", allSites: true },
+    create: {
+      organizationId: organization.id,
+      userId: technician.id,
+      role: "TECHNICIAN",
+      allSites: true,
+    },
   });
 
   await prisma.organizationMembership.upsert({
     where: { organizationId_userId: { organizationId: organization.id, userId: approver.id } },
     update: { role: "QUALITY_MANAGER", allSites: true, active: true },
-    create: { organizationId: organization.id, userId: approver.id, role: "QUALITY_MANAGER", allSites: true },
+    create: {
+      organizationId: organization.id,
+      userId: approver.id,
+      role: "QUALITY_MANAGER",
+      allSites: true,
+    },
   });
 
   const site = await prisma.site.upsert({
     where: { organizationId_code: { organizationId: organization.id, code: "NORTH" } },
     update: {},
-    create: { organizationId: organization.id, code: "NORTH", name: "North Plant", description: "Synthetic demonstration site" },
+    create: {
+      organizationId: organization.id,
+      code: "NORTH",
+      name: "North Plant",
+      description: "Synthetic demonstration site",
+    },
   });
 
   let utilities = await prisma.location.findFirst({ where: { siteId: site.id, code: "UTIL" } });
   if (!utilities) {
-    utilities = await prisma.location.create({ data: { siteId: site.id, code: "UTIL", name: "Utilities Area" } });
+    utilities = await prisma.location.create({
+      data: { siteId: site.id, code: "UTIL", name: "Utilities Area" },
+    });
   }
 
   const pump = await prisma.asset.upsert({
@@ -93,6 +115,7 @@ async function main() {
     await prisma.workOrder.create({
       data: {
         number: "WO-000001",
+        siteId: site.id,
         assetId: pump.id,
         requesterId: manager.id,
         assigneeId: technician.id,
@@ -106,7 +129,9 @@ async function main() {
     });
   }
 
-  let plan = await prisma.maintenancePlan.findFirst({ where: { assetId: pump.id, name: "Monthly pump inspection" } });
+  let plan = await prisma.maintenancePlan.findFirst({
+    where: { assetId: pump.id, name: "Monthly pump inspection" },
+  });
   if (!plan) {
     plan = await prisma.maintenancePlan.create({
       data: {
@@ -121,13 +146,30 @@ async function main() {
     });
   }
 
-  const checklistCount = await prisma.maintenancePlanCheckItem.count({ where: { maintenancePlanId: plan.id } });
+  const checklistCount = await prisma.maintenancePlanCheckItem.count({
+    where: { maintenancePlanId: plan.id },
+  });
   if (checklistCount === 0) {
     await prisma.maintenancePlanCheckItem.createMany({
       data: [
-        { maintenancePlanId: plan.id, sequence: 1, label: "Inspect leakage", mandatory: true },
-        { maintenancePlanId: plan.id, sequence: 2, label: "Check abnormal noise or vibration", mandatory: true },
-        { maintenancePlanId: plan.id, sequence: 3, label: "Record operating hours", mandatory: true },
+        {
+          maintenancePlanId: plan.id,
+          sequence: 1,
+          label: "Inspect leakage",
+          mandatory: true,
+        },
+        {
+          maintenancePlanId: plan.id,
+          sequence: 2,
+          label: "Check abnormal noise or vibration",
+          mandatory: true,
+        },
+        {
+          maintenancePlanId: plan.id,
+          sequence: 3,
+          label: "Record operating hours",
+          mandatory: true,
+        },
       ],
     });
   }
@@ -153,7 +195,9 @@ async function main() {
   });
 
   const doc = await prisma.document.upsert({
-    where: { organizationId_code: { organizationId: organization.id, code: "WI-MNT-001" } },
+    where: {
+      organizationId_code: { organizationId: organization.id, code: "WI-MNT-001" },
+    },
     update: {},
     create: {
       organizationId: organization.id,
@@ -183,7 +227,12 @@ async function main() {
   }
 
   await prisma.documentApproval.upsert({
-    where: { documentRevisionId_approverId: { documentRevisionId: revision.id, approverId: approver.id } },
+    where: {
+      documentRevisionId_approverId: {
+        documentRevisionId: revision.id,
+        approverId: approver.id,
+      },
+    },
     update: {},
     create: {
       documentRevisionId: revision.id,
