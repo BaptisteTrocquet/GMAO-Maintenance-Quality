@@ -41,7 +41,14 @@ describe("admin member API", () => {
   it("revokes active sessions when a membership is disabled", async () => {
     mocks.authenticateRequest.mockResolvedValueOnce({
       session: { user: { id: "admin-1" } },
-      tenant: { scope: { role: "ADMIN", organizationId: "org-a", siteIds: [] } },
+      tenant: {
+        scope: {
+          active: true,
+          role: "ADMIN",
+          allSites: true,
+          siteIds: [],
+        },
+      },
     });
     mocks.findFirst.mockResolvedValueOnce({ id: "membership-1", userId: "user-2" });
     mocks.update.mockResolvedValueOnce({
