@@ -104,7 +104,31 @@ The iframe server validates these values before generating `/embed/theme.css`. I
 
 ### Level D — Headless API / SDK
 
-For custom portals, use the versioned public API. A TypeScript SDK is planned separately.
+The TypeScript SDK source lives in `sdk/` and builds as the dependency-free ESM package `@opengmao/sdk` with generated declaration files.
+
+```ts
+import { OpenGmaoClient } from "@opengmao/sdk";
+
+const gmao = new OpenGmaoClient({
+  baseUrl: "https://gmao.example.test",
+  tokenId: "TOKEN_ID",
+  token: "SCOPED_TOKEN_SECRET",
+});
+
+const request = await gmao.maintenanceRequests.create({
+  title: "Unexpected vibration",
+  assetCode: "ASSET-100",
+});
+
+const status = await gmao.maintenanceRequests.status(request.trackingId);
+const asset = await gmao.assets.get("ASSET-100");
+const controlledCopy = await gmao.documents.download("SOP-100");
+const kpis = await gmao.kpis.get();
+```
+
+`documents.download()` returns `Uint8Array` file bytes plus revision, effective-date and SHA-256 traceability metadata. Non-2xx API responses throw `OpenGmaoApiError` with HTTP status, API code, safe message and optional validation details. A custom `fetch` implementation can be injected for server runtimes or tests.
+
+The SDK uses the same scoped-token capabilities and `/api/v1` contract as direct HTTP integrations; it does not use administrator credentials.
 
 ## Versioned public API
 

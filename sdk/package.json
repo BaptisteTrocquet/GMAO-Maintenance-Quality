@@ -1,0 +1,20 @@
+{
+  "name": "@opengmao/sdk",
+  "version": "0.1.0",
+  "description": "TypeScript client for the OpenGMAO versioned public API",
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "README.md"],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=18"
+  }
+}
