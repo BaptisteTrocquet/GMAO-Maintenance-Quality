@@ -20,7 +20,8 @@ import { GET } from "@/app/api/documents/route";
 describe("documents API tenant boundary", () => {
   it("requires an explicit organization scope", async () => {
     const response = await GET(new Request("http://localhost/api/documents"));
-    expect(response.status).toBe(400);
+    expect(response).toBeDefined();
+    expect(response?.status).toBe(400);
     expect(mocks.authenticateRequest).not.toHaveBeenCalled();
   });
 
@@ -33,7 +34,8 @@ describe("documents API tenant boundary", () => {
       new Request("http://localhost/api/documents?organizationId=org-other"),
     );
 
-    expect(response.status).toBe(401);
+    expect(response).toBeDefined();
+    expect(response?.status).toBe(401);
     expect(mocks.authenticateRequest).toHaveBeenCalledWith(
       expect.any(Request),
       "org-other",
