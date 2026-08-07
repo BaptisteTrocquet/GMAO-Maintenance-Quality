@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { db } from "@/lib/db";
-import { buildAssetQrPayload } from "@/lib/assets/qr";
+import { buildAssetQrPayload, buildAssetQrSvg } from "@/lib/assets/qr";
 
 function formatDate(value: Date | null | undefined) {
   return value ? value.toISOString().slice(0, 10) : "—";
@@ -42,13 +42,14 @@ export default async function AssetDetailPage({ params }: { params: Promise<{ as
   ].sort((a, b) => b.at.getTime() - a.at.getTime()).slice(0, 20);
 
   const qrPayload = buildAssetQrPayload({ assetId: asset.id });
+  const qrSvg = buildAssetQrSvg(qrPayload);
 
   return <>
     <div className="header asset-header"><div><Link className="muted" href="/assets">← Assets</Link><div className="title">{asset.code} · {asset.name}</div><div className="muted">{asset.site.name} / {asset.location?.name ?? "No location"}</div></div><div className="asset-status"><span className="badge">{asset.status}</span><span className="badge">{asset.criticality}</span></div></div>
     <div className="grid asset-summary-grid">
       <section className="card"><h2>Identity</h2><dl className="detail-list"><div><dt>Category</dt><dd>{asset.category ?? "—"}</dd></div><div><dt>Manufacturer</dt><dd>{asset.manufacturer ?? "—"}</dd></div><div><dt>Model</dt><dd>{asset.model ?? "—"}</dd></div><div><dt>Serial</dt><dd>{asset.serialNumber ?? "—"}</dd></div><div><dt>Parent</dt><dd>{asset.parentAsset?.code ?? "—"}</dd></div></dl></section>
       <section className="card"><h2>Lifecycle</h2><dl className="detail-list"><div><dt>Installed</dt><dd>{formatDate(asset.installedAt)}</dd></div><div><dt>Commissioned</dt><dd>{formatDate(asset.commissionedAt)}</dd></div><div><dt>Decommissioned</dt><dd>{formatDate(asset.decommissionedAt)}</dd></div><div><dt>Archived</dt><dd>{formatDate(asset.archivedAt)}</dd></div></dl></section>
-      <section className="card qr-card"><h2>QR label</h2><div className="qr-placeholder" aria-label={`QR payload ${qrPayload}`}><span>QR</span></div><code>{qrPayload}</code><div className="muted">Stable asset route for printable labels and scanners.</div></section>
+      <section className="card qr-card"><h2>QR label</h2><div className="qr-svg" dangerouslySetInnerHTML={{ __html: qrSvg }} /><code>{qrPayload}</code><div className="muted">Stable asset route for printable labels and scanners.</div></section>
     </div>
     <div className="grid grid-2 section">
       <section className="card"><h2>Meters</h2>{asset.meters.length ? <div className="stack-list">{asset.meters.map((meter) => <div key={meter.id}><strong>{meter.code}</strong> · {meter.name}<span className="muted"> {meter.readings[0] ? `${meter.readings[0].value} ${meter.unit}` : "No reading"}</span></div>)}</div> : <div className="muted">No meters.</div>}</section>
