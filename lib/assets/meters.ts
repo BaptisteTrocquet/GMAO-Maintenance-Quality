@@ -1,4 +1,5 @@
 import { db } from "@/lib/db";
+import { generateMeterMaintenanceWorkOrders } from "@/lib/maintenance/meter-scheduler";
 
 export async function createMeter(input: {
   siteId: string;
@@ -61,12 +62,13 @@ export async function addMeterReading(input: {
     );
   }
 
+  const readingAt = input.readingAt ?? new Date();
   const reading = await db.meterReading.create({
     data: {
       meterId: input.meterId,
       value: input.value,
       note: input.note ?? null,
-      readingAt: input.readingAt ?? new Date(),
+      readingAt,
     },
   });
 
@@ -78,6 +80,14 @@ export async function addMeterReading(input: {
       action: "CREATED",
       afterJson: JSON.stringify(reading),
     },
+  });
+
+  await generateMeterMaintenanceWorkOrders({
+    siteId: input.siteId,
+    meterId: input.meterId,
+    readingValue: input.value,
+    readingAt,
+    actorId: input.actorId,
   });
 
   return reading;

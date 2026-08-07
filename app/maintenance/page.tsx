@@ -6,6 +6,10 @@ function formatDate(value: Date | null) {
   return value ? value.toISOString().slice(0, 10) : "—";
 }
 
+function formatMeterValue(value: number | null, unit?: string | null) {
+  return value === null ? "—" : `${value.toLocaleString()}${unit ? ` ${unit}` : ""}`;
+}
+
 export default async function MaintenancePage() {
   const [workOrders, plans] = await Promise.all([
     db.workOrder.findMany({
@@ -15,9 +19,12 @@ export default async function MaintenancePage() {
     db.maintenancePlan.findMany({
       include: {
         asset: { include: { site: { include: { organization: { select: { timezone: true } } } } } },
+        meter: {
+          include: { readings: { orderBy: { readingAt: "desc" }, take: 1 } },
+        },
         checklistItems: true,
       },
-      orderBy: { nextDueAt: "asc" },
+      orderBy: [{ nextDueAt: "asc" }, { nextDueMeterValue: "asc" }],
     }),
   ]);
   const now = new Date();
@@ -77,7 +84,8 @@ export default async function MaintenancePage() {
               <tr>
                 <th>Asset</th>
                 <th>Plan</th>
-                <th>Frequency</th>
+                <th>Recurrence</th>
+                <th>Current meter</th>
                 <th>Next due</th>
                 <th>Following due</th>
                 <th>Status</th>
@@ -86,8 +94,9 @@ export default async function MaintenancePage() {
             </thead>
             <tbody>
               {plans.map((plan) => {
+                const isMeterPlan = plan.frequencyUnit === "METER";
                 const followingDueAt =
-                  plan.nextDueAt && plan.frequencyUnit !== "METER"
+                  plan.nextDueAt && !isMeterPlan
                     ? advanceCalendarDue({
                         currentDueAt: plan.nextDueAt,
                         frequencyValue: plan.frequencyValue,
@@ -95,15 +104,40 @@ export default async function MaintenancePage() {
                         timeZone: plan.asset.site.organization.timezone,
                       })
                     : null;
-                const overdue = plan.active && plan.nextDueAt ? plan.nextDueAt < now : false;
+                const latestMeterValue = plan.meter?.readings[0]?.value ?? null;
+                const followingDueMeterValue =
+                  isMeterPlan && plan.nextDueMeterValue !== null
+                    ? plan.nextDueMeterValue + plan.frequencyValue
+                    : null;
+                const calendarOverdue = plan.active && plan.nextDueAt ? plan.nextDueAt < now : false;
+                const meterDue =
+                  plan.active && isMeterPlan && latestMeterValue !== null && plan.nextDueMeterValue !== null
+                    ? latestMeterValue >= plan.nextDueMeterValue
+                    : false;
+                const recurrence = isMeterPlan
+                  ? `${plan.frequencyValue.toLocaleString()} ${plan.meter?.unit ?? "units"} · ${plan.meter?.code ?? "meter"}`
+                  : `${plan.frequencyValue} ${plan.frequencyUnit}`;
                 return (
                   <tr key={plan.id}>
                     <td>{plan.asset.code}</td>
                     <td>{plan.name}</td>
-                    <td>{plan.frequencyValue} {plan.frequencyUnit}</td>
-                    <td>{formatDate(plan.nextDueAt)}</td>
-                    <td>{formatDate(followingDueAt)}</td>
-                    <td><span className="badge">{plan.active ? (overdue ? "OVERDUE" : "ACTIVE") : "PAUSED"}</span></td>
+                    <td>{recurrence}</td>
+                    <td>{isMeterPlan ? formatMeterValue(latestMeterValue, plan.meter?.unit) : "—"}</td>
+                    <td>
+                      {isMeterPlan
+                        ? formatMeterValue(plan.nextDueMeterValue, plan.meter?.unit)
+                        : formatDate(plan.nextDueAt)}
+                    </td>
+                    <td>
+                      {isMeterPlan
+                        ? formatMeterValue(followingDueMeterValue, plan.meter?.unit)
+                        : formatDate(followingDueAt)}
+                    </td>
+                    <td>
+                      <span className="badge">
+                        {plan.active ? (calendarOverdue || meterDue ? "DUE" : "ACTIVE") : "PAUSED"}
+                      </span>
+                    </td>
                     <td>{plan.checklistItems.length}</td>
                   </tr>
                 );

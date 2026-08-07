@@ -15,9 +15,10 @@ const updateSchema = z.object({
   siteId: z.string().min(1),
   name: z.string().trim().min(1).max(200).optional(),
   description: z.string().max(5000).nullable().optional(),
-  frequencyValue: z.number().int().min(1).max(10_000).optional(),
-  frequencyUnit: z.enum(["DAY", "WEEK", "MONTH", "YEAR"]).optional(),
+  frequencyValue: z.number().int().min(1).max(10_000_000).optional(),
+  frequencyUnit: z.enum(["DAY", "WEEK", "MONTH", "YEAR", "METER"]).optional(),
   nextDueAt: z.coerce.date().nullable().optional(),
+  nextDueMeterValue: z.number().finite().min(0).nullable().optional(),
   estimatedMinutes: z.number().int().min(0).max(1_000_000).nullable().optional(),
   active: z.boolean().optional(),
   checklist: z.array(checklistItemSchema).max(200).optional(),
@@ -54,6 +55,7 @@ export async function PATCH(
     "frequencyValue",
     "frequencyUnit",
     "nextDueAt",
+    "nextDueMeterValue",
     "estimatedMinutes",
     "active",
     "checklist",
@@ -82,12 +84,36 @@ export async function PATCH(
     },
     include: {
       checklistItems: { orderBy: { sequence: "asc" } },
+      meter: { select: { id: true, code: true, name: true, unit: true } },
       asset: { include: { site: { include: { organization: { select: { timezone: true } } } } } },
     },
   });
   if (!existing) return apiError(404, "PLAN_NOT_FOUND", "Maintenance plan not found in site scope");
-  if (existing.frequencyUnit === "METER") {
-    return apiError(409, "METER_PLAN_UNSUPPORTED", "Meter-based plans are managed by the meter recurrence workflow");
+
+  const currentMode = existing.frequencyUnit === "METER" ? "METER" : "CALENDAR";
+  const requestedMode =
+    parsed.data.frequencyUnit === undefined
+      ? currentMode
+      : parsed.data.frequencyUnit === "METER"
+        ? "METER"
+        : "CALENDAR";
+  if (requestedMode !== currentMode) {
+    return apiError(
+      409,
+      "RECURRENCE_MODE_IMMUTABLE",
+      "Calendar and meter recurrence modes cannot be converted in-place; create a new plan",
+    );
+  }
+
+  if (currentMode === "METER") {
+    if (hasOwn(parsed.data, "nextDueAt")) {
+      return apiError(400, "INVALID_METER_PLAN_UPDATE", "nextDueAt is not valid for meter plans");
+    }
+    if (hasOwn(parsed.data, "nextDueMeterValue") && parsed.data.nextDueMeterValue === null) {
+      return apiError(400, "INVALID_METER_PLAN_UPDATE", "Meter plans require a nextDueMeterValue");
+    }
+  } else if (hasOwn(parsed.data, "nextDueMeterValue")) {
+    return apiError(400, "INVALID_CALENDAR_PLAN_UPDATE", "nextDueMeterValue is only valid for meter plans");
   }
 
   const updated = await db.$transaction(async (tx) => {
@@ -117,12 +143,18 @@ export async function PATCH(
           ? { frequencyUnit: parsed.data.frequencyUnit }
           : {}),
         ...(hasOwn(parsed.data, "nextDueAt") ? { nextDueAt: parsed.data.nextDueAt ?? null } : {}),
+        ...(hasOwn(parsed.data, "nextDueMeterValue")
+          ? { nextDueMeterValue: parsed.data.nextDueMeterValue ?? null }
+          : {}),
         ...(hasOwn(parsed.data, "estimatedMinutes")
           ? { estimatedMinutes: parsed.data.estimatedMinutes ?? null }
           : {}),
         ...(parsed.data.active !== undefined ? { active: parsed.data.active } : {}),
       },
-      include: { checklistItems: { orderBy: { sequence: "asc" } } },
+      include: {
+        meter: { select: { id: true, code: true, name: true, unit: true } },
+        checklistItems: { orderBy: { sequence: "asc" } },
+      },
     });
 
     const action =
@@ -144,15 +176,19 @@ export async function PATCH(
     return plan;
   });
 
-  const unit = updated.frequencyUnit as CalendarFrequencyUnit;
-  const followingDueAt = updated.nextDueAt
-    ? advanceCalendarDue({
-        currentDueAt: updated.nextDueAt,
-        frequencyValue: updated.frequencyValue,
-        frequencyUnit: unit,
-        timeZone: existing.asset.site.organization.timezone,
-      })
-    : null;
+  const followingDueAt =
+    updated.frequencyUnit !== "METER" && updated.nextDueAt
+      ? advanceCalendarDue({
+          currentDueAt: updated.nextDueAt,
+          frequencyValue: updated.frequencyValue,
+          frequencyUnit: updated.frequencyUnit as CalendarFrequencyUnit,
+          timeZone: existing.asset.site.organization.timezone,
+        })
+      : null;
+  const followingDueMeterValue =
+    updated.frequencyUnit === "METER" && updated.nextDueMeterValue !== null
+      ? updated.nextDueMeterValue + updated.frequencyValue
+      : null;
 
-  return apiData({ ...updated, followingDueAt });
+  return apiData({ ...updated, followingDueAt, followingDueMeterValue });
 }

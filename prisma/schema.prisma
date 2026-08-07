@@ -381,19 +381,24 @@ model WorkOrderAttachment {
 }
 
 model MaintenancePlan {
-  id               String                     @id @default(cuid())
-  assetId          String
-  name             String
-  description      String?
-  frequencyValue   Int
-  frequencyUnit    MaintenanceFrequencyUnit
-  nextDueAt        DateTime?
-  active           Boolean                    @default(true)
-  estimatedMinutes Int?
-  createdAt        DateTime                   @default(now())
-  updatedAt        DateTime                   @updatedAt
-  asset            Asset                      @relation(fields: [assetId], references: [id], onDelete: Cascade)
-  checklistItems   MaintenancePlanCheckItem[]
+  id                String                     @id @default(cuid())
+  assetId           String
+  meterId           String?
+  name              String
+  description       String?
+  frequencyValue    Int
+  frequencyUnit     MaintenanceFrequencyUnit
+  nextDueAt         DateTime?
+  nextDueMeterValue Float?
+  active            Boolean                    @default(true)
+  estimatedMinutes  Int?
+  createdAt         DateTime                   @default(now())
+  updatedAt         DateTime                   @updatedAt
+  asset             Asset                      @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  meter             Meter?                     @relation(fields: [meterId], references: [id], onDelete: SetNull)
+  checklistItems    MaintenancePlanCheckItem[]
+
+  @@index([meterId, active])
 }
 
 model MaintenancePlanCheckItem {
@@ -536,15 +541,16 @@ model WorkOrderDocument {
 }
 
 model Meter {
-  id            String         @id @default(cuid())
-  assetId       String
-  code          String
-  name          String
-  unit          String
-  allowRollover Boolean        @default(false)
-  createdAt     DateTime       @default(now())
-  asset         Asset          @relation(fields: [assetId], references: [id], onDelete: Cascade)
-  readings      MeterReading[]
+  id               String            @id @default(cuid())
+  assetId          String
+  code             String
+  name             String
+  unit             String
+  allowRollover    Boolean           @default(false)
+  createdAt        DateTime          @default(now())
+  asset            Asset             @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  readings         MeterReading[]
+  maintenancePlans MaintenancePlan[]
 
   @@unique([assetId, code])
 }

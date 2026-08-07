@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   authenticateRequest: vi.fn(),
   siteFindFirst: vi.fn(),
   assetFindFirst: vi.fn(),
+  meterFindFirst: vi.fn(),
   planFindFirst: vi.fn(),
   planFindMany: vi.fn(),
   planCreate: vi.fn(),
@@ -15,6 +16,7 @@ vi.mock("@/lib/db", () => ({
   db: {
     site: { findFirst: mocks.siteFindFirst },
     asset: { findFirst: mocks.assetFindFirst },
+    meter: { findFirst: mocks.meterFindFirst },
     maintenancePlan: {
       findFirst: mocks.planFindFirst,
       findMany: mocks.planFindMany,
@@ -72,17 +74,21 @@ describe("maintenance plans API", () => {
     mocks.authenticateRequest.mockResolvedValue(auth);
     mocks.siteFindFirst.mockResolvedValue({ id: "site-a", organization: { timezone: "Europe/Paris" } });
     mocks.assetFindFirst.mockResolvedValue({ id: "asset-1" });
+    mocks.meterFindFirst.mockResolvedValue({ id: "meter-1" });
     mocks.planFindFirst.mockResolvedValue(null);
     mocks.planCreate.mockResolvedValue({
       id: "plan-1",
       assetId: "asset-1",
+      meterId: null,
       name: "Monthly inspection",
       description: null,
       frequencyValue: 1,
       frequencyUnit: "MONTH",
       nextDueAt: new Date("2026-08-31T06:00:00.000Z"),
+      nextDueMeterValue: null,
       active: true,
       estimatedMinutes: 30,
+      meter: null,
       checklistItems: [
         { id: "item-1", sequence: 1, label: "Inspect guard", mandatory: true },
         { id: "item-2", sequence: 2, label: "Record condition", mandatory: false },
@@ -102,8 +108,10 @@ describe("maintenance plans API", () => {
     expect(mocks.planCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({
         assetId: "asset-1",
+        meterId: null,
         frequencyValue: 1,
         frequencyUnit: "MONTH",
+        nextDueMeterValue: null,
         active: true,
         checklistItems: {
           create: [
@@ -112,7 +120,10 @@ describe("maintenance plans API", () => {
           ],
         },
       }),
-      include: { checklistItems: { orderBy: { sequence: "asc" } } },
+      include: {
+        meter: { select: { id: true, code: true, name: true, unit: true } },
+        checklistItems: { orderBy: { sequence: "asc" } },
+      },
     });
     expect(mocks.auditCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({ entityType: "MaintenancePlan", action: "CREATED" }),
@@ -121,6 +132,63 @@ describe("maintenance plans API", () => {
     if (!response) throw new Error("Expected maintenance plan response");
     const payload = (await response.json()) as { data: { followingDueAt: string } };
     expect(payload.data.followingDueAt).toBe("2026-09-30T06:00:00.000Z");
+  });
+
+  it("creates a meter-based plan only for a monotonic meter on the selected asset", async () => {
+    mocks.planCreate.mockResolvedValue({
+      id: "plan-meter-1",
+      assetId: "asset-1",
+      meterId: "meter-1",
+      name: "Hours-based inspection",
+      description: null,
+      frequencyValue: 250,
+      frequencyUnit: "METER",
+      nextDueAt: null,
+      nextDueMeterValue: 1000,
+      active: true,
+      estimatedMinutes: 30,
+      meter: { id: "meter-1", code: "HOURS", name: "Operating hours", unit: "h" },
+      checklistItems: [],
+    });
+
+    const response = await POST(
+      request({
+        name: "Hours-based inspection",
+        frequencyValue: 250,
+        frequencyUnit: "METER",
+        firstDueAt: undefined,
+        meterId: "meter-1",
+        firstDueMeterValue: 1000,
+        checklist: [],
+      }),
+    );
+
+    await expectStatus(response, 201);
+    expect(mocks.meterFindFirst).toHaveBeenCalledWith({
+      where: { id: "meter-1", assetId: "asset-1", allowRollover: false },
+      select: { id: true },
+    });
+    expect(mocks.planCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        assetId: "asset-1",
+        meterId: "meter-1",
+        frequencyValue: 250,
+        frequencyUnit: "METER",
+        nextDueAt: null,
+        nextDueMeterValue: 1000,
+      }),
+      include: {
+        meter: { select: { id: true, code: true, name: true, unit: true } },
+        checklistItems: { orderBy: { sequence: "asc" } },
+      },
+    });
+
+    if (!response) throw new Error("Expected meter maintenance plan response");
+    const payload = (await response.json()) as {
+      data: { followingDueAt: null; followingDueMeterValue: number };
+    };
+    expect(payload.data.followingDueAt).toBeNull();
+    expect(payload.data.followingDueMeterValue).toBe(1250);
   });
 
   it("clones checklist content from another plan in the same organization", async () => {
@@ -167,8 +235,27 @@ describe("maintenance plans API", () => {
     expect(mocks.planCreate).not.toHaveBeenCalled();
   });
 
-  it("rejects METER frequency from the calendar-plan endpoint", async () => {
-    const response = await POST(request({ frequencyUnit: "METER" }));
+  it("rejects a meter that is not monotonic or does not belong to the selected asset", async () => {
+    mocks.meterFindFirst.mockResolvedValue(null);
+
+    const response = await POST(
+      request({
+        frequencyValue: 250,
+        frequencyUnit: "METER",
+        firstDueAt: undefined,
+        meterId: "meter-foreign",
+        firstDueMeterValue: 1000,
+      }),
+    );
+
+    await expectStatus(response, 404);
+    expect(mocks.planCreate).not.toHaveBeenCalled();
+  });
+
+  it("requires meter-specific threshold fields for METER recurrence", async () => {
+    const response = await POST(
+      request({ frequencyUnit: "METER", firstDueAt: undefined }),
+    );
 
     await expectStatus(response, 400);
     expect(mocks.planCreate).not.toHaveBeenCalled();
