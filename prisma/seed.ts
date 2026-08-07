@@ -202,9 +202,15 @@ async function main() {
   }
 
   const doc = await prisma.document.upsert({
-    where: { code: "WI-MNT-001" },
+    where: {
+      organizationId_code: {
+        organizationId: organization.id,
+        code: "WI-MNT-001",
+      },
+    },
     update: {},
     create: {
+      organizationId: organization.id,
       code: "WI-MNT-001",
       title: "Generic Pump Inspection Work Instruction",
       type: "WORK_INSTRUCTION",
