@@ -6,7 +6,8 @@ export class HierarchyIntegrityError extends Error {
       | "LOCATION_SITE_MISMATCH"
       | "PARENT_ASSET_SITE_MISMATCH"
       | "PARENT_LOCATION_SITE_MISMATCH"
-      | "SELF_PARENT",
+      | "SELF_PARENT"
+      | "ASSET_HAS_ACTIVE_CHILDREN",
     message: string,
   ) {
     super(message);
