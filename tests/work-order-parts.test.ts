@@ -1,29 +1,32 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({
-  transaction: vi.fn(),
-  dbConsumptionFindUnique: vi.fn(),
-  txConsumptionFindUnique: vi.fn(),
-  partFindFirst: vi.fn(),
-  workOrderPartUpsert: vi.fn(),
-  consumptionCreate: vi.fn(),
-  auditCreate: vi.fn(),
-  applyStockMovement: vi.fn(),
-}));
-
-class MockStockMovementError extends Error {
-  constructor(
-    public readonly code:
-      | "PART_NOT_FOUND"
-      | "BIN_NOT_FOUND"
-      | "INSUFFICIENT_STOCK"
-      | "IDEMPOTENCY_CONFLICT"
-      | "BALANCE_DIVERGENCE",
-    message: string,
-  ) {
-    super(message);
+const mocks = vi.hoisted(() => {
+  class StockMovementError extends Error {
+    constructor(
+      public readonly code:
+        | "PART_NOT_FOUND"
+        | "BIN_NOT_FOUND"
+        | "INSUFFICIENT_STOCK"
+        | "IDEMPOTENCY_CONFLICT"
+        | "BALANCE_DIVERGENCE",
+      message: string,
+    ) {
+      super(message);
+    }
   }
-}
+
+  return {
+    transaction: vi.fn(),
+    dbConsumptionFindUnique: vi.fn(),
+    txConsumptionFindUnique: vi.fn(),
+    partFindFirst: vi.fn(),
+    workOrderPartUpsert: vi.fn(),
+    consumptionCreate: vi.fn(),
+    auditCreate: vi.fn(),
+    applyStockMovement: vi.fn(),
+    StockMovementError,
+  };
+});
 
 const tx = {
   workOrderPartConsumption: {
@@ -43,7 +46,7 @@ vi.mock("@/lib/db", () => ({
 }));
 vi.mock("@/lib/inventory/stock", () => ({
   applyStockMovement: mocks.applyStockMovement,
-  StockMovementError: MockStockMovementError,
+  StockMovementError: mocks.StockMovementError,
 }));
 
 import { consumeWorkOrderPart } from "@/lib/work-orders/parts";
@@ -143,7 +146,7 @@ describe("work order part consumption", () => {
 
   it("propagates insufficient bin stock without recording consumption", async () => {
     mocks.applyStockMovement.mockRejectedValue(
-      new MockStockMovementError("INSUFFICIENT_STOCK", "Not enough stock in bin"),
+      new mocks.StockMovementError("INSUFFICIENT_STOCK", "Not enough stock in bin"),
     );
 
     await expect(consumeWorkOrderPart(input)).rejects.toMatchObject({
