@@ -40,6 +40,13 @@ function authenticated(role: "TECHNICIAN" | "MAINTENANCE_MANAGER", siteIds: stri
   };
 }
 
+function expectStatus(response: Response | undefined, status: number) {
+  expect(response).toBeDefined();
+  if (!response) throw new Error("expected a response");
+  expect(response.status).toBe(status);
+  return response;
+}
+
 describe("inventory API permissions", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -56,7 +63,7 @@ describe("inventory API permissions", () => {
       new Request("http://localhost/api/inventory/parts?organizationId=org-a"),
     );
 
-    expect(response.status).toBe(200);
+    expectStatus(response, 200);
     expect(mocks.listParts).toHaveBeenCalledWith({
       organizationId: "org-a",
       includeInactive: false,
@@ -78,7 +85,7 @@ describe("inventory API permissions", () => {
       }),
     );
 
-    expect(response.status).toBe(403);
+    expectStatus(response, 403);
     expect(mocks.createPart).not.toHaveBeenCalled();
   });
 
@@ -93,7 +100,7 @@ describe("inventory API permissions", () => {
       ),
     );
 
-    expect(response.status).toBe(403);
+    expectStatus(response, 403);
     expect(mocks.listWarehouses).not.toHaveBeenCalled();
   });
 
@@ -115,7 +122,7 @@ describe("inventory API permissions", () => {
       }),
     );
 
-    expect(response.status).toBe(201);
+    expectStatus(response, 201);
     expect(mocks.createWarehouse).toHaveBeenCalledWith(
       expect.objectContaining({
         organizationId: "org-a",
