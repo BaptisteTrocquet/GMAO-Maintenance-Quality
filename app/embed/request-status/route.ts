@@ -1,12 +1,14 @@
 import { db } from "@/lib/db";
+import { escapeHtmlAttribute } from "@/lib/embed/html";
 import { createEmbedProof, parentOriginFromReferrer } from "@/lib/embed/proof";
+import { embedThemeStylesheetHref } from "@/lib/embed/theme";
 import {
   getPublicRequestTokenScopes,
   hasPublicRequestScope,
   isOriginAllowed,
 } from "@/lib/public-requests/tokens";
 
-function htmlPage(proof: string, trackingId: string) {
+function htmlPage(proof: string, trackingId: string, themeHref: string) {
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -14,9 +16,10 @@ function htmlPage(proof: string, trackingId: string) {
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Maintenance request status</title>
   <link rel="stylesheet" href="/embed/request-status/styles.css">
+  <link rel="stylesheet" href="${escapeHtmlAttribute(themeHref)}">
 </head>
 <body>
-  <main class="status-card" id="gmao-status-embed" data-embed-proof="${proof}" data-tracking-id="${trackingId}">
+  <main class="status-card" id="gmao-status-embed" data-embed-proof="${escapeHtmlAttribute(proof)}" data-tracking-id="${escapeHtmlAttribute(trackingId)}">
     <p class="eyebrow">Maintenance</p>
     <h1>Request status</h1>
     <div class="status-line">
@@ -76,7 +79,7 @@ export async function GET(request: Request) {
     return new Response("Embed unavailable", { status: 404 });
   }
 
-  const scopes = await getPublicRequestTokenScopes(token.id);
+  const scopes = await getPublicRequestTokenScopes(token.id, token.createdAt);
   if (!hasPublicRequestScope({ scopes }, "maintenance:request:status")) {
     return new Response("Embed unavailable", { status: 404 });
   }
@@ -104,7 +107,7 @@ export async function GET(request: Request) {
     parentOrigin,
     now,
   });
-  return new Response(htmlPage(proof, submission.id), {
+  return new Response(htmlPage(proof, submission.id, embedThemeStylesheetHref(url)), {
     status: 200,
     headers: securityHeaders(token.allowedOrigins),
   });
