@@ -79,7 +79,7 @@ export async function listWebhookSubscriptions(input: {
     where: {
       entityType: "WebhookSubscription",
       action: "CREATED",
-      afterJson: { contains: `\"organizationId\":\"${input.organizationId}\"` },
+      afterJson: { contains: `"organizationId":"${input.organizationId}"` },
     },
     orderBy: { createdAt: "desc" },
   });
