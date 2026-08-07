@@ -1,0 +1,39 @@
+name: Bug report
+description: Report a reproducible defect
+title: "[BUG] "
+body:
+  - type: markdown
+    attributes:
+      value: Please use synthetic or anonymized examples only. Never paste private production data into a public issue.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What is wrong?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Provide the smallest reproducible sequence.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Browser, OS, deployment mode, application version.
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Public repository safety
+      options:
+        - label: I have not included secrets, personal data, customer data, or private company information.
+          required: true
