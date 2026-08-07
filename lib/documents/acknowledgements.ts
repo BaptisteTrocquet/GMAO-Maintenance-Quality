@@ -63,14 +63,15 @@ async function resolveAcknowledgedRevision(input: {
       "No controlled revision is effective for the requested date",
     );
   }
-  if (!revision.checksum) {
+  const checksum = revision.checksum;
+  if (!checksum) {
     throw new DocumentAcknowledgementError(
       "REVISION_CHECKSUM_MISSING",
       "The effective revision does not have a recorded controlled-file checksum",
     );
   }
 
-  return { document, revision };
+  return { document, revision, checksum };
 }
 
 function isSerializableRetry(error: unknown) {
@@ -86,12 +87,12 @@ export async function acknowledgeEffectiveRevision(input: {
   now?: Date;
 }) {
   const asOf = input.asOf ?? new Date();
-  const { document, revision } = await resolveAcknowledgedRevision({
+  const { document, revision, checksum } = await resolveAcknowledgedRevision({
     organizationId: input.organizationId,
     documentId: input.documentId,
     asOf,
   });
-  if (input.checksum.toLowerCase() !== revision.checksum.toLowerCase()) {
+  if (input.checksum.toLowerCase() !== checksum.toLowerCase()) {
     throw new DocumentAcknowledgementError(
       "CHECKSUM_MISMATCH",
       "Acknowledgement checksum does not match the effective controlled revision",
@@ -104,7 +105,7 @@ export async function acknowledgeEffectiveRevision(input: {
     documentCode: document.code,
     revisionId: revision.id,
     revision: revision.revision,
-    checksum: revision.checksum,
+    checksum,
     effectiveAt: revision.effectiveAt?.toISOString() ?? null,
     asOf: asOf.toISOString(),
     acknowledgedAt: acknowledgedAt.toISOString(),
@@ -170,7 +171,7 @@ export async function getEffectiveRevisionAcknowledgement(input: {
   asOf?: Date;
 }) {
   const asOf = input.asOf ?? new Date();
-  const { document, revision } = await resolveAcknowledgedRevision({
+  const { document, revision, checksum } = await resolveAcknowledgedRevision({
     organizationId: input.organizationId,
     documentId: input.documentId,
     asOf,
@@ -190,7 +191,7 @@ export async function getEffectiveRevisionAcknowledgement(input: {
     revision: {
       id: revision.id,
       revision: revision.revision,
-      checksum: revision.checksum,
+      checksum,
       effectiveAt: revision.effectiveAt,
     },
     acknowledged: Boolean(audit),
