@@ -7,269 +7,332 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-enum AssetStatus { ACTIVE INACTIVE OUT_OF_SERVICE DECOMMISSIONED }
-enum Criticality { LOW MEDIUM HIGH CRITICAL }
-enum WorkOrderType { CORRECTIVE PREVENTIVE INSPECTION IMPROVEMENT SAFETY OTHER }
-enum WorkOrderStatus { REQUESTED APPROVED PLANNED IN_PROGRESS BLOCKED COMPLETED CANCELLED }
-enum Priority { LOW NORMAL HIGH URGENT }
-enum DocumentStatus { DRAFT IN_REVIEW APPROVED EFFECTIVE OBSOLETE REJECTED }
-enum ApprovalDecision { PENDING APPROVED REJECTED }
-enum MaintenanceFrequencyUnit { DAY WEEK MONTH YEAR METER }
+enum AssetStatus {
+  ACTIVE
+  INACTIVE
+  OUT_OF_SERVICE
+  DECOMMISSIONED
+}
+
+enum Criticality {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum WorkOrderType {
+  CORRECTIVE
+  PREVENTIVE
+  INSPECTION
+  IMPROVEMENT
+  SAFETY
+  OTHER
+}
+
+enum WorkOrderStatus {
+  REQUESTED
+  APPROVED
+  PLANNED
+  IN_PROGRESS
+  BLOCKED
+  COMPLETED
+  CANCELLED
+}
+
+enum Priority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+enum DocumentStatus {
+  DRAFT
+  IN_REVIEW
+  APPROVED
+  EFFECTIVE
+  OBSOLETE
+  REJECTED
+}
+
+enum ApprovalDecision {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum MaintenanceFrequencyUnit {
+  DAY
+  WEEK
+  MONTH
+  YEAR
+  METER
+}
 
 model User {
-  id          String   @id @default(cuid())
-  email       String   @unique
-  displayName String
-  role        String
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  assignedWorkOrders WorkOrder[] @relation("AssignedWorkOrders")
-  requestedWorkOrders WorkOrder[] @relation("RequestedWorkOrders")
-  documentApprovals DocumentApproval[]
-  auditLogs AuditLog[]
+  id                  String             @id @default(cuid())
+  email               String             @unique
+  displayName         String
+  role                String
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+  assignedWorkOrders  WorkOrder[]        @relation("AssignedWorkOrders")
+  requestedWorkOrders WorkOrder[]        @relation("RequestedWorkOrders")
+  documentApprovals   DocumentApproval[]
+  auditLogs           AuditLog[]
 }
 
 model Site {
-  id String @id @default(cuid())
-  name String
-  code String @unique
+  id          String     @id @default(cuid())
+  name        String
+  code        String     @unique
   description String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  locations Location[]
-  assets Asset[]
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  locations   Location[]
+  assets      Asset[]
 }
 
 model Location {
-  id String @id @default(cuid())
-  siteId String
-  parentId String?
-  name String
-  code String
+  id          String     @id @default(cuid())
+  siteId      String
+  parentId    String?
+  name        String
+  code        String
   description String?
-  site Site @relation(fields: [siteId], references: [id], onDelete: Cascade)
-  parent Location? @relation("LocationHierarchy", fields: [parentId], references: [id])
-  children Location[] @relation("LocationHierarchy")
-  assets Asset[]
+  site        Site       @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  parent      Location?  @relation("LocationHierarchy", fields: [parentId], references: [id])
+  children    Location[] @relation("LocationHierarchy")
+  assets      Asset[]
+
   @@unique([siteId, code])
 }
 
 model Asset {
-  id String @id @default(cuid())
-  siteId String
-  locationId String?
-  parentAssetId String?
-  code String
-  name String
-  description String?
-  manufacturer String?
-  model String?
-  serialNumber String?
-  status AssetStatus @default(ACTIVE)
-  criticality Criticality @default(MEDIUM)
-  installedAt DateTime?
-  commissionedAt DateTime?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  site Site @relation(fields: [siteId], references: [id], onDelete: Cascade)
-  location Location? @relation(fields: [locationId], references: [id])
-  parentAsset Asset? @relation("AssetHierarchy", fields: [parentAssetId], references: [id])
-  childAssets Asset[] @relation("AssetHierarchy")
-  workOrders WorkOrder[]
+  id               String      @id @default(cuid())
+  siteId           String
+  locationId       String?
+  parentAssetId    String?
+  code             String
+  name             String
+  description      String?
+  manufacturer     String?
+  model            String?
+  serialNumber     String?
+  status           AssetStatus @default(ACTIVE)
+  criticality      Criticality @default(MEDIUM)
+  installedAt      DateTime?
+  commissionedAt   DateTime?
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+  site             Site        @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  location         Location?   @relation(fields: [locationId], references: [id])
+  parentAsset      Asset?      @relation("AssetHierarchy", fields: [parentAssetId], references: [id])
+  childAssets      Asset[]     @relation("AssetHierarchy")
+  workOrders       WorkOrder[]
   maintenancePlans MaintenancePlan[]
-  assetDocuments AssetDocument[]
-  meters Meter[]
-  assetParts AssetPart[]
+  assetDocuments   AssetDocument[]
+  meters           Meter[]
+  assetParts       AssetPart[]
+
   @@unique([siteId, code])
 }
 
 model WorkOrder {
-  id String @id @default(cuid())
-  number String @unique
-  assetId String?
-  requesterId String?
-  assigneeId String?
-  title String
-  description String?
-  type WorkOrderType
-  status WorkOrderStatus @default(REQUESTED)
-  priority Priority @default(NORMAL)
-  requestedAt DateTime @default(now())
-  plannedStart DateTime?
-  dueAt DateTime?
-  startedAt DateTime?
-  completedAt DateTime?
+  id              String          @id @default(cuid())
+  number          String          @unique
+  assetId         String?
+  requesterId     String?
+  assigneeId      String?
+  title           String
+  description     String?
+  type            WorkOrderType
+  status          WorkOrderStatus @default(REQUESTED)
+  priority        Priority        @default(NORMAL)
+  requestedAt     DateTime        @default(now())
+  plannedStart    DateTime?
+  dueAt           DateTime?
+  startedAt       DateTime?
+  completedAt     DateTime?
   downtimeMinutes Int?
-  laborMinutes Int?
-  completionNote String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  asset Asset? @relation(fields: [assetId], references: [id])
-  requester User? @relation("RequestedWorkOrders", fields: [requesterId], references: [id])
-  assignee User? @relation("AssignedWorkOrders", fields: [assigneeId], references: [id])
-  parts WorkOrderPart[]
-  checkItems WorkOrderCheckItem[]
-  documents WorkOrderDocument[]
+  laborMinutes    Int?
+  completionNote  String?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  asset           Asset?          @relation(fields: [assetId], references: [id])
+  requester       User?           @relation("RequestedWorkOrders", fields: [requesterId], references: [id])
+  assignee        User?           @relation("AssignedWorkOrders", fields: [assigneeId], references: [id])
+  parts           WorkOrderPart[]
+  checkItems      WorkOrderCheckItem[]
+  documents       WorkOrderDocument[]
 }
 
 model WorkOrderCheckItem {
-  id String @id @default(cuid())
+  id          String    @id @default(cuid())
   workOrderId String
-  label String
-  completed Boolean @default(false)
-  note String?
-  workOrder WorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+  label       String
+  completed   Boolean   @default(false)
+  note        String?
+  workOrder   WorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
 }
 
 model MaintenancePlan {
-  id String @id @default(cuid())
-  assetId String
-  name String
-  description String?
-  frequencyValue Int
-  frequencyUnit MaintenanceFrequencyUnit
-  nextDueAt DateTime?
-  active Boolean @default(true)
+  id               String                    @id @default(cuid())
+  assetId          String
+  name             String
+  description      String?
+  frequencyValue   Int
+  frequencyUnit    MaintenanceFrequencyUnit
+  nextDueAt        DateTime?
+  active           Boolean                   @default(true)
   estimatedMinutes Int?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  asset Asset @relation(fields: [assetId], references: [id], onDelete: Cascade)
-  checklistItems MaintenancePlanCheckItem[]
+  createdAt        DateTime                  @default(now())
+  updatedAt        DateTime                  @updatedAt
+  asset            Asset                     @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  checklistItems   MaintenancePlanCheckItem[]
 }
 
 model MaintenancePlanCheckItem {
-  id String @id @default(cuid())
+  id                String          @id @default(cuid())
   maintenancePlanId String
-  sequence Int
-  label String
-  mandatory Boolean @default(true)
-  maintenancePlan MaintenancePlan @relation(fields: [maintenancePlanId], references: [id], onDelete: Cascade)
+  sequence          Int
+  label             String
+  mandatory         Boolean         @default(true)
+  maintenancePlan   MaintenancePlan @relation(fields: [maintenancePlanId], references: [id], onDelete: Cascade)
 }
 
 model Part {
-  id String @id @default(cuid())
-  sku String @unique
-  name String
-  description String?
-  unit String @default("EA")
-  quantityOnHand Float @default(0)
-  reorderPoint Float @default(0)
-  unitCost Decimal? @db.Decimal(14,4)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  assetParts AssetPart[]
-  workOrderParts WorkOrderPart[]
+  id                 String          @id @default(cuid())
+  sku                String          @unique
+  name               String
+  description        String?
+  unit               String          @default("EA")
+  quantityOnHand     Float           @default(0)
+  reorderPoint       Float           @default(0)
+  unitCost           Decimal?        @db.Decimal(14, 4)
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+  assetParts         AssetPart[]
+  workOrderParts     WorkOrderPart[]
 }
 
 model AssetPart {
-  assetId String
-  partId String
-  quantityRecommended Float?
-  asset Asset @relation(fields: [assetId], references: [id], onDelete: Cascade)
-  part Part @relation(fields: [partId], references: [id], onDelete: Cascade)
+  assetId              String
+  partId               String
+  quantityRecommended  Float?
+  asset                 Asset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  part                  Part  @relation(fields: [partId], references: [id], onDelete: Cascade)
+
   @@id([assetId, partId])
 }
 
 model WorkOrderPart {
   workOrderId String
-  partId String
-  quantity Float
-  unitCost Decimal? @db.Decimal(14,4)
-  workOrder WorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
-  part Part @relation(fields: [partId], references: [id])
+  partId      String
+  quantity    Float
+  unitCost    Decimal?  @db.Decimal(14, 4)
+  workOrder   WorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+  part        Part      @relation(fields: [partId], references: [id])
+
   @@id([workOrderId, partId])
 }
 
 model Document {
-  id String @id @default(cuid())
-  code String @unique
-  title String
-  type String
-  owner String?
-  description String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  revisions DocumentRevision[]
+  id             String              @id @default(cuid())
+  code           String              @unique
+  title          String
+  type           String
+  owner          String?
+  description    String?
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+  revisions      DocumentRevision[]
   assetDocuments AssetDocument[]
-  workOrders WorkOrderDocument[]
+  workOrders     WorkOrderDocument[]
 }
 
 model DocumentRevision {
-  id String @id @default(cuid())
-  documentId String
-  revision String
-  status DocumentStatus @default(DRAFT)
-  effectiveAt DateTime?
-  expiresAt DateTime?
-  storageKey String?
-  fileName String?
-  mimeType String?
-  checksum String?
+  id            String             @id @default(cuid())
+  documentId    String
+  revision      String
+  status        DocumentStatus     @default(DRAFT)
+  effectiveAt   DateTime?
+  expiresAt     DateTime?
+  storageKey    String?
+  fileName      String?
+  mimeType      String?
+  checksum      String?
   changeSummary String?
-  createdBy String?
-  createdAt DateTime @default(now())
-  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
-  approvals DocumentApproval[]
+  createdBy     String?
+  createdAt     DateTime           @default(now())
+  document      Document           @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  approvals     DocumentApproval[]
+
   @@unique([documentId, revision])
 }
 
 model DocumentApproval {
-  id String @id @default(cuid())
+  id                 String            @id @default(cuid())
   documentRevisionId String
-  approverId String
-  decision ApprovalDecision @default(PENDING)
-  comment String?
-  decidedAt DateTime?
-  revision DocumentRevision @relation(fields: [documentRevisionId], references: [id], onDelete: Cascade)
-  approver User @relation(fields: [approverId], references: [id])
+  approverId         String
+  decision           ApprovalDecision @default(PENDING)
+  comment            String?
+  decidedAt          DateTime?
+  revision           DocumentRevision @relation(fields: [documentRevisionId], references: [id], onDelete: Cascade)
+  approver           User             @relation(fields: [approverId], references: [id])
+
   @@unique([documentRevisionId, approverId])
 }
 
 model AssetDocument {
-  assetId String
+  assetId    String
   documentId String
-  relation String @default("APPLICABLE")
-  asset Asset @relation(fields: [assetId], references: [id], onDelete: Cascade)
-  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  relation   String   @default("APPLICABLE")
+  asset      Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
   @@id([assetId, documentId])
 }
 
 model WorkOrderDocument {
   workOrderId String
-  documentId String
-  workOrder WorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
-  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  documentId  String
+  workOrder   WorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+  document    Document  @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
   @@id([workOrderId, documentId])
 }
 
 model Meter {
-  id String @id @default(cuid())
-  assetId String
-  name String
-  unit String
-  createdAt DateTime @default(now())
-  asset Asset @relation(fields: [assetId], references: [id], onDelete: Cascade)
-  readings MeterReading[]
+  id        String         @id @default(cuid())
+  assetId   String
+  name      String
+  unit      String
+  createdAt DateTime       @default(now())
+  asset     Asset          @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  readings  MeterReading[]
 }
 
 model MeterReading {
-  id String @id @default(cuid())
-  meterId String
-  value Float
+  id        String   @id @default(cuid())
+  meterId   String
+  value     Float
   readingAt DateTime @default(now())
-  meter Meter @relation(fields: [meterId], references: [id], onDelete: Cascade)
+  meter     Meter    @relation(fields: [meterId], references: [id], onDelete: Cascade)
 }
 
 model AuditLog {
-  id String @id @default(cuid())
-  actorId String?
+  id         String   @id @default(cuid())
+  actorId    String?
   entityType String
-  entityId String
-  action String
+  entityId   String
+  action     String
   beforeJson String?
-  afterJson String?
-  createdAt DateTime @default(now())
-  actor User? @relation(fields: [actorId], references: [id])
+  afterJson  String?
+  createdAt  DateTime @default(now())
+  actor      User?    @relation(fields: [actorId], references: [id])
+
   @@index([entityType, entityId])
   @@index([createdAt])
 }
