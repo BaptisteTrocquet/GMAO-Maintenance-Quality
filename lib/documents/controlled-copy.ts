@@ -15,7 +15,7 @@ export class ControlledCopyError extends Error {
 export async function issueControlledCopy(input: {
   organizationId: string;
   documentId: string;
-  actorId: string;
+  actorId: string | null;
   asOf?: Date;
 }) {
   const asOf = input.asOf ?? new Date();
