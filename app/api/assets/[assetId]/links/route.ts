@@ -22,7 +22,7 @@ const createSchema = z.discriminatedUnion("type", [
     organizationId: z.string().min(1),
     siteId: z.string().min(1),
     documentId: z.string().min(1),
-    relation: z.string().min(1).max(50).optional(),
+    relation: z.string().trim().min(1).max(50).optional(),
   }),
   z.object({
     type: z.literal("attachment"),
@@ -36,7 +36,18 @@ const createSchema = z.discriminatedUnion("type", [
   }),
 ]);
 
-function authorize(scope: Parameters<typeof assertSitePermission>[0], siteId: string, permission: "asset:read" | "asset:write") {
+const deleteSchema = z.object({
+  type: z.literal("document"),
+  organizationId: z.string().min(1),
+  siteId: z.string().min(1),
+  documentId: z.string().min(1),
+});
+
+function authorize(
+  scope: Parameters<typeof assertSitePermission>[0],
+  siteId: string,
+  permission: "asset:read" | "asset:write",
+) {
   try {
     assertSitePermission(scope, siteId, permission);
     return null;
@@ -51,6 +62,14 @@ async function getScopedAsset(organizationId: string, siteId: string, assetId: s
     where: { id: assetId, siteId, archivedAt: null, site: { organizationId, active: true } },
     select: { id: true },
   });
+}
+
+async function parseJson(request: Request) {
+  try {
+    return { body: await request.json() } as const;
+  } catch {
+    return { error: apiError(400, "INVALID_JSON", "Request body must be valid JSON") } as const;
+  }
 }
 
 export async function GET(request: Request, context: { params: Promise<{ assetId: string }> }) {
@@ -81,7 +100,9 @@ export async function GET(request: Request, context: { params: Promise<{ assetId
 }
 
 export async function POST(request: Request, context: { params: Promise<{ assetId: string }> }) {
-  const parsed = createSchema.safeParse(await request.json());
+  const json = await parseJson(request);
+  if ("error" in json) return json.error;
+  const parsed = createSchema.safeParse(json.body);
   if (!parsed.success) return apiError(400, "INVALID_PAYLOAD", "Invalid asset link payload", parsed.error.flatten());
 
   const auth = await authenticateRequest(request, parsed.data.organizationId);
@@ -121,6 +142,15 @@ export async function POST(request: Request, context: { params: Promise<{ assetI
       update: { relation: parsed.data.relation ?? "APPLICABLE" },
       create: { assetId, documentId: parsed.data.documentId, relation: parsed.data.relation ?? "APPLICABLE" },
     });
+    await db.auditLog.create({
+      data: {
+        actorId: auth.session.user.id,
+        entityType: "AssetDocument",
+        entityId: `${assetId}:${parsed.data.documentId}`,
+        action: "LINKED",
+        afterJson: JSON.stringify(link),
+      },
+    });
     return apiData(link, { status: 201 });
   }
 
@@ -145,4 +175,45 @@ export async function POST(request: Request, context: { params: Promise<{ assetI
     },
   });
   return apiData(attachment, { status: 201 });
+}
+
+export async function DELETE(request: Request, context: { params: Promise<{ assetId: string }> }) {
+  const json = await parseJson(request);
+  if ("error" in json) return json.error;
+  const parsed = deleteSchema.safeParse(json.body);
+  if (!parsed.success) return apiError(400, "INVALID_PAYLOAD", "Invalid asset unlink payload", parsed.error.flatten());
+
+  const auth = await authenticateRequest(request, parsed.data.organizationId);
+  if ("error" in auth) return auth.error;
+  const denied = authorize(auth.tenant.scope, parsed.data.siteId, "asset:write");
+  if (denied) return denied;
+
+  const { assetId } = await context.params;
+  if (!(await getScopedAsset(parsed.data.organizationId, parsed.data.siteId, assetId))) {
+    return apiError(404, "ASSET_NOT_FOUND", "Asset not found");
+  }
+  const document = await db.document.findFirst({
+    where: { id: parsed.data.documentId, organizationId: parsed.data.organizationId },
+    select: { id: true },
+  });
+  if (!document) return apiError(404, "DOCUMENT_NOT_FOUND", "Document not found in organization");
+
+  const existing = await db.assetDocument.findUnique({
+    where: { assetId_documentId: { assetId, documentId: parsed.data.documentId } },
+  });
+  if (!existing) return apiError(404, "LINK_NOT_FOUND", "Document is not linked to this asset");
+
+  await db.assetDocument.delete({
+    where: { assetId_documentId: { assetId, documentId: parsed.data.documentId } },
+  });
+  await db.auditLog.create({
+    data: {
+      actorId: auth.session.user.id,
+      entityType: "AssetDocument",
+      entityId: `${assetId}:${parsed.data.documentId}`,
+      action: "UNLINKED",
+      beforeJson: JSON.stringify(existing),
+    },
+  });
+  return apiData({ unlinked: true, assetId, documentId: parsed.data.documentId });
 }
