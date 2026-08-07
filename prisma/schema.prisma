@@ -284,34 +284,36 @@ model AssetAttachment {
 }
 
 model WorkOrder {
-  id              String          @id @default(cuid())
-  number          String          @unique
-  siteId          String
-  assetId         String?
-  requesterId     String?
-  assigneeId      String?
-  title           String
-  description     String?
-  type            WorkOrderType
-  status          WorkOrderStatus @default(REQUESTED)
-  priority        Priority        @default(NORMAL)
-  requestedAt     DateTime        @default(now())
-  plannedStart    DateTime?
-  dueAt           DateTime?
-  startedAt       DateTime?
-  completedAt     DateTime?
-  downtimeMinutes Int?
-  laborMinutes    Int?
-  completionNote  String?
-  createdAt       DateTime        @default(now())
-  updatedAt       DateTime        @updatedAt
-  site            Site            @relation(fields: [siteId], references: [id], onDelete: Cascade)
-  asset           Asset?          @relation(fields: [assetId], references: [id])
-  requester       User?           @relation("RequestedWorkOrders", fields: [requesterId], references: [id])
-  assignee        User?           @relation("AssignedWorkOrders", fields: [assigneeId], references: [id])
-  parts           WorkOrderPart[]
-  checkItems      WorkOrderCheckItem[]
-  documents       WorkOrderDocument[]
+  id               String                     @id @default(cuid())
+  number           String                     @unique
+  siteId           String
+  assetId          String?
+  requesterId      String?
+  assigneeId       String?
+  title            String
+  description      String?
+  type             WorkOrderType
+  status           WorkOrderStatus            @default(REQUESTED)
+  priority         Priority                   @default(NORMAL)
+  requestedAt      DateTime                   @default(now())
+  plannedStart     DateTime?
+  dueAt            DateTime?
+  startedAt        DateTime?
+  completedAt      DateTime?
+  downtimeMinutes  Int?
+  laborMinutes     Int?
+  completionNote   String?
+  createdAt        DateTime                   @default(now())
+  updatedAt        DateTime                   @updatedAt
+  site             Site                       @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  asset            Asset?                     @relation(fields: [assetId], references: [id])
+  requester        User?                      @relation("RequestedWorkOrders", fields: [requesterId], references: [id])
+  assignee         User?                      @relation("AssignedWorkOrders", fields: [assigneeId], references: [id])
+  parts            WorkOrderPart[]
+  partConsumptions WorkOrderPartConsumption[]
+  checkItems       WorkOrderCheckItem[]
+  documents        WorkOrderDocument[]
+  attachments      WorkOrderAttachment[]
 
   @@index([siteId, status, requestedAt])
 }
@@ -323,6 +325,21 @@ model WorkOrderCheckItem {
   completed   Boolean   @default(false)
   note        String?
   workOrder   WorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+}
+
+model WorkOrderAttachment {
+  id          String    @id @default(cuid())
+  workOrderId String
+  fileName    String
+  storageKey  String
+  mimeType    String?
+  sizeBytes   Int?
+  kind        String    @default("ATTACHMENT")
+  createdBy   String?
+  createdAt   DateTime  @default(now())
+  workOrder   WorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+
+  @@index([workOrderId, createdAt])
 }
 
 model MaintenancePlan {
@@ -351,20 +368,21 @@ model MaintenancePlanCheckItem {
 }
 
 model Part {
-  id             String          @id @default(cuid())
-  organizationId String
-  sku            String
-  name           String
-  description    String?
-  unit           String          @default("EA")
-  quantityOnHand Float           @default(0)
-  reorderPoint   Float           @default(0)
-  unitCost       Decimal?        @db.Decimal(14, 4)
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
-  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  assetParts     AssetPart[]
-  workOrderParts WorkOrderPart[]
+  id                    String                     @id @default(cuid())
+  organizationId        String
+  sku                   String
+  name                  String
+  description           String?
+  unit                  String                     @default("EA")
+  quantityOnHand        Float                      @default(0)
+  reorderPoint          Float                      @default(0)
+  unitCost              Decimal?                   @db.Decimal(14, 4)
+  createdAt             DateTime                   @default(now())
+  updatedAt             DateTime                   @updatedAt
+  organization          Organization               @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  assetParts            AssetPart[]
+  workOrderParts        WorkOrderPart[]
+  workOrderConsumptions WorkOrderPartConsumption[]
 
   @@unique([organizationId, sku])
   @@index([organizationId])
@@ -389,6 +407,23 @@ model WorkOrderPart {
   part        Part      @relation(fields: [partId], references: [id])
 
   @@id([workOrderId, partId])
+}
+
+model WorkOrderPartConsumption {
+  id             String    @id @default(cuid())
+  workOrderId    String
+  partId         String
+  quantity       Float
+  unitCost       Decimal?  @db.Decimal(14, 4)
+  idempotencyKey String
+  actorId        String?
+  createdAt      DateTime  @default(now())
+  workOrder      WorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+  part           Part      @relation(fields: [partId], references: [id])
+
+  @@unique([workOrderId, idempotencyKey])
+  @@index([workOrderId, createdAt])
+  @@index([partId, createdAt])
 }
 
 model Document {
