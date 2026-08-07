@@ -6,7 +6,7 @@ export async function createMeter(input: {
   name: string;
   unit: string;
   code?: string | null;
-  rollover?: number | null;
+  allowRollover?: boolean;
   actorId?: string | null;
 }) {
   const asset = await db.asset.findFirst({
@@ -20,8 +20,8 @@ export async function createMeter(input: {
       assetId: input.assetId,
       name: input.name,
       unit: input.unit,
-      code: input.code ?? null,
-      rollover: input.rollover ?? null,
+      code: input.code ?? input.name,
+      allowRollover: input.allowRollover ?? false,
     },
   });
 
@@ -53,7 +53,7 @@ export async function addMeterReading(input: {
   if (!meter) return null;
 
   const previous = meter.readings[0];
-  const isRollover = meter.rollover != null && previous && input.value < previous.value;
+  const isRollover = meter.allowRollover && previous && input.value < previous.value;
   if (previous && input.value < previous.value && !isRollover) {
     throw new MeterReadingError(
       "METER_READING_DECREASE",

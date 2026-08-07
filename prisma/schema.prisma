@@ -128,6 +128,7 @@ model Organization {
   createdAt   DateTime                 @default(now())
   updatedAt   DateTime                 @updatedAt
   sites       Site[]
+  parts       Part[]
   documents   Document[]
   memberships OrganizationMembership[]
   invitations OrganizationInvitation[]
@@ -244,9 +245,10 @@ model Asset {
   workOrders       WorkOrder[]
   maintenancePlans MaintenancePlan[]
   assetDocuments   AssetDocument[]
+  attachments      AssetAttachment[]
   meters           Meter[]
-  assetParts       AssetPart[]
   statusHistory    AssetStatusHistory[]
+  assetParts       AssetPart[]
 
   @@unique([siteId, code])
   @@index([siteId, archivedAt])
@@ -256,12 +258,28 @@ model AssetStatusHistory {
   id        String      @id @default(cuid())
   assetId   String
   fromStatus AssetStatus?
-  toStatus  AssetStatus
-  note      String?
-  changedAt DateTime    @default(now())
-  asset     Asset       @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  toStatus   AssetStatus
+  note       String?
+  changedById String?
+  changedAt   DateTime    @default(now())
+  asset       Asset       @relation(fields: [assetId], references: [id], onDelete: Cascade)
 
   @@index([assetId, changedAt])
+}
+
+model AssetAttachment {
+  id         String   @id @default(cuid())
+  assetId    String
+  fileName   String
+  storageKey String
+  mimeType   String?
+  sizeBytes  Int?
+  kind       String   @default("ATTACHMENT")
+  createdBy  String?
+  createdAt  DateTime @default(now())
+  asset      Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@index([assetId, createdAt])
 }
 
 model WorkOrder {
@@ -329,7 +347,8 @@ model MaintenancePlanCheckItem {
 
 model Part {
   id             String          @id @default(cuid())
-  sku            String          @unique
+  organizationId String
+  sku            String
   name           String
   description    String?
   unit           String          @default("EA")
@@ -338,8 +357,12 @@ model Part {
   unitCost       Decimal?        @db.Decimal(14, 4)
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
+  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   assetParts     AssetPart[]
   workOrderParts WorkOrderPart[]
+
+  @@unique([organizationId, sku])
+  @@index([organizationId])
 }
 
 model AssetPart {
@@ -435,15 +458,15 @@ model WorkOrderDocument {
 }
 
 model Meter {
-  id        String         @id @default(cuid())
-  assetId   String
-  name      String
-  unit      String
-  code      String?
-  rollover  Float?
-  createdAt DateTime       @default(now())
-  asset     Asset          @relation(fields: [assetId], references: [id], onDelete: Cascade)
-  readings  MeterReading[]
+  id            String         @id @default(cuid())
+  assetId       String
+  code          String
+  name          String
+  unit          String
+  allowRollover Boolean        @default(false)
+  createdAt     DateTime       @default(now())
+  asset         Asset          @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  readings      MeterReading[]
 
   @@unique([assetId, code])
 }
