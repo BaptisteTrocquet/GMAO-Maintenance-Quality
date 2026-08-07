@@ -3,9 +3,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   authenticateRequest: vi.fn(),
   generate: vi.fn(),
+  generateReminders: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/request-auth", () => ({ authenticateRequest: mocks.authenticateRequest }));
+vi.mock("@/lib/maintenance/reminders", () => ({
+  generatePreventiveMaintenanceReminders: mocks.generateReminders,
+}));
 vi.mock("@/lib/maintenance/scheduler", () => ({
   generateCalendarMaintenanceWorkOrders: mocks.generate,
   MaintenanceSchedulerError: class MaintenanceSchedulerError extends Error {
@@ -32,7 +36,7 @@ function auth(role: "MAINTENANCE_MANAGER" | "TECHNICIAN") {
   };
 }
 
-function request(throughDate?: string) {
+function request(throughDate?: string, reminderLeadDays?: number) {
   return new Request("http://localhost/api/maintenance-scheduler", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -40,6 +44,7 @@ function request(throughDate?: string) {
       organizationId: "org-a",
       siteId: "site-a",
       ...(throughDate ? { throughDate } : {}),
+      ...(reminderLeadDays ? { reminderLeadDays } : {}),
     }),
   });
 }
@@ -54,10 +59,16 @@ describe("maintenance scheduler API", () => {
     vi.clearAllMocks();
     mocks.authenticateRequest.mockResolvedValue(auth("MAINTENANCE_MANAGER"));
     mocks.generate.mockResolvedValue({ siteFound: true, generated: [], existing: [] });
+    mocks.generateReminders.mockResolvedValue({
+      siteFound: true,
+      created: [],
+      existing: [],
+      expired: 0,
+    });
   });
 
-  it("allows a maintenance manager to run the site scheduler", async () => {
-    const response = await POST(request());
+  it("allows a maintenance manager to run work generation and reminder notification together", async () => {
+    const response = await POST(request(undefined, 10));
 
     await expectStatus(response, 200);
     expect(mocks.generate).toHaveBeenCalledWith(
@@ -66,6 +77,15 @@ describe("maintenance scheduler API", () => {
         siteId: "site-a",
         actorId: "manager-1",
         throughDate: expect.any(Date),
+      }),
+    );
+    expect(mocks.generateReminders).toHaveBeenCalledWith(
+      expect.objectContaining({
+        organizationId: "org-a",
+        siteId: "site-a",
+        leadDays: 10,
+        actorId: "manager-1",
+        now: expect.any(Date),
       }),
     );
   });
@@ -77,12 +97,21 @@ describe("maintenance scheduler API", () => {
 
     await expectStatus(response, 403);
     expect(mocks.generate).not.toHaveBeenCalled();
+    expect(mocks.generateReminders).not.toHaveBeenCalled();
   });
 
   it("rejects an excessive future generation horizon", async () => {
     const future = new Date(Date.now() + 100 * 24 * 60 * 60 * 1000).toISOString();
 
     const response = await POST(request(future));
+
+    await expectStatus(response, 400);
+    expect(mocks.generate).not.toHaveBeenCalled();
+    expect(mocks.generateReminders).not.toHaveBeenCalled();
+  });
+
+  it("rejects a reminder lead time beyond 30 days", async () => {
+    const response = await POST(request(undefined, 31));
 
     await expectStatus(response, 400);
     expect(mocks.generate).not.toHaveBeenCalled();
@@ -94,5 +123,6 @@ describe("maintenance scheduler API", () => {
     const response = await POST(request());
 
     await expectStatus(response, 404);
+    expect(mocks.generateReminders).not.toHaveBeenCalled();
   });
 });
