@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { db } from "@/lib/db";
 
 function formatDate(value: Date | null) {
@@ -45,10 +46,10 @@ export default async function MaintenancePage() {
             <tbody>
               {workOrders.map((workOrder) => (
                 <tr key={workOrder.id}>
-                  <td>{workOrder.number}</td>
+                  <td><Link className="table-link" href={`/maintenance/${workOrder.id}`}>{workOrder.number}</Link></td>
                   <td>{workOrder.site.code}</td>
                   <td>{workOrder.asset?.code ?? "—"}</td>
-                  <td>{workOrder.title}</td>
+                  <td><Link className="table-link" href={`/maintenance/${workOrder.id}`}>{workOrder.title}</Link></td>
                   <td>{workOrder.type}</td>
                   <td>{workOrder.priority}</td>
                   <td><span className="badge">{workOrder.status}</span></td>
