@@ -213,6 +213,7 @@ model Site {
   locations            Location[]
   assets               Asset[]
   workOrders           WorkOrder[]
+  warehouses           Warehouse[]
 
   @@unique([organizationId, code])
   @@index([organizationId, active])
@@ -448,6 +449,7 @@ model Part {
   quantityOnHand        Float                      @default(0)
   reorderPoint          Float                      @default(0)
   unitCost              Decimal?                   @db.Decimal(14, 4)
+  active                Boolean                    @default(true)
   createdAt             DateTime                   @default(now())
   updatedAt             DateTime                   @updatedAt
   organization          Organization               @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -456,7 +458,38 @@ model Part {
   workOrderConsumptions WorkOrderPartConsumption[]
 
   @@unique([organizationId, sku])
-  @@index([organizationId])
+  @@index([organizationId, active])
+}
+
+model Warehouse {
+  id          String     @id @default(cuid())
+  siteId      String
+  code        String
+  name        String
+  description String?
+  active      Boolean    @default(true)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  site        Site       @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  bins        StockBin[]
+
+  @@unique([siteId, code])
+  @@index([siteId, active])
+}
+
+model StockBin {
+  id          String    @id @default(cuid())
+  warehouseId String
+  code        String
+  name        String
+  description String?
+  active      Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  warehouse   Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+
+  @@unique([warehouseId, code])
+  @@index([warehouseId, active])
 }
 
 model AssetPart {
