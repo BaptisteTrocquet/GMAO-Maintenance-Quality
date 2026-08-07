@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { reservedQuantityForOthers } from "@/lib/inventory/reservations";
 
 const ENTITY_TYPE = "StockReorderPolicy";
+type ReorderAlertStatus = "OUT_OF_STOCK" | "REORDER" | "OK";
 
 export type ReorderPolicySnapshot = {
   id: string;
@@ -251,7 +252,8 @@ export async function getReorderAlerts(input: {
 
       const onHand = balance?.quantity ?? 0;
       const available = Math.max(onHand - reserved, 0);
-      const status = available <= 0 ? "OUT_OF_STOCK" : available <= policy.minQuantity ? "REORDER" : "OK";
+      const status: ReorderAlertStatus =
+        available <= 0 ? "OUT_OF_STOCK" : available <= policy.minQuantity ? "REORDER" : "OK";
       if (status === "OK" && !input.includeOk) continue;
       const suggestedOrderQuantity =
         status === "OK"
@@ -271,7 +273,11 @@ export async function getReorderAlerts(input: {
     }
 
     return alerts.sort((left, right) => {
-      const severity = { OUT_OF_STOCK: 0, REORDER: 1, OK: 2 } as const;
+      const severity: Record<ReorderAlertStatus, number> = {
+        OUT_OF_STOCK: 0,
+        REORDER: 1,
+        OK: 2,
+      };
       const bySeverity = severity[left.status] - severity[right.status];
       return bySeverity || left.part.sku.localeCompare(right.part.sku);
     });
