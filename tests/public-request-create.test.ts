@@ -1,3 +1,4 @@
+import type { PublicMaintenanceRequestToken } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -41,7 +42,7 @@ vi.mock("@/lib/db", () => ({
 
 import { createPublicMaintenanceRequest } from "@/lib/public-requests/create-request";
 
-const token = {
+const token: PublicMaintenanceRequestToken = {
   id: "token-1",
   organizationId: "org-a",
   siteId: "site-a",
@@ -54,7 +55,7 @@ const token = {
   createdById: "manager-1",
   createdAt: new Date("2026-08-01T00:00:00.000Z"),
   lastUsedAt: null,
-} as const;
+};
 
 const input = {
   token,
