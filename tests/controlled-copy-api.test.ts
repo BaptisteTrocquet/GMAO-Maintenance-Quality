@@ -30,6 +30,11 @@ const auth = {
   },
 };
 
+function requireResponse(response: Response | undefined): Response {
+  expect(response).toBeDefined();
+  return response!;
+}
+
 describe("controlled copy API", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -56,11 +61,13 @@ describe("controlled copy API", () => {
   });
 
   it("serves a no-store controlled copy with revision and checksum metadata", async () => {
-    const response = await GET(
-      new Request(
-        "http://localhost/api/documents/doc-1/controlled-copy?organizationId=org-a&asOf=2026-08-07T12:00:00.000Z",
+    const response = requireResponse(
+      await GET(
+        new Request(
+          "http://localhost/api/documents/doc-1/controlled-copy?organizationId=org-a&asOf=2026-08-07T12:00:00.000Z",
+        ),
+        { params: Promise.resolve({ documentId: "doc-1" }) },
       ),
-      { params: Promise.resolve({ documentId: "doc-1" }) },
     );
 
     expect(response.status).toBe(200);
@@ -78,9 +85,11 @@ describe("controlled copy API", () => {
   });
 
   it("requires explicit organization scope", async () => {
-    const response = await GET(
-      new Request("http://localhost/api/documents/doc-1/controlled-copy"),
-      { params: Promise.resolve({ documentId: "doc-1" }) },
+    const response = requireResponse(
+      await GET(
+        new Request("http://localhost/api/documents/doc-1/controlled-copy"),
+        { params: Promise.resolve({ documentId: "doc-1" }) },
+      ),
     );
 
     expect(response.status).toBe(400);
@@ -88,9 +97,11 @@ describe("controlled copy API", () => {
   });
 
   it("rejects an invalid as-of date before authentication", async () => {
-    const response = await GET(
-      new Request("http://localhost/api/documents/doc-1/controlled-copy?organizationId=org-a&asOf=not-a-date"),
-      { params: Promise.resolve({ documentId: "doc-1" }) },
+    const response = requireResponse(
+      await GET(
+        new Request("http://localhost/api/documents/doc-1/controlled-copy?organizationId=org-a&asOf=not-a-date"),
+        { params: Promise.resolve({ documentId: "doc-1" }) },
+      ),
     );
 
     expect(response.status).toBe(400);
