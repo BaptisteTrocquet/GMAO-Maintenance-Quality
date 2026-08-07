@@ -48,6 +48,9 @@ jobs:
       - name: Apply schema to disposable database
         run: npx prisma db push
 
+      - name: Database integration smoke check
+        run: npm run test:db
+
       - name: Typecheck
         run: npm run typecheck
 
