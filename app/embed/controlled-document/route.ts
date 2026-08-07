@@ -1,4 +1,5 @@
 import { db } from "@/lib/db";
+import { escapeHtmlAttribute } from "@/lib/embed/html";
 import { createEmbedProof, parentOriginFromReferrer } from "@/lib/embed/proof";
 import { getPublicRequestTokenScopes, hasPublicRequestScope, isOriginAllowed } from "@/lib/public-requests/tokens";
 
@@ -12,7 +13,7 @@ function htmlPage(proof: string, documentCode: string, asOf: string | null) {
   <link rel="stylesheet" href="/embed/controlled-document/styles.css">
 </head>
 <body>
-  <main class="document-card" id="gmao-controlled-document" data-embed-proof="${proof}" data-document-code="${documentCode}" data-as-of="${asOf ?? ""}">
+  <main class="document-card" id="gmao-controlled-document" data-embed-proof="${escapeHtmlAttribute(proof)}" data-document-code="${escapeHtmlAttribute(documentCode)}" data-as-of="${escapeHtmlAttribute(asOf ?? "")}">
     <header>
       <p class="eyebrow">Controlled document</p>
       <h1 id="document-title">Loading…</h1>
