@@ -6,6 +6,7 @@ const source = String.raw`(() => {
   const tokenId = script.dataset.tokenId || "";
   const token = script.dataset.token || "";
   const targetSelector = script.dataset.target || "";
+  script.removeAttribute("data-token");
 
   const widgets = {
     "maintenance-request": { path: "/embed/maintenance-request", title: "Maintenance request", height: "650px" },
@@ -16,14 +17,13 @@ const source = String.raw`(() => {
   };
   const config = widgets[widget];
   if (!config || !tokenId || !token) return;
+  if (config.required && !script.dataset[config.required]) return;
 
   let target = targetSelector ? document.querySelector(targetSelector) : null;
   if (!target) {
     target = document.createElement("div");
     script.insertAdjacentElement("beforebegin", target);
   }
-
-  if (config.required && !script.dataset[config.required]) return;
 
   const url = new URL(config.path, script.src);
   url.searchParams.set("tokenId", tokenId);
