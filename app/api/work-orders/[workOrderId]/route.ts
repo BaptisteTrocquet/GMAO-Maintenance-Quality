@@ -120,6 +120,19 @@ export async function PATCH(
     }
   }
 
+  const isReopen =
+    hasStatusTransition &&
+    parsed.data.status !== undefined &&
+    (existing.status === "COMPLETED" || existing.status === "CANCELLED");
+  const isCancel = hasStatusTransition && parsed.data.status === "CANCELLED";
+  if ((isReopen || isCancel) && !parsed.data.statusNote?.trim()) {
+    return apiError(
+      409,
+      "STATUS_NOTE_REQUIRED",
+      "A reason is required when cancelling or reopening a work order",
+    );
+  }
+
   if (hasOwn(parsed.data, "assigneeId") && parsed.data.assigneeId) {
     const membership = await db.organizationMembership.findFirst({
       where: {
@@ -199,6 +212,10 @@ export async function PATCH(
     data.startedAt = dates.startedAt;
     data.completedAt = dates.completedAt;
     signedAt = parsed.data.status === "COMPLETED" ? dates.completedAt : null;
+
+    if (existing.status === "COMPLETED" && parsed.data.status === "IN_PROGRESS") {
+      data.completionNote = null;
+    }
   }
 
   const updated = await db.workOrder.update({ where: { id: existing.id }, data });
@@ -210,9 +227,13 @@ export async function PATCH(
       entityId: existing.id,
       action: completedWithSignature
         ? "COMPLETED_SIGNED"
-        : hasStatusTransition
-          ? "STATUS_CHANGED"
-          : "TRIAGED",
+        : isReopen
+          ? "REOPENED"
+          : isCancel
+            ? "CANCELLED"
+            : hasStatusTransition
+              ? "STATUS_CHANGED"
+              : "TRIAGED",
       beforeJson: JSON.stringify(existing),
       afterJson: JSON.stringify({
         workOrder: updated,
