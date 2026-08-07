@@ -8,100 +8,107 @@ A central goal is to let an organization integrate selected GMAO capabilities in
 The simplest integration: link from the existing site to the full application. Later SSO can remove the second login.
 
 ### Level B — iframe widgets
-Fastest general-purpose embed. The maintenance-request iframe is available at `/embed/maintenance-request` and uses scoped `EMBEDDED` request tokens rather than an administrator credential.
+All iframe widgets use scoped `EMBEDDED` tokens rather than administrator credentials. The scoped secret belongs in the URL fragment, not the query string. The iframe removes the fragment from visible history after bootstrap.
 
-Example:
+The server validates the browser-supplied parent `Referer`, requires an exact allowed origin and signs a short-lived proof binding `tokenId + parent origin + expiry`. The proof-bound iframe APIs also require the scoped bearer secret. Each iframe response applies a restrictive CSP with exact `frame-ancestors`, no inline scripts/styles and no arbitrary object/embed content.
+
+#### Maintenance request
 
 ```html
 <iframe
   title="Maintenance request"
   src="https://gmao.example.test/embed/maintenance-request?tokenId=TOKEN_ID#token=SCOPED_TOKEN_SECRET"
   referrerpolicy="strict-origin"
-  sandbox="allow-scripts allow-same-origin"
-  style="width:100%;max-width:720px;height:650px;border:0"
-></iframe>
+  sandbox="allow-scripts allow-same-origin">
+</iframe>
 ```
 
-Use an exact allowed origin matching the host page. The non-secret token id is in the query string; the scoped secret is in the URL fragment, which browsers do not send in the iframe HTTP request. The iframe reads it once, removes the fragment from visible history, and submits through the proof-bound `/api/v1/embed/maintenance-requests` endpoint.
+Requires `maintenance:request:create`. A complete host example lives in `examples/maintenance-request-iframe.html`.
 
-The server validates the browser-supplied parent `Referer` before rendering the iframe and signs a short-lived proof binding `tokenId + parent origin + expiry`. The iframe API requires both that proof and the scoped bearer secret. Copying an iframe URL to a different parent origin therefore does not create a valid embed session.
+#### Request status
 
-The iframe response applies a restrictive CSP with dynamic `frame-ancestors`, no inline scripts, no inline styles, no object/embed content and `base-uri 'none'`. A complete static host example lives in `examples/maintenance-request-iframe.html`.
+`/embed/request-status?tokenId=TOKEN_ID&trackingId=TRACKING_ID#token=SCOPED_TOKEN_SECRET`
 
-The request-status iframe is available at `/embed/request-status?tokenId=TOKEN_ID&trackingId=TRACKING_ID#token=SCOPED_TOKEN_SECRET`. It exposes only the public work-order number, status and lifecycle timestamps; internal descriptions, assignment data and completion notes are not returned.
+Requires `maintenance:request:status`. It exposes only the public work-order number, status and lifecycle timestamps.
 
-The asset-card iframe requires `asset:read` and is available at:
+#### Asset card
 
-```html
-<iframe
-  title="Asset card"
-  src="https://gmao.example.test/embed/asset-card?tokenId=TOKEN_ID&assetCode=ASSET-100#token=SCOPED_TOKEN_SECRET"
-  referrerpolicy="strict-origin"
-  sandbox="allow-scripts allow-same-origin"
-  style="width:100%;max-width:680px;height:430px;border:0"
-></iframe>
-```
+`/embed/asset-card?tokenId=TOKEN_ID&assetCode=ASSET-100#token=SCOPED_TOKEN_SECRET`
 
-Asset codes are resolved only inside the site bound to the token. The card exposes code, name, status, criticality, category, manufacturer/model, location and update time. It deliberately excludes description, serial number, internal IDs, work-order assignments and other internal maintenance data. Asset-card lookups are rate-limited and audited, including failed lookups, to reduce enumeration risk.
+Requires `asset:read`. Asset codes are resolved only inside the site bound to the token. The card excludes description, serial number, internal IDs, work-order assignments and other internal maintenance data. Failed lookups are audited and consume the same rate-limit budget as successful lookups.
 
-The controlled-document iframe requires `document:read` and is available at:
+#### Controlled document
 
-```html
-<iframe
-  title="Controlled document"
-  src="https://gmao.example.test/embed/controlled-document?tokenId=TOKEN_ID&documentCode=SOP-100#token=SCOPED_TOKEN_SECRET"
-  referrerpolicy="strict-origin"
-  sandbox="allow-scripts allow-same-origin"
-  style="width:100%;max-width:900px;height:760px;border:0"
-></iframe>
-```
+`/embed/controlled-document?tokenId=TOKEN_ID&documentCode=SOP-100#token=SCOPED_TOKEN_SECRET`
 
-A document is exposed only when it is applicable to at least one non-archived asset in the site bound to the token. The server then reuses the E6 controlled-copy service: it resolves the revision effective at the optional `asOf` date, reads the stored file, verifies its SHA-256 digest and audits controlled-copy issuance. Missing effective revisions and failed file-integrity checks are never silently replaced by another revision.
+Requires `document:read`. A document is exposed only when it is applicable to at least one non-archived asset in the token site. The viewer reuses the E6 controlled-copy service to resolve the effective revision, verify SHA-256 integrity and audit issuance. PDF/PNG/JPEG/WebP can be previewed; other file types remain download-only.
 
-The viewer displays traceability metadata and always provides the verified controlled copy for download. It previews only PDF, PNG, JPEG and WebP blobs. Other file types remain downloadable but are not rendered inside the iframe. PDF preview is placed in a sandboxed nested frame; arbitrary object/embed content remains disabled by CSP. Failed and successful document-code lookups consume a 60/hour/token limit and are audited to reduce enumeration risk.
+#### KPI card
 
-Dynamic `assetCode`, `documentCode` and proof values are HTML-attribute escaped before iframe markup is emitted.
+`/embed/kpi-card?tokenId=TOKEN_ID#token=SCOPED_TOKEN_SECRET`
 
-The KPI iframe requires `kpi:read` and is available at:
+Requires `kpi:read`. The response is aggregate-only: open work orders, overdue work orders, work orders in progress, assets out of service and the generation timestamp. It never includes work-order titles/numbers, users, asset identities, assignees, teams or internal IDs.
 
-```html
-<iframe
-  title="Maintenance KPIs"
-  src="https://gmao.example.test/embed/kpi-card?tokenId=TOKEN_ID#token=SCOPED_TOKEN_SECRET"
-  referrerpolicy="strict-origin"
-  sandbox="allow-scripts allow-same-origin"
-  style="width:100%;max-width:760px;height:330px;border:0"
-></iframe>
-```
-
-The KPI contract is aggregate-only and site-scoped. It returns four counts: open work orders, overdue work orders, work orders currently in progress, and non-archived assets out of service, plus the generation timestamp. It never exposes work-order titles/numbers, user identities, asset codes/names, assignees, teams or internal IDs. KPI reads use the same exact-origin, bearer-token and proof model and are limited to 120 views/hour/token.
+Dynamic `assetCode`, `documentCode`, tracking IDs and proof values are HTML-attribute escaped before iframe markup is emitted.
 
 ### Level C — script-loader widgets
-Target developer experience:
+
+`GET /embed.js` creates the secured iframe using DOM APIs. It does not use `innerHTML`, `document.write` or `eval`. The loader supports all five widgets:
+
+- `maintenance-request`
+- `request-status`
+- `asset-card`
+- `controlled-document`
+- `kpi-card`
+
+Example:
 
 ```html
 <div id="gmao-maintenance-request"></div>
 <script
-  src="https://gmao.example.com/embed.js"
+  src="https://gmao.example.test/embed.js"
   data-widget="maintenance-request"
   data-target="#gmao-maintenance-request"
-  data-token="SCOPED_TOKEN">
+  data-token-id="TOKEN_ID"
+  data-token="SCOPED_TOKEN_SECRET"
+  data-theme-accent="#2563eb"
+  data-theme-background="#f4f7fb"
+  data-theme-surface="#ffffff"
+  data-theme-text="#111827"
+  data-theme-radius="16">
 </script>
 ```
 
-This allows theme adaptation and a more native visual integration.
+The loader reads the scoped secret, immediately removes the `data-token` attribute, and places the secret only in the created iframe URL fragment. It sets `referrerpolicy="strict-origin"`, `sandbox="allow-scripts allow-same-origin"` and lazy loading. `data-target` is optional; without it, the loader creates a container immediately before the script element.
+
+Widget-specific attributes:
+
+- `request-status`: `data-tracking-id`
+- `asset-card`: `data-asset-code`
+- `controlled-document`: `data-document-code`, optional `data-as-of`
+- all widgets: optional `data-height`, `data-max-width`
+
+A complete script-loader example lives in `examples/widget-loader.html`.
+
+### Theme tokens
+
+The host can pass only the following named theme tokens:
+
+- `data-theme-accent` → `#RRGGBB`
+- `data-theme-background` → `#RRGGBB`
+- `data-theme-surface` → `#RRGGBB`
+- `data-theme-text` → `#RRGGBB`
+- `data-theme-radius` → integer `0..32` pixels
+
+The iframe server validates these values before generating `/embed/theme.css`. Invalid colors, CSS expressions, URLs, declarations and out-of-range radii are replaced with safe defaults. Arbitrary CSS strings are never reflected into the iframe stylesheet.
 
 ### Level D — Headless API / SDK
-For custom portals:
 
-```ts
-const gmao = new GmaoClient({ baseUrl, apiKey });
-await gmao.workRequests.create({ assetCode, title, description });
-```
+For custom portals, use the versioned public API. A TypeScript SDK is planned separately.
 
 ## Versioned public API
 
-New integrations should target the stable versioned prefix `/api/v1`:
+New integrations should target `/api/v1`:
 
 ```text
 POST /api/v1/public/maintenance-requests?tokenId=<non-secret token id>
@@ -111,87 +118,29 @@ GET  /api/v1/public/documents?tokenId=<token id>&documentCode=<document code>&as
 GET  /api/v1/public/kpis?tokenId=<token id>
 ```
 
-The pre-version endpoint `/api/public/maintenance-requests` remains available for backward compatibility and delegates to the same handler as v1. Compatibility tests prevent the two routes from drifting.
+The pre-version endpoint `/api/public/maintenance-requests` remains available for backward compatibility and delegates to the same handler as v1. Compatibility tests prevent route drift.
 
-The machine-readable OpenAPI 3.1 document is published by every deployment at:
+The machine-readable OpenAPI 3.1 document is published at:
 
 ```text
 GET /api/openapi.json
 ```
 
-Its `info.version` identifies the public API contract version independently from the application release version.
+Its `info.version` identifies the public API contract independently from the application release version.
 
 ## Scoped integration tokens
 
-A site manager creates a scoped token through `POST /api/public-request-tokens`. Tokens are bound to one organization/site, expire, can be revoked, and store only a SHA-256 hash server-side. `EMBEDDED` tokens require one or more exact allowed origins. The raw token is returned only when the token is created.
+A site manager creates a scoped token through `POST /api/public-request-tokens`. Tokens are bound to one organization/site, expire, can be revoked and store only a SHA-256 hash server-side. `EMBEDDED` tokens require one or more exact allowed origins. The raw secret is returned only at creation.
 
-Each token also receives an immutable capability list. Changing capabilities requires token rotation rather than silently widening an existing browser credential.
+Capabilities are immutable; changing them requires token rotation:
 
-Supported capabilities are:
+- `maintenance:request:create`
+- `maintenance:request:status`
+- `asset:read`
+- `document:read`
+- `kpi:read`
 
-- `maintenance:request:create` — submit a maintenance request
-- `maintenance:request:status` — read the minimal public status for a request created by the same token
-- `asset:read` — read minimal asset cards from the token's site
-- `document:read` — read effective, integrity-verified controlled documents applicable to the token's site
-- `kpi:read` — read aggregate maintenance KPIs for the token's site
-
-Example token creation payload:
-
-```json
-{
-  "organizationId": "org-id",
-  "siteId": "site-id",
-  "name": "Maintenance portal",
-  "mode": "EMBEDDED",
-  "allowedOrigins": ["https://portal.example.test"],
-  "scopes": [
-    "maintenance:request:create",
-    "maintenance:request:status",
-    "asset:read",
-    "document:read",
-    "kpi:read"
-  ],
-  "expiresInDays": 30
-}
-```
-
-The server verifies that the authenticated site manager is allowed to delegate every requested capability. Existing legacy request tokens without capability metadata retain only the two maintenance capabilities. New tokens without valid capability metadata fail closed with no capabilities.
-
-## Scoped public maintenance requests
-
-External applications submit to:
-
-```text
-POST /api/v1/public/maintenance-requests?tokenId=<non-secret token id>
-Authorization: Bearer <scoped token secret>
-Idempotency-Key: <unique request id>
-Content-Type: application/json
-```
-
-Example payload:
-
-```json
-{
-  "title": "Abnormal machine noise",
-  "description": "Noise noticed during operation.",
-  "assetCode": "A-100",
-  "requesterName": "External Requester",
-  "requesterEmail": "requester@example.local",
-  "requesterRef": "PORTAL-1234"
-}
-```
-
-The public endpoint can only create a `REQUESTED`, `NORMAL` priority, `CORRECTIVE` work order in the site bound to the token. The normal internal triage workflow decides priority, category, assignment and planning. An optional `assetCode` is resolved only inside that site.
-
-Browser integrations use exact-origin CORS. Preflight requests include the non-secret `tokenId`; the bearer secret is only sent on the actual request. Requests are idempotent and rate-limited per token. No administrator/session secret is exposed to the browser.
-
-## First embeddable use cases
-
-1. Public maintenance request form
-2. Request status tracker
-3. Asset information card
-4. Controlled document viewer
-5. KPI card
+The server verifies that the authenticated site manager may delegate every requested capability. Legacy request tokens without capability metadata retain only the two maintenance capabilities; new tokens without valid capability metadata fail closed.
 
 ## Security requirements
 
@@ -200,11 +149,12 @@ Browser integrations use exact-origin CORS. Preflight requests include the non-s
 - expiration and revocation
 - explicit allowed origins
 - rate limiting
-- CSRF strategy where cookies are used
-- CSP/frame-ancestors policy configurable per tenant
+- CSP/frame-ancestors policy enforced by the iframe server
 - all input validated server-side
+- dynamic HTML attributes escaped
+- arbitrary theme CSS rejected
 - all sensitive fields hidden by default
 - tenant/site boundaries enforced server-side
 
 ## Architectural rule
-Embedded UI must call the same service/domain layer as the full application. We do not maintain a second business logic implementation for widgets.
+Embedded UI must call the same service/domain layer as the full application. We do not maintain a second business-logic implementation for widgets.

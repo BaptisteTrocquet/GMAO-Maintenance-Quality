@@ -50,7 +50,24 @@ describe("maintenance request iframe shell", () => {
     const html = await response.text();
     expect(html).toContain("data-embed-proof=");
     expect(html).toContain("/embed/maintenance-request/client.js");
+    expect(html).toContain("/embed/theme.css?");
     expect(html).not.toContain("tokenHash");
+  });
+
+  it("renders only server-validated theme tokens into the stylesheet URL", async () => {
+    const response = await GET(
+      new Request(
+        "http://gmao.example.test/embed/maintenance-request?tokenId=token-1&themeAccent=%23AABBCC&themeSurface=red%3Bbody%7Bdisplay%3Anone%7D&themeRadius=12",
+        { headers: { referer: "https://portal.example.test/maintenance" } },
+      ),
+    );
+    const html = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(html).toContain("accent=%23aabbcc");
+    expect(html).toContain("radius=12");
+    expect(html).not.toContain("display%3Anone");
+    expect(html).not.toContain("display:none");
   });
 
   it("rejects an iframe loaded by an unconfigured parent origin", async () => {

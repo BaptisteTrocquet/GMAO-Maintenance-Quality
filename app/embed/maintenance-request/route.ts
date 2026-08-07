@@ -1,12 +1,14 @@
 import { db } from "@/lib/db";
+import { escapeHtmlAttribute } from "@/lib/embed/html";
 import { createEmbedProof, parentOriginFromReferrer } from "@/lib/embed/proof";
+import { embedThemeStylesheetHref } from "@/lib/embed/theme";
 import {
   getPublicRequestTokenScopes,
   hasPublicRequestScope,
   isOriginAllowed,
 } from "@/lib/public-requests/tokens";
 
-function htmlPage(proof: string) {
+function htmlPage(proof: string, themeHref: string) {
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -14,9 +16,10 @@ function htmlPage(proof: string) {
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Maintenance request</title>
   <link rel="stylesheet" href="/embed/maintenance-request/styles.css">
+  <link rel="stylesheet" href="${escapeHtmlAttribute(themeHref)}">
 </head>
 <body>
-  <main class="embed-card" id="gmao-embed" data-embed-proof="${proof}">
+  <main class="embed-card" id="gmao-embed" data-embed-proof="${escapeHtmlAttribute(proof)}">
     <header>
       <p class="eyebrow">Maintenance</p>
       <h1>Report an issue</h1>
@@ -77,7 +80,7 @@ export async function GET(request: Request) {
     return new Response("Embed unavailable", { status: 404 });
   }
 
-  const scopes = await getPublicRequestTokenScopes(token.id);
+  const scopes = await getPublicRequestTokenScopes(token.id, token.createdAt);
   if (!hasPublicRequestScope({ scopes }, "maintenance:request:create")) {
     return new Response("Embed unavailable", { status: 404 });
   }
@@ -99,7 +102,7 @@ export async function GET(request: Request) {
     parentOrigin,
     now,
   });
-  return new Response(htmlPage(proof), {
+  return new Response(htmlPage(proof, embedThemeStylesheetHref(url)), {
     status: 200,
     headers: securityHeaders(token.allowedOrigins),
   });

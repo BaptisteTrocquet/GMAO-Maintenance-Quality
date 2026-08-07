@@ -1,9 +1,10 @@
 import { db } from "@/lib/db";
 import { escapeHtmlAttribute } from "@/lib/embed/html";
 import { createEmbedProof, parentOriginFromReferrer } from "@/lib/embed/proof";
+import { embedThemeStylesheetHref } from "@/lib/embed/theme";
 import { getPublicRequestTokenScopes, hasPublicRequestScope, isOriginAllowed } from "@/lib/public-requests/tokens";
 
-function htmlPage(proof: string, assetCode: string) {
+function htmlPage(proof: string, assetCode: string, themeHref: string) {
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -11,6 +12,7 @@ function htmlPage(proof: string, assetCode: string) {
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Asset card</title>
   <link rel="stylesheet" href="/embed/asset-card/styles.css">
+  <link rel="stylesheet" href="${escapeHtmlAttribute(themeHref)}">
 </head>
 <body>
   <main class="asset-card" id="gmao-asset-card" data-embed-proof="${escapeHtmlAttribute(proof)}" data-asset-code="${escapeHtmlAttribute(assetCode)}">
@@ -82,7 +84,7 @@ export async function GET(request: Request) {
   }
 
   const proof = createEmbedProof({ tokenId: token.id, tokenHash: token.tokenHash, parentOrigin, now });
-  return new Response(htmlPage(proof, assetCode), {
+  return new Response(htmlPage(proof, assetCode, embedThemeStylesheetHref(url)), {
     status: 200,
     headers: securityHeaders(token.allowedOrigins),
   });
