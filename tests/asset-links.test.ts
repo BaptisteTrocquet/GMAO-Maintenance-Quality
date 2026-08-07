@@ -60,7 +60,8 @@ describe("asset links", () => {
       { params: Promise.resolve({ assetId: "asset-1" }) },
     );
 
-    expect(response.status).toBe(404);
+    expect(response).toBeDefined();
+    expect(response!.status).toBe(404);
     expect(mocks.partFindFirst).toHaveBeenCalledWith({
       where: { id: "part-b", organizationId: "org-a" },
       select: { id: true },
@@ -76,7 +77,8 @@ describe("asset links", () => {
       { params: Promise.resolve({ assetId: "asset-1" }) },
     );
 
-    expect(response.status).toBe(404);
+    expect(response).toBeDefined();
+    expect(response!.status).toBe(404);
     expect(mocks.assetDocumentUpsert).not.toHaveBeenCalled();
   });
 
@@ -97,7 +99,8 @@ describe("asset links", () => {
       { params: Promise.resolve({ assetId: "asset-1" }) },
     );
 
-    expect(response.status).toBe(201);
+    expect(response).toBeDefined();
+    expect(response!.status).toBe(201);
     expect(mocks.auditCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({ entityType: "AssetAttachment", entityId: "attachment-1", action: "CREATED" }),
     });
