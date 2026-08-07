@@ -1,4 +1,4 @@
-export const PUBLIC_API_VERSION = "1.3.0";
+export const PUBLIC_API_VERSION = "1.4.0";
 
 const tokenIdParameter = {
   name: "tokenId",
@@ -36,6 +36,10 @@ export const publicOpenApiSpec = {
     {
       name: "Public controlled documents",
       description: "Read only effective, integrity-verified controlled documents applicable to the scoped token site.",
+    },
+    {
+      name: "Public KPIs",
+      description: "Read aggregate site maintenance KPIs using an integration token with kpi:read capability.",
     },
   ],
   paths: {
@@ -208,9 +212,7 @@ export const publicOpenApiSpec = {
               "X-Document-Effective-At": { schema: { type: "string" } },
               "X-Content-SHA256": { schema: { type: "string", pattern: "^[a-fA-F0-9]{64}$" } },
             },
-            content: {
-              "application/octet-stream": { schema: { type: "string", format: "binary" } },
-            },
+            content: { "application/octet-stream": { schema: { type: "string", format: "binary" } } },
           },
           "400": { $ref: "#/components/responses/BadRequest" },
           "401": { $ref: "#/components/responses/Unauthorized" },
@@ -218,6 +220,37 @@ export const publicOpenApiSpec = {
           "404": { description: "Document is not site-applicable or no revision is effective at asOf." },
           "409": { description: "The effective file is unavailable or failed integrity verification." },
           "429": { description: "Scoped token exceeded its hourly controlled-document lookup limit." },
+        },
+      },
+    },
+    "/api/v1/public/kpis": {
+      options: {
+        tags: ["Public KPIs"],
+        summary: "Validate CORS preflight for KPI-card lookup",
+        parameters: [tokenIdParameter, { ...originParameter, required: true }],
+        responses: {
+          "204": { description: "Origin is allowed and the active token has kpi:read." },
+          "400": { description: "tokenId or Origin is missing." },
+          "403": { description: "Token is inactive, lacks kpi:read, or the origin is not allowed." },
+        },
+      },
+      get: {
+        tags: ["Public KPIs"],
+        summary: "Read aggregate maintenance KPIs for the token site",
+        description:
+          "Requires kpi:read. Returns aggregate counts only: open work orders, overdue work orders, work orders in progress and non-archived assets out of service. No work-order titles, users, asset identities or internal IDs are exposed.",
+        operationId: "getPublicKpiCardV1",
+        security: [{ scopedPublicRequestToken: [] }],
+        parameters: [tokenIdParameter, originParameter],
+        responses: {
+          "200": {
+            description: "Aggregate site maintenance KPI snapshot.",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/PublicKpiCardResult" } } },
+          },
+          "400": { $ref: "#/components/responses/BadRequest" },
+          "401": { $ref: "#/components/responses/Unauthorized" },
+          "403": { $ref: "#/components/responses/Forbidden" },
+          "429": { description: "Scoped token exceeded its hourly KPI-card lookup limit." },
         },
       },
     },
@@ -301,10 +334,7 @@ export const publicOpenApiSpec = {
       },
       PublicAssetLocation: {
         type: ["object", "null"],
-        properties: {
-          code: { type: "string" },
-          name: { type: "string" },
-        },
+        properties: { code: { type: "string" }, name: { type: "string" } },
       },
       PublicAssetCard: {
         type: "object",
@@ -326,6 +356,23 @@ export const publicOpenApiSpec = {
         required: ["data"],
         properties: { data: { $ref: "#/components/schemas/PublicAssetCard" } },
       },
+      PublicKpiCard: {
+        type: "object",
+        additionalProperties: false,
+        required: ["openWorkOrders", "overdueWorkOrders", "inProgressWorkOrders", "outOfServiceAssets", "generatedAt"],
+        properties: {
+          openWorkOrders: { type: "integer", minimum: 0 },
+          overdueWorkOrders: { type: "integer", minimum: 0 },
+          inProgressWorkOrders: { type: "integer", minimum: 0 },
+          outOfServiceAssets: { type: "integer", minimum: 0 },
+          generatedAt: { type: "string", format: "date-time" },
+        },
+      },
+      PublicKpiCardResult: {
+        type: "object",
+        required: ["data"],
+        properties: { data: { $ref: "#/components/schemas/PublicKpiCard" } },
+      },
       ApiError: {
         type: "object",
         required: ["error"],
@@ -333,11 +380,7 @@ export const publicOpenApiSpec = {
           error: {
             type: "object",
             required: ["code", "message"],
-            properties: {
-              code: { type: "string" },
-              message: { type: "string" },
-              details: {},
-            },
+            properties: { code: { type: "string" }, message: { type: "string" }, details: {} },
           },
         },
       },
