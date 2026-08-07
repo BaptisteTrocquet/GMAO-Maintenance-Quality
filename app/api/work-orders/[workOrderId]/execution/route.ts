@@ -3,7 +3,7 @@ import { apiData, apiError } from "@/lib/api-response";
 import { AccessDeniedError, assertSitePermission } from "@/lib/access-control";
 import { authenticateRequest } from "@/lib/auth/request-auth";
 import { db } from "@/lib/db";
-import { can } from "@/lib/permissions";
+import { canExecuteWorkOrder } from "@/lib/work-orders/authorization";
 
 const checklistUpdateSchema = z
   .object({
@@ -59,7 +59,7 @@ export async function GET(
   const { workOrderId } = await context.params;
   const workOrder = await db.workOrder.findFirst({
     where: { id: workOrderId, siteId, site: { organizationId, active: true } },
-    include: { checkItems: true, assignee: true },
+    include: { checkItems: true, assignee: true, team: true },
   });
   if (!workOrder) {
     return apiError(404, "WORK_ORDER_NOT_FOUND", "Work order not found in site scope");
@@ -145,13 +145,18 @@ export async function PATCH(
     }
 
     if (
-      !can(auth.tenant.scope.role, "work:manage") &&
-      existing.assigneeId !== auth.session.user.id
+      !(await canExecuteWorkOrder({
+        role: auth.tenant.scope.role,
+        userId: auth.session.user.id,
+        siteId: existing.siteId,
+        assigneeId: existing.assigneeId,
+        teamId: existing.teamId ?? null,
+      }))
     ) {
       return apiError(
         403,
         "NOT_ASSIGNED",
-        "Only the assigned technician can record work-order execution",
+        "Only the assigned technician or an assigned team member can record work-order execution",
       );
     }
   }
@@ -206,7 +211,7 @@ export async function PATCH(
   await db.$transaction(transaction);
   const updated = await db.workOrder.findFirst({
     where: { id: existing.id },
-    include: { checkItems: true, assignee: true },
+    include: { checkItems: true, assignee: true, team: true },
   });
 
   await db.auditLog.create({
