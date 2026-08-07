@@ -3,6 +3,7 @@ import type { PublicRequestMode } from "@prisma/client";
 import { db } from "@/lib/db";
 
 const DEFAULT_TOKEN_TTL_MS = 1000 * 60 * 60 * 24 * 30;
+const SCOPE_METADATA_REQUIRED_AFTER = new Date("2026-08-07T20:15:00.000Z");
 
 export const PUBLIC_REQUEST_SCOPES = [
   "maintenance:request:create",
@@ -41,7 +42,10 @@ function parseStoredScopes(afterJson: string | null): PublicRequestScope[] | nul
   }
 }
 
-export async function getPublicRequestTokenScopes(tokenId: string): Promise<PublicRequestScope[]> {
+export async function getPublicRequestTokenScopes(
+  tokenId: string,
+  createdAt?: Date | null,
+): Promise<PublicRequestScope[]> {
   const audit = await db.auditLog?.findFirst?.({
     where: {
       entityType: "PublicMaintenanceRequestToken",
@@ -52,8 +56,17 @@ export async function getPublicRequestTokenScopes(tokenId: string): Promise<Publ
     orderBy: { createdAt: "asc" },
   });
 
-  if (!audit) return [...DEFAULT_PUBLIC_REQUEST_SCOPES];
-  return parseStoredScopes(audit.afterJson) ?? [...DEFAULT_PUBLIC_REQUEST_SCOPES];
+  if (!audit) {
+    if (createdAt && createdAt >= SCOPE_METADATA_REQUIRED_AFTER) return [];
+    return [...DEFAULT_PUBLIC_REQUEST_SCOPES];
+  }
+
+  const storedScopes = parseStoredScopes(audit.afterJson);
+  if (storedScopes === null) {
+    if (createdAt && createdAt >= SCOPE_METADATA_REQUIRED_AFTER) return [];
+    return [...DEFAULT_PUBLIC_REQUEST_SCOPES];
+  }
+  return storedScopes;
 }
 
 export function hasPublicRequestScope(
@@ -133,7 +146,10 @@ export async function resolvePublicRequestToken(input: {
   const supplied = Buffer.from(hashPublicRequestToken(input.token), "hex");
   if (expected.length !== supplied.length || !timingSafeEqual(expected, supplied)) return null;
 
-  return { ...record, scopes: await getPublicRequestTokenScopes(record.id) };
+  return {
+    ...record,
+    scopes: await getPublicRequestTokenScopes(record.id, record.createdAt),
+  };
 }
 
 export function isOriginAllowed(input: {
