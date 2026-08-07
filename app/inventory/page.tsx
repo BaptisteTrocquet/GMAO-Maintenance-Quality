@@ -1,5 +1,6 @@
 import { headers } from "next/headers";
 import { db } from "@/lib/db";
+import { getReorderAlerts } from "@/lib/inventory/reorder";
 
 export default async function InventoryPage() {
   const requestHeaders = await headers();
@@ -22,7 +23,7 @@ export default async function InventoryPage() {
     );
   }
 
-  const [parts, warehouses] = await Promise.all([
+  const [parts, warehouses, reorderAlerts] = await Promise.all([
     db.part.findMany({
       where: { organizationId, active: true },
       include: {
@@ -49,6 +50,9 @@ export default async function InventoryPage() {
       },
       orderBy: [{ site: { code: "asc" } }, { code: "asc" }],
     }),
+    selectedSiteId
+      ? getReorderAlerts({ organizationId, siteId: selectedSiteId })
+      : Promise.resolve([]),
   ]);
 
   return (
@@ -67,8 +71,8 @@ export default async function InventoryPage() {
             <tr>
               <th>SKU</th>
               <th>Part</th>
-              <th>Stock</th>
-              <th>Reorder point</th>
+              <th>Organization stock</th>
+              <th>Legacy reorder point</th>
               <th>Assets</th>
             </tr>
           </thead>
@@ -85,6 +89,49 @@ export default async function InventoryPage() {
           </tbody>
         </table>
       </div>
+
+      {selectedSiteId ? (
+        <div className="card responsive-table">
+          <h2>Reorder alerts</h2>
+          {reorderAlerts.length === 0 ? (
+            <p className="muted">No bin-level reorder alerts for the selected site.</p>
+          ) : (
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Status</th>
+                  <th>Part</th>
+                  <th>Location</th>
+                  <th>On hand</th>
+                  <th>Reserved</th>
+                  <th>Available</th>
+                  <th>Min / max</th>
+                  <th>Suggested order</th>
+                </tr>
+              </thead>
+              <tbody>
+                {reorderAlerts.map((alert) => (
+                  <tr key={alert.policy.id}>
+                    <td><span className="badge">{alert.status}</span></td>
+                    <td>{alert.part.sku} · {alert.part.name}</td>
+                    <td>{alert.bin.warehouse.code}/{alert.bin.code}</td>
+                    <td>{alert.onHand} {alert.part.unit}</td>
+                    <td>{alert.reserved} {alert.part.unit}</td>
+                    <td>{alert.available} {alert.part.unit}</td>
+                    <td>{alert.policy.minQuantity} / {alert.policy.maxQuantity}</td>
+                    <td>{alert.suggestedOrderQuantity} {alert.part.unit}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      ) : (
+        <div className="card">
+          <h2>Reorder alerts</h2>
+          <p className="muted">Select a site to evaluate bin-level min/max policies.</p>
+        </div>
+      )}
 
       <div className="card">
         <h2>Warehouses & bins</h2>
