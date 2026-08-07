@@ -66,7 +66,8 @@ describe("site-scoped work orders", () => {
       new Request("http://localhost/api/work-orders?organizationId=org-a&siteId=site-a"),
     );
 
-    expect(response.status).toBe(200);
+    expect(response).toBeDefined();
+    expect(response?.status).toBe(200);
     expect(mocks.workOrderFindMany).toHaveBeenCalledWith({
       where: { siteId: "site-a" },
       include: { site: true, asset: true, assignee: true },
@@ -97,7 +98,8 @@ describe("site-scoped work orders", () => {
       }),
     );
 
-    expect(response.status).toBe(201);
+    expect(response).toBeDefined();
+    expect(response?.status).toBe(201);
     expect(mocks.workOrderCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({
         siteId: "site-a",
@@ -129,7 +131,8 @@ describe("site-scoped work orders", () => {
       }),
     );
 
-    expect(response.status).toBe(404);
+    expect(response).toBeDefined();
+    expect(response?.status).toBe(404);
     expect(mocks.assetFindFirst).toHaveBeenCalledWith({
       where: { id: "asset-b", siteId: "site-a", archivedAt: null },
       select: { id: true },
