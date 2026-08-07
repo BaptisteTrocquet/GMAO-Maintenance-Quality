@@ -9,7 +9,11 @@ describe("authenticateRequest", () => {
   it("rejects requests without bearer authentication", async () => {
     const request = new Request("http://localhost/api/assets");
     const result = await authenticateRequest(request, "org-1");
-    expect("error" in result).toBe(true);
-    if ("error" in result) expect(result.error.status).toBe(401);
+
+    if (!("error" in result) || !result.error) {
+      throw new Error("Expected an authentication error");
+    }
+
+    expect(result.error.status).toBe(401);
   });
 });
