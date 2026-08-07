@@ -17,6 +17,13 @@ enum MembershipRole {
   VIEWER
 }
 
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  REVOKED
+  EXPIRED
+}
+
 enum AssetStatus {
   ACTIVE
   INACTIVE
@@ -88,10 +95,27 @@ model User {
   createdAt           DateTime                 @default(now())
   updatedAt           DateTime                 @updatedAt
   memberships         OrganizationMembership[]
+  sessions            Session[]
+  invitationsCreated  OrganizationInvitation[] @relation("InvitationCreator")
+  invitationsAccepted OrganizationInvitation[] @relation("InvitationAcceptor")
   assignedWorkOrders  WorkOrder[]              @relation("AssignedWorkOrders")
   requestedWorkOrders WorkOrder[]              @relation("RequestedWorkOrders")
   documentApprovals   DocumentApproval[]
   auditLogs           AuditLog[]
+}
+
+model Session {
+  id         String   @id @default(cuid())
+  tokenHash  String   @unique
+  userId     String
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  createdAt  DateTime @default(now())
+  lastSeenAt DateTime @default(now())
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, revokedAt])
+  @@index([expiresAt])
 }
 
 model Organization {
@@ -105,19 +129,42 @@ model Organization {
   updatedAt   DateTime                 @updatedAt
   sites       Site[]
   memberships OrganizationMembership[]
+  invitations OrganizationInvitation[]
+}
+
+model OrganizationInvitation {
+  id             String           @id @default(cuid())
+  organizationId String
+  email          String
+  role           MembershipRole   @default(VIEWER)
+  tokenHash      String           @unique
+  status         InvitationStatus @default(PENDING)
+  allSites       Boolean          @default(false)
+  expiresAt      DateTime
+  createdById    String
+  acceptedById   String?
+  acceptedAt     DateTime?
+  revokedAt      DateTime?
+  createdAt      DateTime         @default(now())
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy      User             @relation("InvitationCreator", fields: [createdById], references: [id])
+  acceptedBy     User?            @relation("InvitationAcceptor", fields: [acceptedById], references: [id])
+
+  @@index([organizationId, email, status])
+  @@index([expiresAt, status])
 }
 
 model OrganizationMembership {
-  id             String           @id @default(cuid())
-  organizationId String
-  userId         String
-  role           MembershipRole   @default(VIEWER)
-  allSites       Boolean          @default(false)
-  active         Boolean          @default(true)
-  createdAt      DateTime         @default(now())
-  updatedAt      DateTime         @updatedAt
-  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  user           User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id              String           @id @default(cuid())
+  organizationId  String
+  userId          String
+  role            MembershipRole   @default(VIEWER)
+  allSites        Boolean          @default(false)
+  active          Boolean          @default(true)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  organization    Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
   siteMemberships SiteMembership[]
 
   @@unique([organizationId, userId])
@@ -238,18 +285,18 @@ model WorkOrderCheckItem {
 }
 
 model MaintenancePlan {
-  id               String                   @id @default(cuid())
+  id               String                    @id @default(cuid())
   assetId          String
   name             String
   description      String?
   frequencyValue   Int
   frequencyUnit    MaintenanceFrequencyUnit
   nextDueAt        DateTime?
-  active           Boolean                  @default(true)
+  active           Boolean                   @default(true)
   estimatedMinutes Int?
-  createdAt        DateTime                 @default(now())
-  updatedAt        DateTime                 @updatedAt
-  asset            Asset                    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  createdAt        DateTime                  @default(now())
+  updatedAt        DateTime                  @updatedAt
+  asset            Asset                     @relation(fields: [assetId], references: [id], onDelete: Cascade)
   checklistItems   MaintenancePlanCheckItem[]
 }
 
