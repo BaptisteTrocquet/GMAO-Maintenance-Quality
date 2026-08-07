@@ -5,6 +5,8 @@ import {
   PublicRequestStatusError,
 } from "@/lib/public-requests/status";
 import {
+  getPublicRequestTokenScopes,
+  hasPublicRequestScope,
   isOriginAllowed,
   resolvePublicRequestToken,
 } from "@/lib/public-requests/tokens";
@@ -35,6 +37,8 @@ function withCors<T extends Response>(response: T, origin: string | null) {
 async function activeTokenForPreflight(tokenId: string) {
   const token = await db.publicMaintenanceRequestToken.findUnique({ where: { id: tokenId } });
   if (!token || token.revokedAt || (token.expiresAt && token.expiresAt <= new Date())) return null;
+  const scopes = await getPublicRequestTokenScopes(token.id);
+  if (!hasPublicRequestScope({ scopes }, "maintenance:request:status")) return null;
   return token;
 }
 
@@ -67,6 +71,12 @@ export async function GET(request: Request) {
   const origin = request.headers.get("origin");
   if (!isOriginAllowed({ mode: token.mode, allowedOrigins: token.allowedOrigins, origin })) {
     return apiError(403, "ORIGIN_NOT_ALLOWED", "Request origin is not allowed for this token");
+  }
+  if (!hasPublicRequestScope(token, "maintenance:request:status")) {
+    return withCors(
+      apiError(403, "TOKEN_SCOPE_DENIED", "Scoped token cannot read maintenance request status"),
+      origin,
+    );
   }
 
   try {
