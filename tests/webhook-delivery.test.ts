@@ -30,7 +30,7 @@ const subscription = {
   siteId: "site-a",
   name: "Maintenance events",
   url: "https://hooks.example.test/opengmao?source=gmao",
-  eventTypes: ["work_order.created"] as const,
+  eventTypes: ["work_order.created"],
   createdById: "manager-1",
   createdAt: new Date("2026-08-07T19:00:00.000Z"),
   revokedAt: null,
@@ -110,7 +110,7 @@ describe("webhook delivery", () => {
     expect(mocks.auditCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({
         action: "FAILED",
-        afterJson: expect.stringContaining('"attempt":1'),
+        afterJson: expect.stringContaining('\"attempt\":1'),
       }),
     });
   });
