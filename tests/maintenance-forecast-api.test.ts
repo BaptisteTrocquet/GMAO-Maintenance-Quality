@@ -11,11 +11,11 @@ vi.mock("@/lib/maintenance/forecast", () => ({ getMaintenanceForecast: mocks.get
 import { GET } from "@/app/api/maintenance-forecast/route";
 
 const auth = {
-  session: { user: { id: "viewer-1" } },
+  session: { user: { id: "technician-1" } },
   tenant: {
     scope: {
       organizationId: "org-a",
-      role: "VIEWER",
+      role: "TECHNICIAN",
       allSites: false,
       siteIds: ["site-a"],
       active: true,
