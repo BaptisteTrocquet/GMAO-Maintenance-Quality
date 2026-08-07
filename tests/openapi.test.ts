@@ -3,7 +3,7 @@ import { GET } from "@/app/api/openapi.json/route";
 import { PUBLIC_API_VERSION, publicOpenApiSpec } from "@/lib/api/openapi";
 
 describe("public OpenAPI specification", () => {
-  it("publishes an OpenAPI 3.1 contract for the versioned public maintenance request API", () => {
+  it("publishes an OpenAPI 3.1 contract for versioned public integrations", () => {
     expect(publicOpenApiSpec.openapi).toBe("3.1.0");
     expect(publicOpenApiSpec.info.version).toBe(PUBLIC_API_VERSION);
     const route = publicOpenApiSpec.paths["/api/v1/public/maintenance-requests"];
@@ -17,6 +17,24 @@ describe("public OpenAPI specification", () => {
       ]),
     );
     expect(route.post.responses).toHaveProperty("429");
+  });
+
+  it("documents the site-scoped asset:read card contract", () => {
+    const route = publicOpenApiSpec.paths["/api/v1/public/assets"];
+    expect(route.get.operationId).toBe("getPublicAssetCardV1");
+    expect(route.get.description).toContain("asset:read");
+    expect(route.get.parameters).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "tokenId", in: "query", required: true }),
+        expect.objectContaining({ name: "assetCode", in: "query", required: true }),
+      ]),
+    );
+    expect(publicOpenApiSpec.components.schemas.PublicAssetCard.properties).not.toHaveProperty(
+      "serialNumber",
+    );
+    expect(publicOpenApiSpec.components.schemas.PublicAssetCard.properties).not.toHaveProperty(
+      "description",
+    );
   });
 
   it("documents scoped bearer credentials rather than administrator secrets", () => {

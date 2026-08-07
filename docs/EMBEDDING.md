@@ -30,6 +30,20 @@ The iframe response applies a restrictive CSP with dynamic `frame-ancestors`, no
 
 The request-status iframe is available at `/embed/request-status?tokenId=TOKEN_ID&trackingId=TRACKING_ID#token=SCOPED_TOKEN_SECRET`. It exposes only the public work-order number, status and lifecycle timestamps; internal descriptions, assignment data and completion notes are not returned.
 
+The asset-card iframe requires `asset:read` and is available at:
+
+```html
+<iframe
+  title="Asset card"
+  src="https://gmao.example.test/embed/asset-card?tokenId=TOKEN_ID&assetCode=ASSET-100#token=SCOPED_TOKEN_SECRET"
+  referrerpolicy="strict-origin"
+  sandbox="allow-scripts allow-same-origin"
+  style="width:100%;max-width:680px;height:430px;border:0"
+></iframe>
+```
+
+Asset codes are resolved only inside the site bound to the token. The card exposes code, name, status, criticality, category, manufacturer/model, location and update time. It deliberately excludes description, serial number, internal IDs, work-order assignments and other internal maintenance data. Asset-card lookups are rate-limited and audited, including failed lookups, to reduce enumeration risk.
+
 ### Level C — script-loader widgets
 Target developer experience:
 
@@ -55,10 +69,12 @@ await gmao.workRequests.create({ assetCode, title, description });
 
 ## Versioned public API
 
-New integrations should target the stable versioned prefix `/api/v1`. The first public operation is:
+New integrations should target the stable versioned prefix `/api/v1`. Public operations include maintenance request creation/status and the `asset:read` asset-card endpoint:
 
 ```text
 POST /api/v1/public/maintenance-requests?tokenId=<non-secret token id>
+GET  /api/v1/public/request-status?tokenId=<token id>&trackingId=<opaque tracking id>
+GET  /api/v1/public/assets?tokenId=<token id>&assetCode=<asset code>
 ```
 
 The pre-version endpoint `/api/public/maintenance-requests` remains available for backward compatibility and delegates to the same handler as v1. Compatibility tests prevent the two routes from drifting.
@@ -81,7 +97,7 @@ Supported capabilities are:
 
 - `maintenance:request:create` — submit a maintenance request
 - `maintenance:request:status` — read the minimal public status for a request created by the same token
-- `asset:read` — reserved for the embeddable asset-card contract
+- `asset:read` — read minimal asset cards from the token's site
 - `document:read` — reserved for the controlled-document viewer contract
 - `kpi:read` — reserved for embeddable KPI cards
 
@@ -96,7 +112,8 @@ Example token creation payload:
   "allowedOrigins": ["https://portal.example.test"],
   "scopes": [
     "maintenance:request:create",
-    "maintenance:request:status"
+    "maintenance:request:status",
+    "asset:read"
   ],
   "expiresInDays": 30
 }
