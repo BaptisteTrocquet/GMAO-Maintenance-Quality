@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -33,12 +34,15 @@ describe("local storage adapter", () => {
     await expect(fs.stat(path.join(root, "documents/doc-1/rev-a/file"))).rejects.toBeDefined();
   });
 
-  it("rejects absolute paths and traversal outside the storage root", async () => {
+  it("rejects absolute, traversal and Windows-style separator keys", async () => {
     const { adapter } = await temporaryStorage();
     const data = new Uint8Array([1]);
 
     await expect(adapter.put("../escape.bin", data)).rejects.toBeInstanceOf(InvalidStorageKeyError);
     await expect(adapter.put("/tmp/escape.bin", data)).rejects.toBeInstanceOf(InvalidStorageKeyError);
     await expect(adapter.get("nested/../../escape.bin")).rejects.toBeInstanceOf(InvalidStorageKeyError);
+    await expect(adapter.put("documents\\..\\escape.bin", data)).rejects.toBeInstanceOf(
+      InvalidStorageKeyError,
+    );
   });
 });
