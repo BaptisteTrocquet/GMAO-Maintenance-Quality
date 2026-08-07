@@ -32,10 +32,14 @@ const token = {
   createdAt: new Date("2026-08-07T21:00:00.000Z"),
 };
 
-function request(referer = "https://portal.example.local/assets") {
-  return new Request("http://localhost/embed/asset-card?tokenId=token-asset&assetCode=PUMP-100", {
-    headers: { referer },
-  });
+function request(
+  referer = "https://portal.example.local/assets",
+  assetCode = "PUMP-100",
+) {
+  const url = new URL("http://localhost/embed/asset-card");
+  url.searchParams.set("tokenId", "token-asset");
+  url.searchParams.set("assetCode", assetCode);
+  return new Request(url, { headers: { referer } });
 }
 
 describe("asset card iframe page", () => {
@@ -58,6 +62,16 @@ describe("asset card iframe page", () => {
     expect(html).toContain('data-asset-code="PUMP-100"');
     expect(html).toContain('data-embed-proof="signed-proof"');
     expect(html).not.toContain("serialNumber");
+  });
+
+  it("escapes hostile asset codes instead of injecting markup", async () => {
+    const hostile = 'PUMP\"><script src="https://evil.example/script.js"></script>';
+    const response = await GET(request("https://portal.example.local/assets", hostile));
+    const html = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(html).not.toContain('<script src="https://evil.example/script.js">');
+    expect(html).toContain("&quot;&gt;&lt;script");
   });
 
   it("does not render or sign a proof without asset:read", async () => {
