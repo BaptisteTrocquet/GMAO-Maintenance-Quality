@@ -34,7 +34,7 @@ async function existingResult(tokenId: string, idempotencyKey: string) {
       "The original public request result is no longer available",
     );
   }
-  return { workOrder, idempotent: true };
+  return { workOrder, trackingId: submission.id, idempotent: true };
 }
 
 export async function createPublicMaintenanceRequest(input: {
@@ -102,7 +102,7 @@ export async function createPublicMaintenanceRequest(input: {
             "The original public request result is no longer available",
           );
         }
-        return { workOrder, idempotent: true };
+        return { workOrder, trackingId: transactionDuplicate.id, idempotent: true };
       }
 
       const workOrder = await tx.workOrder.create({
@@ -120,7 +120,7 @@ export async function createPublicMaintenanceRequest(input: {
         select: { id: true, number: true, status: true, requestedAt: true },
       });
 
-      await tx.publicMaintenanceRequestSubmission.create({
+      const submission = await tx.publicMaintenanceRequestSubmission.create({
         data: {
           tokenId: input.token.id,
           workOrderId: workOrder.id,
@@ -130,6 +130,7 @@ export async function createPublicMaintenanceRequest(input: {
           requesterRef: input.requesterRef ?? null,
           origin: input.origin ?? null,
         },
+        select: { id: true },
       });
 
       await tx.publicMaintenanceRequestToken.update({
@@ -145,6 +146,7 @@ export async function createPublicMaintenanceRequest(input: {
           action: "PUBLIC_REQUEST_CREATED",
           afterJson: JSON.stringify({
             tokenId: input.token.id,
+            submissionId: submission.id,
             mode: input.token.mode,
             assetCode: input.assetCode ?? null,
             requesterName: input.requesterName ?? null,
@@ -156,7 +158,7 @@ export async function createPublicMaintenanceRequest(input: {
         },
       });
 
-      return { workOrder, idempotent: false };
+      return { workOrder, trackingId: submission.id, idempotent: false };
     });
   } catch (error) {
     if (error instanceof PublicMaintenanceRequestError) throw error;
