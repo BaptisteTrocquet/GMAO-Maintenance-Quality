@@ -8,18 +8,7 @@ A central goal is to let an organization integrate selected GMAO capabilities in
 The simplest integration: link from the existing site to the full application. Later SSO can remove the second login.
 
 ### Level B — iframe widgets
-Fastest general-purpose embed. Example:
-
-```html
-<iframe
-  src="https://gmao.example.com/embed/work-request?token=SCOPED_TOKEN"
-  width="100%"
-  height="720"
-  loading="lazy"
-></iframe>
-```
-
-The token must be short-lived or revocable and scoped to a specific capability/site.
+Fastest general-purpose embed. The iframe runtime itself is part of E10; it will use the same scoped public-request capability described below rather than an administrator credential.
 
 ### Level C — script-loader widgets
 Target developer experience:
@@ -43,6 +32,38 @@ For custom portals:
 const gmao = new GmaoClient({ baseUrl, apiKey });
 await gmao.workRequests.create({ assetCode, title, description });
 ```
+
+## Scoped public maintenance requests
+
+E3 provides the backend primitive for public and embedded maintenance-request forms.
+
+A maintenance manager creates a scoped token through `POST /api/public-request-tokens`. Tokens are bound to one organization/site, expire, can be revoked, and store only a SHA-256 hash server-side. `EMBEDDED` tokens require one or more exact allowed origins. The raw token is returned only when the token is created.
+
+External applications submit to:
+
+```text
+POST /api/public/maintenance-requests?tokenId=<non-secret token id>
+Authorization: Bearer <scoped token secret>
+Idempotency-Key: <unique request id>
+Content-Type: application/json
+```
+
+Example payload:
+
+```json
+{
+  "title": "Abnormal machine noise",
+  "description": "Noise noticed during operation.",
+  "assetCode": "A-100",
+  "requesterName": "External Requester",
+  "requesterEmail": "requester@example.local",
+  "requesterRef": "PORTAL-1234"
+}
+```
+
+The public endpoint can only create a `REQUESTED`, `NORMAL` priority, `CORRECTIVE` work order in the site bound to the token. The normal internal triage workflow decides priority, category, assignment and planning. An optional `assetCode` is resolved only inside that site.
+
+Browser integrations use exact-origin CORS. Preflight requests include the non-secret `tokenId`; the bearer secret is only sent on the actual request. Requests are idempotent and rate-limited per token. No administrator/session secret is exposed to the browser.
 
 ## First embeddable use cases
 

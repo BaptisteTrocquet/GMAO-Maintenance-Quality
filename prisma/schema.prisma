@@ -87,6 +87,11 @@ enum MaintenanceFrequencyUnit {
   METER
 }
 
+enum PublicRequestMode {
+  PUBLIC
+  EMBEDDED
+}
+
 model User {
   id                  String                   @id @default(cuid())
   email               String                   @unique
@@ -553,6 +558,42 @@ model MeterReading {
   meter     Meter    @relation(fields: [meterId], references: [id], onDelete: Cascade)
 
   @@index([meterId, readingAt])
+}
+
+model PublicMaintenanceRequestToken {
+  id             String                               @id @default(cuid())
+  organizationId String
+  siteId         String
+  name           String
+  tokenHash      String                               @unique
+  mode           PublicRequestMode                    @default(PUBLIC)
+  allowedOrigins String[]                             @default([])
+  expiresAt      DateTime?
+  revokedAt      DateTime?
+  createdById    String?
+  createdAt      DateTime                             @default(now())
+  lastUsedAt     DateTime?
+  submissions    PublicMaintenanceRequestSubmission[]
+
+  @@index([organizationId, siteId, revokedAt])
+  @@index([expiresAt])
+}
+
+model PublicMaintenanceRequestSubmission {
+  id               String                        @id @default(cuid())
+  tokenId          String
+  workOrderId      String
+  idempotencyKey   String
+  requesterName    String?
+  requesterEmail   String?
+  requesterRef     String?
+  origin           String?
+  createdAt        DateTime                      @default(now())
+  token            PublicMaintenanceRequestToken @relation(fields: [tokenId], references: [id], onDelete: Cascade)
+
+  @@unique([tokenId, idempotencyKey])
+  @@index([tokenId, createdAt])
+  @@index([workOrderId])
 }
 
 model AuditLog {
