@@ -1,4 +1,5 @@
 import { db } from "@/lib/db";
+import { escapeHtmlAttribute } from "@/lib/embed/html";
 import { createEmbedProof, parentOriginFromReferrer } from "@/lib/embed/proof";
 import { getPublicRequestTokenScopes, hasPublicRequestScope, isOriginAllowed } from "@/lib/public-requests/tokens";
 
@@ -12,7 +13,7 @@ function htmlPage(proof: string, assetCode: string) {
   <link rel="stylesheet" href="/embed/asset-card/styles.css">
 </head>
 <body>
-  <main class="asset-card" id="gmao-asset-card" data-embed-proof="${proof}" data-asset-code="${assetCode}">
+  <main class="asset-card" id="gmao-asset-card" data-embed-proof="${escapeHtmlAttribute(proof)}" data-asset-code="${escapeHtmlAttribute(assetCode)}">
     <p class="eyebrow">Asset</p>
     <div class="heading-row">
       <div><h1 id="asset-name">Loading…</h1><p id="asset-code" class="code"></p></div>
