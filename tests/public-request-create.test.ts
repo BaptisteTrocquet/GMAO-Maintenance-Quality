@@ -90,10 +90,11 @@ describe("public maintenance request creation", () => {
     );
   });
 
-  it("creates a normal-priority requested corrective WO in the token site", async () => {
+  it("creates a normal-priority requested corrective WO and returns its scoped tracking id", async () => {
     const result = await createPublicMaintenanceRequest(input);
 
     expect(result.idempotent).toBe(false);
+    expect(result.trackingId).toBe("submission-1");
     expect(mocks.txWorkOrderCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({
         siteId: "site-a",
@@ -112,6 +113,7 @@ describe("public maintenance request creation", () => {
         idempotencyKey: "request-0001",
         requesterEmail: "requester@example.local",
       }),
+      select: { id: true },
     });
     expect(mocks.txAuditCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({
@@ -119,11 +121,12 @@ describe("public maintenance request creation", () => {
         entityType: "WorkOrder",
         entityId: "wo-1",
         action: "PUBLIC_REQUEST_CREATED",
+        afterJson: expect.stringContaining("submission-1"),
       }),
     });
   });
 
-  it("returns an existing work order without a second write on idempotent retry", async () => {
+  it("returns the same tracking id without a second write on idempotent retry", async () => {
     mocks.submissionFindUnique.mockResolvedValue({
       id: "submission-1",
       tokenId: "token-1",
@@ -140,6 +143,7 @@ describe("public maintenance request creation", () => {
     const result = await createPublicMaintenanceRequest(input);
 
     expect(result.idempotent).toBe(true);
+    expect(result.trackingId).toBe("submission-1");
     expect(mocks.submissionCount).not.toHaveBeenCalled();
     expect(mocks.transaction).not.toHaveBeenCalled();
   });
