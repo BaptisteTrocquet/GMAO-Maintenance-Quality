@@ -42,6 +42,21 @@ function parseStoredScopes(afterJson: string | null): PublicRequestScope[] | nul
   }
 }
 
+async function resolveTokenCreatedAt(tokenId: string, createdAt?: Date | null) {
+  if (createdAt) return createdAt;
+  const token = await db.publicMaintenanceRequestToken?.findUnique?.({
+    where: { id: tokenId },
+    select: { createdAt: true },
+  });
+  return token?.createdAt ?? null;
+}
+
+async function legacyScopeFallback(tokenId: string, createdAt?: Date | null) {
+  const effectiveCreatedAt = await resolveTokenCreatedAt(tokenId, createdAt);
+  if (!effectiveCreatedAt || effectiveCreatedAt >= SCOPE_METADATA_REQUIRED_AFTER) return [];
+  return [...DEFAULT_PUBLIC_REQUEST_SCOPES];
+}
+
 export async function getPublicRequestTokenScopes(
   tokenId: string,
   createdAt?: Date | null,
@@ -56,16 +71,10 @@ export async function getPublicRequestTokenScopes(
     orderBy: { createdAt: "asc" },
   });
 
-  if (!audit) {
-    if (createdAt && createdAt >= SCOPE_METADATA_REQUIRED_AFTER) return [];
-    return [...DEFAULT_PUBLIC_REQUEST_SCOPES];
-  }
+  if (!audit) return legacyScopeFallback(tokenId, createdAt);
 
   const storedScopes = parseStoredScopes(audit.afterJson);
-  if (storedScopes === null) {
-    if (createdAt && createdAt >= SCOPE_METADATA_REQUIRED_AFTER) return [];
-    return [...DEFAULT_PUBLIC_REQUEST_SCOPES];
-  }
+  if (storedScopes === null) return legacyScopeFallback(tokenId, createdAt);
   return storedScopes;
 }
 
