@@ -46,17 +46,34 @@ function existing(active = true) {
   return {
     id: "plan-1",
     assetId: "asset-1",
+    meterId: null,
     name: "Monthly inspection",
     description: null,
     frequencyValue: 1,
     frequencyUnit: "MONTH",
     nextDueAt: new Date("2026-08-31T06:00:00.000Z"),
+    nextDueMeterValue: null,
     active,
     estimatedMinutes: 30,
     createdAt: new Date("2026-08-01T00:00:00.000Z"),
     updatedAt: new Date("2026-08-01T00:00:00.000Z"),
+    meter: null,
     checklistItems: [{ id: "item-1", sequence: 1, label: "Inspect guard", mandatory: true }],
     asset: { site: { organization: { timezone: "Europe/Paris" } } },
+  };
+}
+
+function meterPlan(active = true) {
+  return {
+    ...existing(active),
+    id: "plan-meter-1",
+    meterId: "meter-1",
+    name: "Hours inspection",
+    frequencyValue: 250,
+    frequencyUnit: "METER",
+    nextDueAt: null,
+    nextDueMeterValue: 1000,
+    meter: { id: "meter-1", code: "HOURS", name: "Operating hours", unit: "h" },
   };
 }
 
@@ -98,7 +115,10 @@ describe("maintenance plan updates", () => {
     expect(mocks.planUpdate).toHaveBeenCalledWith({
       where: { id: "plan-1" },
       data: { active: false },
-      include: { checklistItems: { orderBy: { sequence: "asc" } } },
+      include: {
+        meter: { select: { id: true, code: true, name: true, unit: true } },
+        checklistItems: { orderBy: { sequence: "asc" } },
+      },
     });
     expect(mocks.auditCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({
@@ -122,6 +142,30 @@ describe("maintenance plan updates", () => {
     expect(mocks.auditCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({ action: "RESUMED" }),
     });
+  });
+
+  it("updates and pauses a meter plan without converting recurrence mode", async () => {
+    mocks.planFindFirst.mockResolvedValue(meterPlan());
+    mocks.planUpdate.mockResolvedValue({ ...meterPlan(), active: false, nextDueMeterValue: 1250 });
+
+    const response = await PATCH(request({ active: false, nextDueMeterValue: 1250 }), params);
+
+    await expectStatus(response, 200);
+    expect(mocks.planUpdate).toHaveBeenCalledWith({
+      where: { id: "plan-meter-1" },
+      data: { nextDueMeterValue: 1250, active: false },
+      include: {
+        meter: { select: { id: true, code: true, name: true, unit: true } },
+        checklistItems: { orderBy: { sequence: "asc" } },
+      },
+    });
+  });
+
+  it("rejects converting a calendar plan to meter recurrence in-place", async () => {
+    const response = await PATCH(request({ frequencyUnit: "METER", nextDueMeterValue: 1000 }), params);
+
+    await expectStatus(response, 409);
+    expect(mocks.transaction).not.toHaveBeenCalled();
   });
 
   it("replaces reusable checklist content transactionally", async () => {
