@@ -128,6 +128,7 @@ model Organization {
   createdAt   DateTime                 @default(now())
   updatedAt   DateTime                 @updatedAt
   sites       Site[]
+  documents   Document[]
   memberships OrganizationMembership[]
   invitations OrganizationInvitation[]
 }
@@ -285,18 +286,18 @@ model WorkOrderCheckItem {
 }
 
 model MaintenancePlan {
-  id               String                    @id @default(cuid())
+  id               String                     @id @default(cuid())
   assetId          String
   name             String
   description      String?
   frequencyValue   Int
   frequencyUnit    MaintenanceFrequencyUnit
   nextDueAt        DateTime?
-  active           Boolean                   @default(true)
+  active           Boolean                    @default(true)
   estimatedMinutes Int?
-  createdAt        DateTime                  @default(now())
-  updatedAt        DateTime                  @updatedAt
-  asset            Asset                     @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  createdAt        DateTime                   @default(now())
+  updatedAt        DateTime                   @updatedAt
+  asset            Asset                      @relation(fields: [assetId], references: [id], onDelete: Cascade)
   checklistItems   MaintenancePlanCheckItem[]
 }
 
@@ -328,8 +329,8 @@ model AssetPart {
   assetId             String
   partId              String
   quantityRecommended Float?
-  asset                Asset @relation(fields: [assetId], references: [id], onDelete: Cascade)
-  part                 Part  @relation(fields: [partId], references: [id], onDelete: Cascade)
+  asset               Asset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  part                Part  @relation(fields: [partId], references: [id], onDelete: Cascade)
 
   @@id([assetId, partId])
 }
@@ -347,16 +348,21 @@ model WorkOrderPart {
 
 model Document {
   id             String              @id @default(cuid())
-  code           String              @unique
+  organizationId String
+  code           String
   title          String
   type           String
   owner          String?
   description    String?
   createdAt      DateTime            @default(now())
   updatedAt      DateTime            @updatedAt
+  organization   Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   revisions      DocumentRevision[]
   assetDocuments AssetDocument[]
   workOrders     WorkOrderDocument[]
+
+  @@unique([organizationId, code])
+  @@index([organizationId, type])
 }
 
 model DocumentRevision {
