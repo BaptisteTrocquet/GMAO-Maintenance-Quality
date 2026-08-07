@@ -35,6 +35,7 @@ export default async function WorkOrderDetailPage({
       asset: true,
       requester: true,
       assignee: true,
+      team: true,
       checkItems: true,
       parts: { include: { part: true } },
       partConsumptions: { include: { part: true }, orderBy: { createdAt: "desc" } },
@@ -73,6 +74,7 @@ export default async function WorkOrderDetailPage({
           <dl className="detail-list">
             <div><dt>Requester</dt><dd>{workOrder.requester?.displayName ?? "—"}</dd></div>
             <div><dt>Assignee</dt><dd>{workOrder.assignee?.displayName ?? "Unassigned"}</dd></div>
+            <div><dt>Team</dt><dd>{workOrder.team?.name ?? "—"}</dd></div>
             <div><dt>Requested</dt><dd>{formatDate(workOrder.requestedAt)}</dd></div>
             <div><dt>Planned start</dt><dd>{formatDate(workOrder.plannedStart)}</dd></div>
             <div><dt>Due</dt><dd>{formatDate(workOrder.dueAt)}</dd></div>

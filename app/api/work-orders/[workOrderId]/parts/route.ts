@@ -3,7 +3,7 @@ import { apiData, apiError } from "@/lib/api-response";
 import { AccessDeniedError, assertSitePermission } from "@/lib/access-control";
 import { authenticateRequest } from "@/lib/auth/request-auth";
 import { db } from "@/lib/db";
-import { can } from "@/lib/permissions";
+import { canExecuteWorkOrder } from "@/lib/work-orders/authorization";
 import { consumeWorkOrderPart, WorkOrderPartError } from "@/lib/work-orders/parts";
 
 const consumeSchema = z.object({
@@ -23,7 +23,7 @@ function denied(error: unknown) {
 async function findWorkOrder(organizationId: string, siteId: string, workOrderId: string) {
   return db.workOrder.findFirst({
     where: { id: workOrderId, siteId, site: { organizationId, active: true } },
-    select: { id: true, siteId: true, status: true, assigneeId: true },
+    select: { id: true, siteId: true, status: true, assigneeId: true, teamId: true },
   });
 }
 
@@ -103,10 +103,19 @@ export async function POST(
   }
 
   if (
-    !can(auth.tenant.scope.role, "work:manage") &&
-    workOrder.assigneeId !== auth.session.user.id
+    !(await canExecuteWorkOrder({
+      role: auth.tenant.scope.role,
+      userId: auth.session.user.id,
+      siteId: workOrder.siteId,
+      assigneeId: workOrder.assigneeId,
+      teamId: workOrder.teamId ?? null,
+    }))
   ) {
-    return apiError(403, "NOT_ASSIGNED", "Only the assigned technician can consume parts");
+    return apiError(
+      403,
+      "NOT_ASSIGNED",
+      "Only the assigned technician or an assigned team member can consume parts",
+    );
   }
 
   if (workOrder.status !== "IN_PROGRESS" && workOrder.status !== "BLOCKED") {

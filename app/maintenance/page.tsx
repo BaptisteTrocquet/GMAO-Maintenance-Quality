@@ -8,7 +8,7 @@ function formatDate(value: Date | null) {
 export default async function MaintenancePage() {
   const [workOrders, plans] = await Promise.all([
     db.workOrder.findMany({
-      include: { site: true, asset: true, assignee: true },
+      include: { site: true, asset: true, assignee: true, team: true },
       orderBy: { requestedAt: "desc" },
     }),
     db.maintenancePlan.findMany({
@@ -39,6 +39,7 @@ export default async function MaintenancePage() {
                 <th>Priority</th>
                 <th>Status</th>
                 <th>Assignee</th>
+                <th>Team</th>
                 <th>Planned</th>
                 <th>Due</th>
               </tr>
@@ -54,6 +55,7 @@ export default async function MaintenancePage() {
                   <td>{workOrder.priority}</td>
                   <td><span className="badge">{workOrder.status}</span></td>
                   <td>{workOrder.assignee?.displayName ?? "Unassigned"}</td>
+                  <td>{workOrder.team?.name ?? "—"}</td>
                   <td>{formatDate(workOrder.plannedStart)}</td>
                   <td>{formatDate(workOrder.dueAt)}</td>
                 </tr>

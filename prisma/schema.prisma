@@ -100,6 +100,7 @@ model User {
   invitationsAccepted OrganizationInvitation[] @relation("InvitationAcceptor")
   assignedWorkOrders  WorkOrder[]              @relation("AssignedWorkOrders")
   requestedWorkOrders WorkOrder[]              @relation("RequestedWorkOrders")
+  maintenanceTeams    MaintenanceTeamMember[]
   documentApprovals   DocumentApproval[]
   auditLogs           AuditLog[]
 }
@@ -186,22 +187,51 @@ model SiteMembership {
 }
 
 model Site {
-  id             String           @id @default(cuid())
-  organizationId String
-  name           String
-  code           String
-  description    String?
-  active         Boolean          @default(true)
-  createdAt      DateTime         @default(now())
-  updatedAt      DateTime         @updatedAt
-  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  memberships    SiteMembership[]
-  locations      Location[]
-  assets         Asset[]
-  workOrders     WorkOrder[]
+  id               String            @id @default(cuid())
+  organizationId   String
+  name             String
+  code             String
+  description      String?
+  active           Boolean           @default(true)
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  organization     Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  memberships      SiteMembership[]
+  maintenanceTeams MaintenanceTeam[]
+  locations        Location[]
+  assets           Asset[]
+  workOrders       WorkOrder[]
 
   @@unique([organizationId, code])
   @@index([organizationId, active])
+}
+
+model MaintenanceTeam {
+  id          String                  @id @default(cuid())
+  siteId      String
+  code        String
+  name        String
+  description String?
+  active      Boolean                 @default(true)
+  createdAt   DateTime                @default(now())
+  updatedAt   DateTime                @updatedAt
+  site        Site                    @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  members     MaintenanceTeamMember[]
+  workOrders  WorkOrder[]
+
+  @@unique([siteId, code])
+  @@index([siteId, active])
+}
+
+model MaintenanceTeamMember {
+  teamId    String
+  userId    String
+  createdAt DateTime        @default(now())
+  team      MaintenanceTeam @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([teamId, userId])
+  @@index([userId])
 }
 
 model Location {
@@ -290,6 +320,7 @@ model WorkOrder {
   assetId          String?
   requesterId      String?
   assigneeId       String?
+  teamId           String?
   title            String
   description      String?
   type             WorkOrderType
@@ -309,6 +340,7 @@ model WorkOrder {
   asset            Asset?                     @relation(fields: [assetId], references: [id])
   requester        User?                      @relation("RequestedWorkOrders", fields: [requesterId], references: [id])
   assignee         User?                      @relation("AssignedWorkOrders", fields: [assigneeId], references: [id])
+  team             MaintenanceTeam?           @relation(fields: [teamId], references: [id], onDelete: SetNull)
   parts            WorkOrderPart[]
   partConsumptions WorkOrderPartConsumption[]
   checkItems       WorkOrderCheckItem[]
@@ -316,6 +348,7 @@ model WorkOrder {
   attachments      WorkOrderAttachment[]
 
   @@index([siteId, status, requestedAt])
+  @@index([teamId])
 }
 
 model WorkOrderCheckItem {
