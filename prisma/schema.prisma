@@ -225,6 +225,7 @@ model Asset {
   code             String
   name             String
   description      String?
+  category         String?
   manufacturer     String?
   model            String?
   serialNumber     String?
@@ -232,6 +233,8 @@ model Asset {
   criticality      Criticality @default(MEDIUM)
   installedAt      DateTime?
   commissionedAt   DateTime?
+  decommissionedAt DateTime?
+  archivedAt       DateTime?
   createdAt        DateTime    @default(now())
   updatedAt        DateTime    @updatedAt
   site             Site        @relation(fields: [siteId], references: [id], onDelete: Cascade)
@@ -245,6 +248,7 @@ model Asset {
   assetParts       AssetPart[]
 
   @@unique([siteId, code])
+  @@index([siteId, archivedAt])
 }
 
 model WorkOrder {
