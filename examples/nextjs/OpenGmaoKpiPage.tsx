@@ -1,3 +1,4 @@
+import React from "react";
 import { OpenGmaoClient, type KpiCard } from "../../sdk/index";
 
 export type OpenGmaoServerConfig = {
