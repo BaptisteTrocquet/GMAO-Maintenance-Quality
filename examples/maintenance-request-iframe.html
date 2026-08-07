@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>OpenGMAO maintenance request embed example</title>
+</head>
+<body>
+  <h1>Report a maintenance issue</h1>
+  <!--
+    Use an EMBEDDED scoped token whose exact allowed origin includes this host.
+    Keep the non-secret token id in the query string and the scoped secret in
+    the URL fragment: fragments are not transmitted in the iframe HTTP GET.
+  -->
+  <iframe
+    title="Maintenance request"
+    src="https://gmao.example.test/embed/maintenance-request?tokenId=TOKEN_ID#token=SCOPED_TOKEN_SECRET"
+    referrerpolicy="strict-origin"
+    sandbox="allow-scripts allow-same-origin"
+    style="width:100%;max-width:720px;height:650px;border:0"
+  ></iframe>
+
+  <script>
+    window.addEventListener("message", (event) => {
+      if (event.origin !== "https://gmao.example.test") return;
+      if (event.data?.type !== "opengmao:maintenance-request-created") return;
+      console.log("Created work order", event.data.workOrder);
+    });
+  </script>
+</body>
+</html>
