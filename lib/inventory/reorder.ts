@@ -98,7 +98,9 @@ async function validateScope(
     tx.stockBin.findFirst({
       where: {
         id: input.binId,
+        active: true,
         warehouse: {
+          active: true,
           siteId: input.siteId,
           site: { organizationId: input.organizationId, active: true },
         },
@@ -106,12 +108,12 @@ async function validateScope(
       select: { id: true },
     }),
     tx.part.findFirst({
-      where: { id: input.partId, organizationId: input.organizationId },
+      where: { id: input.partId, organizationId: input.organizationId, active: true },
       select: { id: true },
     }),
   ]);
-  if (!bin) throw new ReorderPolicyError("BIN_NOT_FOUND", "Stock bin not found in site scope");
-  if (!part) throw new ReorderPolicyError("PART_NOT_FOUND", "Part not found in organization scope");
+  if (!bin) throw new ReorderPolicyError("BIN_NOT_FOUND", "Active stock bin not found in site scope");
+  if (!part) throw new ReorderPolicyError("PART_NOT_FOUND", "Active part not found in organization scope");
 }
 
 export async function setReorderPolicy(input: {
@@ -223,11 +225,19 @@ export async function getReorderAlerts(input: {
           select: { quantity: true },
         }),
         tx.part.findFirst({
-          where: { id: policy.partId, organizationId: input.organizationId },
+          where: {
+            id: policy.partId,
+            organizationId: input.organizationId,
+            active: true,
+          },
           select: { id: true, sku: true, name: true, unit: true },
         }),
         tx.stockBin.findFirst({
-          where: { id: policy.binId, warehouse: { siteId: input.siteId } },
+          where: {
+            id: policy.binId,
+            active: true,
+            warehouse: { active: true, siteId: input.siteId },
+          },
           select: {
             id: true,
             code: true,
