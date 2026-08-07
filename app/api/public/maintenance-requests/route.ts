@@ -6,6 +6,8 @@ import {
   PublicMaintenanceRequestError,
 } from "@/lib/public-requests/create-request";
 import {
+  getPublicRequestTokenScopes,
+  hasPublicRequestScope,
   isOriginAllowed,
   resolvePublicRequestToken,
 } from "@/lib/public-requests/tokens";
@@ -47,6 +49,8 @@ function withCors<T extends Response>(response: T, origin: string | null) {
 async function activeTokenForPreflight(tokenId: string) {
   const token = await db.publicMaintenanceRequestToken.findUnique({ where: { id: tokenId } });
   if (!token || token.revokedAt || (token.expiresAt && token.expiresAt <= new Date())) return null;
+  const scopes = await getPublicRequestTokenScopes(token.id);
+  if (!hasPublicRequestScope({ scopes }, "maintenance:request:create")) return null;
   return token;
 }
 
@@ -78,6 +82,12 @@ export async function POST(request: Request) {
   const origin = request.headers.get("origin");
   if (!isOriginAllowed({ mode: token.mode, allowedOrigins: token.allowedOrigins, origin })) {
     return apiError(403, "ORIGIN_NOT_ALLOWED", "Request origin is not allowed for this token");
+  }
+  if (!hasPublicRequestScope(token, "maintenance:request:create")) {
+    return withCors(
+      apiError(403, "TOKEN_SCOPE_DENIED", "Scoped token cannot create maintenance requests"),
+      origin,
+    );
   }
 
   const site = await db.site.findFirst({
