@@ -33,6 +33,24 @@ const gmao = new GmaoClient({ baseUrl, apiKey });
 await gmao.workRequests.create({ assetCode, title, description });
 ```
 
+## Versioned public API
+
+New integrations should target the stable versioned prefix `/api/v1`. The first public operation is:
+
+```text
+POST /api/v1/public/maintenance-requests?tokenId=<non-secret token id>
+```
+
+The pre-version endpoint `/api/public/maintenance-requests` remains available for backward compatibility and delegates to the same handler as v1. Compatibility tests prevent the two routes from drifting.
+
+The machine-readable OpenAPI 3.1 document is published by every deployment at:
+
+```text
+GET /api/openapi.json
+```
+
+Its `info.version` identifies the public API contract version independently from the application release version.
+
 ## Scoped public maintenance requests
 
 E3 provides the backend primitive for public and embedded maintenance-request forms.
@@ -42,7 +60,7 @@ A maintenance manager creates a scoped token through `POST /api/public-request-t
 External applications submit to:
 
 ```text
-POST /api/public/maintenance-requests?tokenId=<non-secret token id>
+POST /api/v1/public/maintenance-requests?tokenId=<non-secret token id>
 Authorization: Bearer <scoped token secret>
 Idempotency-Key: <unique request id>
 Content-Type: application/json
