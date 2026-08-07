@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   assetUpdate: vi.fn(),
   assetCount: vi.fn(),
   auditCreate: vi.fn(),
+  statusHistoryCreate: vi.fn(),
   hierarchy: vi.fn(),
 }));
 
@@ -16,6 +17,7 @@ vi.mock("@/lib/db", () => ({
       count: mocks.assetCount,
     },
     auditLog: { create: mocks.auditCreate },
+    assetStatusHistory: { create: mocks.statusHistoryCreate },
   },
 }));
 
@@ -72,6 +74,37 @@ describe("asset lifecycle", () => {
     });
   });
 
+  it("records status transitions", async () => {
+    const current = {
+      id: "asset-1",
+      siteId: "site-a",
+      status: "ACTIVE",
+      decommissionedAt: null,
+    };
+    const updated = { ...current, status: "OUT_OF_SERVICE" };
+    mocks.assetFindFirst.mockResolvedValueOnce(current);
+    mocks.assetUpdate.mockResolvedValueOnce(updated);
+    mocks.statusHistoryCreate.mockResolvedValueOnce({ id: "history-1" });
+    mocks.auditCreate.mockResolvedValueOnce({ id: "audit-1" });
+
+    await updateAssetLifecycle({
+      siteId: "site-a",
+      assetId: "asset-1",
+      actorId: "user-1",
+      status: "OUT_OF_SERVICE",
+      statusNote: "Synthetic maintenance hold",
+    });
+
+    expect(mocks.statusHistoryCreate).toHaveBeenCalledWith({
+      data: {
+        assetId: "asset-1",
+        fromStatus: "ACTIVE",
+        toStatus: "OUT_OF_SERVICE",
+        note: "Synthetic maintenance hold",
+      },
+    });
+  });
+
   it("soft-archives an asset without deleting it", async () => {
     const current = {
       id: "asset-1",
@@ -86,6 +119,7 @@ describe("asset lifecycle", () => {
       status: "DECOMMISSIONED",
       archivedAt: new Date("2026-08-07T12:00:00.000Z"),
     });
+    mocks.statusHistoryCreate.mockResolvedValueOnce({ id: "history-2" });
     mocks.auditCreate.mockResolvedValueOnce({ id: "audit-2" });
 
     const result = await archiveAsset({ siteId: "site-a", assetId: "asset-1", actorId: "user-1" });
@@ -105,6 +139,7 @@ describe("asset lifecycle", () => {
     mocks.assetFindFirst.mockResolvedValueOnce({
       id: "asset-parent",
       siteId: "site-a",
+      status: "ACTIVE",
       archivedAt: null,
     });
     mocks.assetCount.mockResolvedValueOnce(2);
