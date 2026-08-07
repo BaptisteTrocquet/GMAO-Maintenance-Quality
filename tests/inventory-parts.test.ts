@@ -19,7 +19,7 @@ vi.mock("@/lib/db", () => ({
   },
 }));
 
-import { createPart, listParts, PartMasterError, updatePart } from "@/lib/inventory/parts";
+import { createPart, listParts, updatePart } from "@/lib/inventory/parts";
 
 const currentPart = {
   id: "part-1",
@@ -99,7 +99,7 @@ describe("inventory part master", () => {
         patch: { name: "Other" },
         actorId: "manager-1",
       }),
-    ).rejects.toMatchObject<Partial<PartMasterError>>({ code: "PART_NOT_FOUND" });
+    ).rejects.toMatchObject({ code: "PART_NOT_FOUND" });
 
     expect(mocks.transaction).not.toHaveBeenCalled();
   });
