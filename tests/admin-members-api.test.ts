@@ -29,7 +29,11 @@ describe("admin member API", () => {
     mocks.authenticateRequest.mockResolvedValueOnce({
       error: Response.json({ error: { code: "TENANT_ACCESS_DENIED" } }, { status: 403 }),
     });
-    const response = await GET(new Request("http://localhost/api/admin/members?organizationId=org-b"));
+    const response = await GET(
+      new Request("http://localhost/api/admin/members?organizationId=org-b"),
+    );
+    expect(response).toBeDefined();
+    if (!response) throw new Error("expected a response");
     expect(response.status).toBe(403);
     expect(mocks.findMany).not.toHaveBeenCalled();
   });
@@ -40,14 +44,27 @@ describe("admin member API", () => {
       tenant: { scope: { role: "ADMIN", organizationId: "org-a", siteIds: [] } },
     });
     mocks.findFirst.mockResolvedValueOnce({ id: "membership-1", userId: "user-2" });
-    mocks.update.mockResolvedValueOnce({ id: "membership-1", role: "VIEWER", active: false, allSites: false });
+    mocks.update.mockResolvedValueOnce({
+      id: "membership-1",
+      role: "VIEWER",
+      active: false,
+      allSites: false,
+    });
 
-    const response = await PATCH(new Request("http://localhost/api/admin/members", {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ organizationId: "org-a", membershipId: "membership-1", active: false }),
-    }));
+    const response = await PATCH(
+      new Request("http://localhost/api/admin/members", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          organizationId: "org-a",
+          membershipId: "membership-1",
+          active: false,
+        }),
+      }),
+    );
 
+    expect(response).toBeDefined();
+    if (!response) throw new Error("expected a response");
     expect(response.status).toBe(200);
     expect(mocks.revokeSessions).toHaveBeenCalledWith({
       where: { userId: "user-2", revokedAt: null },
