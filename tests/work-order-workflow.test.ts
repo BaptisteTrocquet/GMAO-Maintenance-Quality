@@ -6,9 +6,11 @@ import {
 } from "@/lib/work-orders/workflow";
 
 describe("work order workflow", () => {
-  it("requires management permission for approval and cancellation transitions", () => {
+  it("requires management permission for approval, cancellation and reopen transitions", () => {
     expect(transitionPermission("REQUESTED", "APPROVED")).toBe("work:manage");
     expect(transitionPermission("IN_PROGRESS", "CANCELLED")).toBe("work:manage");
+    expect(transitionPermission("COMPLETED", "IN_PROGRESS")).toBe("work:manage");
+    expect(transitionPermission("CANCELLED", "REQUESTED")).toBe("work:manage");
   });
 
   it("allows execution transitions with work update permission", () => {
@@ -19,6 +21,9 @@ describe("work order workflow", () => {
 
   it("rejects invalid transitions", () => {
     expect(() => transitionPermission("REQUESTED", "COMPLETED")).toThrowError(
+      expect.objectContaining({ code: "INVALID_TRANSITION" }),
+    );
+    expect(() => transitionPermission("COMPLETED", "REQUESTED")).toThrowError(
       expect.objectContaining({ code: "INVALID_TRANSITION" }),
     );
   });
@@ -50,5 +55,31 @@ describe("work order workflow", () => {
         now,
       }),
     ).toEqual({ startedAt: now, completedAt: now });
+  });
+
+  it("resets lifecycle timestamps when reopening", () => {
+    const previousStart = new Date("2026-08-07T10:00:00.000Z");
+    const previousCompletion = new Date("2026-08-07T11:00:00.000Z");
+    const reopenAt = new Date("2026-08-07T12:00:00.000Z");
+
+    expect(
+      deriveTransitionDates({
+        from: "COMPLETED",
+        to: "IN_PROGRESS",
+        startedAt: previousStart,
+        completedAt: previousCompletion,
+        now: reopenAt,
+      }),
+    ).toEqual({ startedAt: reopenAt, completedAt: null });
+
+    expect(
+      deriveTransitionDates({
+        from: "CANCELLED",
+        to: "REQUESTED",
+        startedAt: previousStart,
+        completedAt: null,
+        now: reopenAt,
+      }),
+    ).toEqual({ startedAt: null, completedAt: null });
   });
 });

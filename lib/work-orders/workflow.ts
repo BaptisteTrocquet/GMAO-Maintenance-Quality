@@ -7,8 +7,8 @@ const transitions: Record<WorkOrderStatus, readonly WorkOrderStatus[]> = {
   PLANNED: ["IN_PROGRESS", "CANCELLED"],
   IN_PROGRESS: ["BLOCKED", "COMPLETED", "CANCELLED"],
   BLOCKED: ["IN_PROGRESS", "CANCELLED"],
-  COMPLETED: [],
-  CANCELLED: [],
+  COMPLETED: ["IN_PROGRESS"],
+  CANCELLED: ["REQUESTED"],
 };
 
 const managerOnlyTransitions = new Set<string>([
@@ -19,6 +19,8 @@ const managerOnlyTransitions = new Set<string>([
   "PLANNED:CANCELLED",
   "IN_PROGRESS:CANCELLED",
   "BLOCKED:CANCELLED",
+  "COMPLETED:IN_PROGRESS",
+  "CANCELLED:REQUESTED",
 ]);
 
 export class WorkOrderWorkflowError extends Error {
@@ -67,6 +69,15 @@ export function deriveTransitionDates(input: {
   now?: Date;
 }) {
   const now = input.now ?? new Date();
+
+  if (input.from === "CANCELLED" && input.to === "REQUESTED") {
+    return { startedAt: null, completedAt: null };
+  }
+
+  if (input.from === "COMPLETED" && input.to === "IN_PROGRESS") {
+    return { startedAt: now, completedAt: null };
+  }
+
   return {
     startedAt: input.to === "IN_PROGRESS" && !input.startedAt ? now : input.startedAt,
     completedAt: input.to === "COMPLETED" ? now : input.completedAt,
