@@ -63,7 +63,9 @@ async function generateMeterOccurrence(input: {
   readingAt: Date;
   actorId?: string | null;
 }) {
-  if (!input.plan.meterId || !input.plan.meter) {
+  const meterId = input.plan.meterId;
+  const meter = input.plan.meter;
+  if (!meterId || !meter) {
     throw new MeterMaintenanceSchedulerError("PLAN_MOVED", "Meter plan is no longer linked to a meter");
   }
 
@@ -72,7 +74,7 @@ async function generateMeterOccurrence(input: {
   if (existing) {
     await advanceMeterThreshold({
       planId: input.plan.id,
-      meterId: input.plan.meterId,
+      meterId,
       threshold: input.threshold,
       nextThreshold: input.nextThreshold,
     });
@@ -112,7 +114,7 @@ async function generateMeterOccurrence(input: {
           id: input.plan.id,
           active: true,
           frequencyUnit: "METER",
-          meterId: input.plan.meterId,
+          meterId,
           nextDueMeterValue: input.threshold,
         },
         data: { nextDueMeterValue: input.nextThreshold },
@@ -132,9 +134,9 @@ async function generateMeterOccurrence(input: {
           action: "METER_PREVENTIVE_GENERATED",
           afterJson: JSON.stringify({
             maintenancePlanId: input.plan.id,
-            meterId: input.plan.meter.id,
-            meterCode: input.plan.meter.code,
-            meterUnit: input.plan.meter.unit,
+            meterId: meter.id,
+            meterCode: meter.code,
+            meterUnit: meter.unit,
             maintenanceDueMeterValue: input.threshold,
             nextDueMeterValue: input.nextThreshold,
             triggeringReadingValue: input.readingValue,
@@ -175,7 +177,7 @@ async function generateMeterOccurrence(input: {
     if (raced) {
       await advanceMeterThreshold({
         planId: input.plan.id,
-        meterId: input.plan.meterId,
+        meterId,
         threshold: input.threshold,
         nextThreshold: input.nextThreshold,
       });
