@@ -88,6 +88,34 @@ async function main() {
     },
   });
 
+  let warehouse = await prisma.warehouse.findFirst({
+    where: { siteId: site.id, code: "MAIN" },
+  });
+  if (!warehouse) {
+    warehouse = await prisma.warehouse.create({
+      data: {
+        siteId: site.id,
+        code: "MAIN",
+        name: "Main spare-parts store",
+        description: "Synthetic demonstration warehouse",
+      },
+    });
+  }
+
+  const existingBin = await prisma.stockBin.findFirst({
+    where: { warehouseId: warehouse.id, code: "A-01" },
+  });
+  if (!existingBin) {
+    await prisma.stockBin.create({
+      data: {
+        warehouseId: warehouse.id,
+        code: "A-01",
+        name: "Rack A / 01",
+        description: "Synthetic demonstration stock bin",
+      },
+    });
+  }
+
   let utilities = await prisma.location.findFirst({ where: { siteId: site.id, code: "UTIL" } });
   if (!utilities) {
     utilities = await prisma.location.create({
@@ -176,7 +204,7 @@ async function main() {
 
   const sealKit = await prisma.part.upsert({
     where: { organizationId_sku: { organizationId: organization.id, sku: "SP-001" } },
-    update: {},
+    update: { active: true },
     create: {
       organizationId: organization.id,
       sku: "SP-001",
