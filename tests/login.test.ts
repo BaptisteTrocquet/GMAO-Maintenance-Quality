@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   findUnique: vi.fn(),
@@ -16,6 +16,10 @@ vi.mock("@/lib/auth/session", () => ({
 import { loginWithProvider } from "@/lib/auth/login";
 
 describe("loginWithProvider", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it("creates a session for an active verified user", async () => {
     const provider = {
       id: "oidc",
