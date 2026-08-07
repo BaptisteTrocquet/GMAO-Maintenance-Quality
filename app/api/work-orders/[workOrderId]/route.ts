@@ -73,6 +73,7 @@ export async function PATCH(
       siteId: parsed.data.siteId,
       site: { organizationId: parsed.data.organizationId, active: true },
     },
+    include: { checkItems: { select: { id: true, completed: true } } },
   });
   if (!existing) {
     return apiError(404, "WORK_ORDER_NOT_FOUND", "Work order not found in site scope");
@@ -156,6 +157,7 @@ export async function PATCH(
   if (hasOwn(parsed.data, "plannedStart")) data.plannedStart = parsed.data.plannedStart ?? null;
   if (hasOwn(parsed.data, "dueAt")) data.dueAt = parsed.data.dueAt ?? null;
 
+  let signedAt: Date | null = null;
   if (hasStatusTransition && parsed.data.status) {
     try {
       assertTransitionRequirements({
@@ -170,6 +172,23 @@ export async function PATCH(
       throw error;
     }
 
+    if (parsed.data.status === "COMPLETED") {
+      if (!existing.completionNote?.trim()) {
+        return apiError(
+          409,
+          "COMPLETION_NOTE_REQUIRED",
+          "A completion note is required before closing the work order",
+        );
+      }
+      if (existing.checkItems.some((item) => !item.completed)) {
+        return apiError(
+          409,
+          "CHECKLIST_INCOMPLETE",
+          "All work-order checklist items must be completed before closing",
+        );
+      }
+    }
+
     const dates = deriveTransitionDates({
       from: existing.status,
       to: parsed.data.status,
@@ -179,17 +198,29 @@ export async function PATCH(
     data.status = parsed.data.status;
     data.startedAt = dates.startedAt;
     data.completedAt = dates.completedAt;
+    signedAt = parsed.data.status === "COMPLETED" ? dates.completedAt : null;
   }
 
   const updated = await db.workOrder.update({ where: { id: existing.id }, data });
+  const completedWithSignature = parsed.data.status === "COMPLETED" && signedAt;
   await db.auditLog.create({
     data: {
       actorId: auth.session.user.id,
       entityType: "WorkOrder",
       entityId: existing.id,
-      action: hasStatusTransition ? "STATUS_CHANGED" : "TRIAGED",
+      action: completedWithSignature
+        ? "COMPLETED_SIGNED"
+        : hasStatusTransition
+          ? "STATUS_CHANGED"
+          : "TRIAGED",
       beforeJson: JSON.stringify(existing),
-      afterJson: JSON.stringify({ workOrder: updated, note: parsed.data.statusNote ?? null }),
+      afterJson: JSON.stringify({
+        workOrder: updated,
+        note: parsed.data.statusNote ?? null,
+        ...(completedWithSignature
+          ? { signature: { signedById: auth.session.user.id, signedAt } }
+          : {}),
+      }),
     },
   });
 
