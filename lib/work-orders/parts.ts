@@ -1,5 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
+import { consumeWorkOrderReservation } from "@/lib/inventory/reservations";
 import { applyStockMovement, StockMovementError } from "@/lib/inventory/stock";
 
 const MAX_TRANSACTION_ATTEMPTS = 4;
@@ -95,6 +96,14 @@ export async function consumeWorkOrderPart(input: {
             throw error;
           }
 
+          const reservation = await consumeWorkOrderReservation(tx, {
+            workOrderId: input.workOrderId,
+            binId: input.binId,
+            partId: part.id,
+            quantity: input.quantity,
+            actorId: input.actorId,
+          });
+
           await tx.workOrderPart.upsert({
             where: {
               workOrderId_partId: { workOrderId: input.workOrderId, partId: part.id },
@@ -137,6 +146,7 @@ export async function consumeWorkOrderPart(input: {
                 quantity: input.quantity,
                 consumptionId: consumption.id,
                 stockMovementId: stockResult.movement.id,
+                reservationStatus: reservation?.status ?? null,
                 idempotencyKey: input.idempotencyKey,
               }),
             },
