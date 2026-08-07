@@ -17,17 +17,51 @@ const createSchema = z
     assetId: z.string().min(1),
     name: z.string().trim().min(1).max(200),
     description: z.string().max(5000).nullable().optional(),
-    frequencyValue: z.number().int().min(1).max(10_000),
-    frequencyUnit: z.enum(["DAY", "WEEK", "MONTH", "YEAR"]),
-    firstDueAt: z.coerce.date(),
+    frequencyValue: z.number().int().min(1).max(10_000_000),
+    frequencyUnit: z.enum(["DAY", "WEEK", "MONTH", "YEAR", "METER"]),
+    firstDueAt: z.coerce.date().optional(),
+    meterId: z.string().min(1).optional(),
+    firstDueMeterValue: z.number().finite().min(0).optional(),
     estimatedMinutes: z.number().int().min(0).max(1_000_000).nullable().optional(),
     checklist: z.array(checklistItemSchema).max(200).optional(),
     cloneChecklistFromPlanId: z.string().min(1).optional(),
   })
-  .refine(
-    (value) => !(value.checklist?.length && value.cloneChecklistFromPlanId),
-    { message: "Provide either checklist or cloneChecklistFromPlanId, not both" },
-  );
+  .superRefine((value, context) => {
+    if (value.checklist?.length && value.cloneChecklistFromPlanId) {
+      context.addIssue({
+        code: "custom",
+        path: ["checklist"],
+        message: "Provide either checklist or cloneChecklistFromPlanId, not both",
+      });
+    }
+
+    if (value.frequencyUnit === "METER") {
+      if (!value.meterId) {
+        context.addIssue({ code: "custom", path: ["meterId"], message: "meterId is required for meter plans" });
+      }
+      if (value.firstDueMeterValue === undefined) {
+        context.addIssue({
+          code: "custom",
+          path: ["firstDueMeterValue"],
+          message: "firstDueMeterValue is required for meter plans",
+        });
+      }
+      if (value.firstDueAt) {
+        context.addIssue({ code: "custom", path: ["firstDueAt"], message: "firstDueAt is not used for meter plans" });
+      }
+    } else {
+      if (!value.firstDueAt) {
+        context.addIssue({ code: "custom", path: ["firstDueAt"], message: "firstDueAt is required for calendar plans" });
+      }
+      if (value.meterId || value.firstDueMeterValue !== undefined) {
+        context.addIssue({
+          code: "custom",
+          path: ["meterId"],
+          message: "Meter fields are only valid for meter plans",
+        });
+      }
+    }
+  });
 
 function denied(error: unknown) {
   if (error instanceof AccessDeniedError) {
@@ -67,6 +101,15 @@ export async function GET(request: Request) {
     where: { asset: { siteId } },
     include: {
       asset: { select: { id: true, code: true, name: true } },
+      meter: {
+        select: {
+          id: true,
+          code: true,
+          name: true,
+          unit: true,
+          readings: { orderBy: { readingAt: "desc" }, take: 1, select: { value: true, readingAt: true } },
+        },
+      },
       checklistItems: { orderBy: { sequence: "asc" } },
     },
     orderBy: [{ active: "desc" }, { nextDueAt: "asc" }, { name: "asc" }],
@@ -83,6 +126,10 @@ export async function GET(request: Request) {
               frequencyUnit: plan.frequencyUnit as CalendarFrequencyUnit,
               timeZone: site.organization.timezone,
             })
+          : null,
+      followingDueMeterValue:
+        plan.frequencyUnit === "METER" && plan.nextDueMeterValue !== null
+          ? plan.nextDueMeterValue + plan.frequencyValue
           : null,
     })),
   );
@@ -119,6 +166,21 @@ export async function POST(request: Request) {
   });
   if (!asset) return apiError(404, "ASSET_NOT_FOUND", "Asset not found in site scope");
 
+  let meter: { id: string } | null = null;
+  if (parsed.data.frequencyUnit === "METER") {
+    meter = await db.meter.findFirst({
+      where: { id: parsed.data.meterId, assetId: asset.id, allowRollover: false },
+      select: { id: true },
+    });
+    if (!meter) {
+      return apiError(
+        404,
+        "METER_NOT_FOUND",
+        "Monotonic meter not found on the selected asset; rollover meters are not supported for recurrence",
+      );
+    }
+  }
+
   let checklist = parsed.data.checklist ?? [];
   if (parsed.data.cloneChecklistFromPlanId) {
     const source = await db.maintenancePlan.findFirst({
@@ -140,11 +202,14 @@ export async function POST(request: Request) {
   const created = await db.maintenancePlan.create({
     data: {
       assetId: asset.id,
+      meterId: meter?.id ?? null,
       name: parsed.data.name,
       description: parsed.data.description ?? null,
       frequencyValue: parsed.data.frequencyValue,
       frequencyUnit: parsed.data.frequencyUnit,
-      nextDueAt: parsed.data.firstDueAt,
+      nextDueAt: parsed.data.frequencyUnit === "METER" ? null : parsed.data.firstDueAt!,
+      nextDueMeterValue:
+        parsed.data.frequencyUnit === "METER" ? parsed.data.firstDueMeterValue! : null,
       active: true,
       estimatedMinutes: parsed.data.estimatedMinutes ?? null,
       checklistItems: {
@@ -155,15 +220,25 @@ export async function POST(request: Request) {
         })),
       },
     },
-    include: { checklistItems: { orderBy: { sequence: "asc" } } },
+    include: {
+      meter: { select: { id: true, code: true, name: true, unit: true } },
+      checklistItems: { orderBy: { sequence: "asc" } },
+    },
   });
 
-  const followingDueAt = advanceCalendarDue({
-    currentDueAt: parsed.data.firstDueAt,
-    frequencyValue: parsed.data.frequencyValue,
-    frequencyUnit: parsed.data.frequencyUnit,
-    timeZone: site.organization.timezone,
-  });
+  const followingDueAt =
+    parsed.data.frequencyUnit === "METER"
+      ? null
+      : advanceCalendarDue({
+          currentDueAt: parsed.data.firstDueAt!,
+          frequencyValue: parsed.data.frequencyValue,
+          frequencyUnit: parsed.data.frequencyUnit,
+          timeZone: site.organization.timezone,
+        });
+  const followingDueMeterValue =
+    parsed.data.frequencyUnit === "METER"
+      ? parsed.data.firstDueMeterValue! + parsed.data.frequencyValue
+      : null;
 
   await db.auditLog.create({
     data: {
@@ -171,9 +246,9 @@ export async function POST(request: Request) {
       entityType: "MaintenancePlan",
       entityId: created.id,
       action: "CREATED",
-      afterJson: JSON.stringify({ ...created, followingDueAt }),
+      afterJson: JSON.stringify({ ...created, followingDueAt, followingDueMeterValue }),
     },
   });
 
-  return apiData({ ...created, followingDueAt }, { status: 201 });
+  return apiData({ ...created, followingDueAt, followingDueMeterValue }, { status: 201 });
 }
