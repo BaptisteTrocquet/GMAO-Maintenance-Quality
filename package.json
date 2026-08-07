@@ -19,7 +19,8 @@
     "test:watch": "vitest",
     "test:db": "tsx scripts/check-db.ts",
     "sdk:build": "tsc -p sdk/tsconfig.json",
-    "check": "npm run typecheck && npm run lint && npm run test && npm run sdk:build && npm run build",
+    "examples:check": "vitest run tests/integration-examples.test.tsx tests/embed-static-example.test.ts tests/widget-loader-example.test.ts",
+    "check": "npm run typecheck && npm run lint && npm run test && npm run sdk:build && npm run examples:check && npm run build",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:seed": "tsx prisma/seed.ts"
