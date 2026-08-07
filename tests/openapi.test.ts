@@ -54,6 +54,23 @@ describe("public OpenAPI specification", () => {
     expect(route.get.responses).toHaveProperty("409");
   });
 
+  it("documents the aggregate kpi:read contract", () => {
+    const route = publicOpenApiSpec.paths["/api/v1/public/kpis"];
+    expect(route.get.operationId).toBe("getPublicKpiCardV1");
+    expect(route.get.description).toContain("kpi:read");
+    expect(route.get.description).toContain("aggregate");
+    expect(publicOpenApiSpec.components.schemas.PublicKpiCard.additionalProperties).toBe(false);
+    expect(Object.keys(publicOpenApiSpec.components.schemas.PublicKpiCard.properties).sort()).toEqual(
+      [
+        "generatedAt",
+        "inProgressWorkOrders",
+        "openWorkOrders",
+        "outOfServiceAssets",
+        "overdueWorkOrders",
+      ].sort(),
+    );
+  });
+
   it("documents scoped bearer credentials rather than administrator secrets", () => {
     expect(publicOpenApiSpec.components.securitySchemes.scopedPublicRequestToken).toMatchObject({
       type: "http",
