@@ -1,9 +1,10 @@
 import { db } from "@/lib/db";
 import { escapeHtmlAttribute } from "@/lib/embed/html";
 import { createEmbedProof, parentOriginFromReferrer } from "@/lib/embed/proof";
+import { embedThemeStylesheetHref } from "@/lib/embed/theme";
 import { getPublicRequestTokenScopes, hasPublicRequestScope, isOriginAllowed } from "@/lib/public-requests/tokens";
 
-function htmlPage(proof: string, documentCode: string, asOf: string | null) {
+function htmlPage(proof: string, documentCode: string, asOf: string | null, themeHref: string) {
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -11,6 +12,7 @@ function htmlPage(proof: string, documentCode: string, asOf: string | null) {
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Controlled document</title>
   <link rel="stylesheet" href="/embed/controlled-document/styles.css">
+  <link rel="stylesheet" href="${escapeHtmlAttribute(themeHref)}">
 </head>
 <body>
   <main class="document-card" id="gmao-controlled-document" data-embed-proof="${escapeHtmlAttribute(proof)}" data-document-code="${escapeHtmlAttribute(documentCode)}" data-as-of="${escapeHtmlAttribute(asOf ?? "")}">
@@ -81,7 +83,7 @@ export async function GET(request: Request) {
   }
 
   const proof = createEmbedProof({ tokenId: token.id, tokenHash: token.tokenHash, parentOrigin, now });
-  return new Response(htmlPage(proof, documentCode, rawAsOf), {
+  return new Response(htmlPage(proof, documentCode, rawAsOf, embedThemeStylesheetHref(url)), {
     status: 200,
     headers: securityHeaders(token.allowedOrigins),
   });
