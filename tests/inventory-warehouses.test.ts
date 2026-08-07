@@ -28,7 +28,6 @@ vi.mock("@/lib/db", () => ({
 import {
   createStockBin,
   createWarehouse,
-  InventoryLocationError,
   listWarehouses,
 } from "@/lib/inventory/warehouses";
 
@@ -80,7 +79,7 @@ describe("inventory warehouses and bins", () => {
 
     await expect(
       listWarehouses({ organizationId: "org-b", siteId: "site-a" }),
-    ).rejects.toMatchObject<Partial<InventoryLocationError>>({ code: "SITE_NOT_FOUND" });
+    ).rejects.toMatchObject({ code: "SITE_NOT_FOUND" });
 
     expect(mocks.warehouseFindMany).not.toHaveBeenCalled();
   });
@@ -138,7 +137,7 @@ describe("inventory warehouses and bins", () => {
         name: "Rack A / 01",
         actorId: "manager-1",
       }),
-    ).rejects.toMatchObject<Partial<InventoryLocationError>>({ code: "WAREHOUSE_NOT_FOUND" });
+    ).rejects.toMatchObject({ code: "WAREHOUSE_NOT_FOUND" });
 
     expect(mocks.stockBinCreate).not.toHaveBeenCalled();
   });
