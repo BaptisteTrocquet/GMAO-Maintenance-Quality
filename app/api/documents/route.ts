@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { apiData, apiError } from "@/lib/api-response";
@@ -100,26 +101,33 @@ export async function POST(request: Request) {
     return apiError(404, "ORGANIZATION_NOT_FOUND", "Organization not found");
   }
 
-  const row = await db.document.create({
-    data: {
-      organizationId: parsed.data.organizationId,
-      code: parsed.data.code,
-      title: parsed.data.title,
-      type: parsed.data.type,
-      owner: parsed.data.owner ?? null,
-      description: parsed.data.description ?? null,
-    },
-  });
+  try {
+    const row = await db.document.create({
+      data: {
+        organizationId: parsed.data.organizationId,
+        code: parsed.data.code,
+        title: parsed.data.title,
+        type: parsed.data.type,
+        owner: parsed.data.owner ?? null,
+        description: parsed.data.description ?? null,
+      },
+    });
 
-  await db.auditLog.create({
-    data: {
-      actorId: auth.session.user.id,
-      entityType: "Document",
-      entityId: row.id,
-      action: "CREATED",
-      afterJson: JSON.stringify(row),
-    },
-  });
+    await db.auditLog.create({
+      data: {
+        actorId: auth.session.user.id,
+        entityType: "Document",
+        entityId: row.id,
+        action: "CREATED",
+        afterJson: JSON.stringify(row),
+      },
+    });
 
-  return apiData(row, { status: 201 });
+    return apiData(row, { status: 201 });
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      return apiError(409, "DOCUMENT_CODE_EXISTS", "Document code already exists in this organization");
+    }
+    throw error;
+  }
 }
