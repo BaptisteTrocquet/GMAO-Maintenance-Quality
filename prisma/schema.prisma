@@ -246,9 +246,22 @@ model Asset {
   assetDocuments   AssetDocument[]
   meters           Meter[]
   assetParts       AssetPart[]
+  statusHistory    AssetStatusHistory[]
 
   @@unique([siteId, code])
   @@index([siteId, archivedAt])
+}
+
+model AssetStatusHistory {
+  id        String      @id @default(cuid())
+  assetId   String
+  fromStatus AssetStatus?
+  toStatus  AssetStatus
+  note      String?
+  changedAt DateTime    @default(now())
+  asset     Asset       @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@index([assetId, changedAt])
 }
 
 model WorkOrder {
@@ -426,17 +439,24 @@ model Meter {
   assetId   String
   name      String
   unit      String
+  code      String?
+  rollover  Float?
   createdAt DateTime       @default(now())
   asset     Asset          @relation(fields: [assetId], references: [id], onDelete: Cascade)
   readings  MeterReading[]
+
+  @@unique([assetId, code])
 }
 
 model MeterReading {
   id        String   @id @default(cuid())
   meterId   String
   value     Float
+  note      String?
   readingAt DateTime @default(now())
   meter     Meter    @relation(fields: [meterId], references: [id], onDelete: Cascade)
+
+  @@index([meterId, readingAt])
 }
 
 model AuditLog {
