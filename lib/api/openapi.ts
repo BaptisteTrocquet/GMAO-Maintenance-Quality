@@ -1,4 +1,4 @@
-export const PUBLIC_API_VERSION = "1.0.0";
+export const PUBLIC_API_VERSION = "1.1.0";
 
 export const publicOpenApiSpec = {
   openapi: "3.1.0",
@@ -12,7 +12,7 @@ export const publicOpenApiSpec = {
   tags: [
     {
       name: "Public maintenance requests",
-      description: "Create tenant/site-scoped maintenance requests from public or embedded clients.",
+      description: "Create and track tenant/site-scoped maintenance requests from public or embedded clients.",
     },
   ],
   paths: {
@@ -45,7 +45,7 @@ export const publicOpenApiSpec = {
         tags: ["Public maintenance requests"],
         summary: "Create a scoped maintenance request",
         description:
-          "Creates a REQUESTED, NORMAL-priority CORRECTIVE work order in the site bound to the scoped token. Replays with the same Idempotency-Key return the original work order.",
+          "Creates a REQUESTED, NORMAL-priority CORRECTIVE work order in the site bound to the scoped token. Replays with the same Idempotency-Key return the original work order and trackingId.",
         operationId: "createPublicMaintenanceRequestV1",
         security: [{ scopedPublicRequestToken: [] }],
         parameters: [
@@ -96,7 +96,7 @@ export const publicOpenApiSpec = {
             },
           },
           "200": {
-            description: "Idempotent replay; original work order returned.",
+            description: "Idempotent replay; original work order and trackingId returned.",
             content: {
               "application/json": {
                 schema: { $ref: "#/components/schemas/PublicMaintenanceRequestResult" },
@@ -109,6 +109,56 @@ export const publicOpenApiSpec = {
           "404": { description: "Scoped site or asset was not found." },
           "409": { description: "Idempotent result is inconsistent or unavailable." },
           "429": { description: "Scoped token exceeded its hourly request limit." },
+        },
+      },
+    },
+    "/api/v1/public/request-status": {
+      options: {
+        tags: ["Public maintenance requests"],
+        summary: "Validate CORS preflight for request-status lookup",
+        parameters: [
+          { name: "tokenId", in: "query", required: true, schema: { type: "string", minLength: 1 } },
+          { name: "Origin", in: "header", required: true, schema: { type: "string", format: "uri" } },
+        ],
+        responses: {
+          "204": { description: "Origin is allowed for the active token." },
+          "400": { description: "tokenId or Origin is missing." },
+          "403": { description: "Token is inactive or the origin is not allowed." },
+        },
+      },
+      get: {
+        tags: ["Public maintenance requests"],
+        summary: "Read the public status of a previously created maintenance request",
+        description:
+          "Requires the same active scoped token used to create the request plus the opaque trackingId returned by request creation. Only a minimal public status projection is returned.",
+        operationId: "getPublicMaintenanceRequestStatusV1",
+        security: [{ scopedPublicRequestToken: [] }],
+        parameters: [
+          { name: "tokenId", in: "query", required: true, schema: { type: "string", minLength: 1 } },
+          { name: "trackingId", in: "query", required: true, schema: { type: "string", minLength: 1 } },
+          {
+            name: "Origin",
+            in: "header",
+            required: false,
+            schema: { type: "string", format: "uri" },
+            description: "Required for EMBEDDED tokens and validated against exact allowed origins.",
+          },
+        ],
+        responses: {
+          "200": {
+            description: "Minimal public work-order status.",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/PublicMaintenanceStatusResult" },
+              },
+            },
+          },
+          "400": { $ref: "#/components/responses/BadRequest" },
+          "401": { $ref: "#/components/responses/Unauthorized" },
+          "403": { $ref: "#/components/responses/Forbidden" },
+          "404": { description: "trackingId does not belong to this scoped token." },
+          "409": { description: "Tracked work order is no longer available." },
+          "429": { description: "Scoped token exceeded its hourly status-lookup limit." },
         },
       },
     },
@@ -153,10 +203,39 @@ export const publicOpenApiSpec = {
         properties: {
           data: {
             type: "object",
-            required: ["idempotent", "workOrder"],
+            required: ["idempotent", "trackingId", "workOrder"],
             properties: {
               idempotent: { type: "boolean" },
+              trackingId: { type: "string", description: "Opaque submission identifier used with the same scoped token for status lookup." },
               workOrder: { $ref: "#/components/schemas/PublicWorkOrderSummary" },
+            },
+          },
+        },
+      },
+      PublicStatusWorkOrder: {
+        type: "object",
+        required: ["number", "status", "requestedAt", "updatedAt"],
+        properties: {
+          number: { type: "string" },
+          status: { type: "string" },
+          requestedAt: { type: "string", format: "date-time" },
+          plannedStart: { type: ["string", "null"], format: "date-time" },
+          dueAt: { type: ["string", "null"], format: "date-time" },
+          startedAt: { type: ["string", "null"], format: "date-time" },
+          completedAt: { type: ["string", "null"], format: "date-time" },
+          updatedAt: { type: "string", format: "date-time" },
+        },
+      },
+      PublicMaintenanceStatusResult: {
+        type: "object",
+        required: ["data"],
+        properties: {
+          data: {
+            type: "object",
+            required: ["trackingId", "workOrder"],
+            properties: {
+              trackingId: { type: "string" },
+              workOrder: { $ref: "#/components/schemas/PublicStatusWorkOrder" },
             },
           },
         },
