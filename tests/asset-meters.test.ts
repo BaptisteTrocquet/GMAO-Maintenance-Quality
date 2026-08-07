@@ -30,7 +30,7 @@ describe("asset meters", () => {
       name: "Runtime",
       unit: "h",
       code: "RUN",
-      rollover: null,
+      allowRollover: false,
     });
     mocks.auditCreate.mockResolvedValueOnce({ id: "audit-1" });
 
@@ -47,7 +47,7 @@ describe("asset meters", () => {
   it("rejects decreasing readings when no rollover is configured", async () => {
     mocks.meterFindFirst.mockResolvedValueOnce({
       id: "meter-1",
-      rollover: null,
+      allowRollover: false,
       readings: [{ value: 120 }],
     });
 
@@ -60,7 +60,7 @@ describe("asset meters", () => {
   it("accepts a lower reading when rollover is configured", async () => {
     mocks.meterFindFirst.mockResolvedValueOnce({
       id: "meter-1",
-      rollover: 9999,
+      allowRollover: true,
       readings: [{ value: 9998 }],
     });
     mocks.readingCreate.mockResolvedValueOnce({ id: "reading-1", meterId: "meter-1", value: 3 });
