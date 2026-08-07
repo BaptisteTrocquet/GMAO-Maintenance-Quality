@@ -15,7 +15,6 @@ vi.mock("@/lib/db", () => ({
 import {
   assertAssetHierarchyIntegrity,
   assertLocationHierarchyIntegrity,
-  HierarchyIntegrityError,
 } from "@/lib/assets/hierarchy";
 
 describe("hierarchy integrity", () => {
@@ -26,9 +25,7 @@ describe("hierarchy integrity", () => {
 
     await expect(
       assertAssetHierarchyIntegrity({ siteId: "site-a", locationId: "location-b" }),
-    ).rejects.toMatchObject<Partial<HierarchyIntegrityError>>({
-      code: "LOCATION_SITE_MISMATCH",
-    });
+    ).rejects.toMatchObject({ code: "LOCATION_SITE_MISMATCH" });
   });
 
   it("rejects parent assets from another site", async () => {
@@ -36,9 +33,7 @@ describe("hierarchy integrity", () => {
 
     await expect(
       assertAssetHierarchyIntegrity({ siteId: "site-a", parentAssetId: "asset-b" }),
-    ).rejects.toMatchObject<Partial<HierarchyIntegrityError>>({
-      code: "PARENT_ASSET_SITE_MISMATCH",
-    });
+    ).rejects.toMatchObject({ code: "PARENT_ASSET_SITE_MISMATCH" });
   });
 
   it("accepts asset relationships within the same site", async () => {
@@ -59,9 +54,7 @@ describe("hierarchy integrity", () => {
 
     await expect(
       assertLocationHierarchyIntegrity({ siteId: "site-a", parentId: "location-b" }),
-    ).rejects.toMatchObject<Partial<HierarchyIntegrityError>>({
-      code: "PARENT_LOCATION_SITE_MISMATCH",
-    });
+    ).rejects.toMatchObject({ code: "PARENT_LOCATION_SITE_MISMATCH" });
   });
 
   it("rejects self-parenting", async () => {
@@ -71,7 +64,7 @@ describe("hierarchy integrity", () => {
         assetId: "asset-a",
         parentAssetId: "asset-a",
       }),
-    ).rejects.toMatchObject<Partial<HierarchyIntegrityError>>({ code: "SELF_PARENT" });
+    ).rejects.toMatchObject({ code: "SELF_PARENT" });
 
     await expect(
       assertLocationHierarchyIntegrity({
@@ -79,6 +72,6 @@ describe("hierarchy integrity", () => {
         locationId: "location-a",
         parentId: "location-a",
       }),
-    ).rejects.toMatchObject<Partial<HierarchyIntegrityError>>({ code: "SELF_PARENT" });
+    ).rejects.toMatchObject({ code: "SELF_PARENT" });
   });
 });
