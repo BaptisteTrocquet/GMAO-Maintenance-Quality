@@ -18,6 +18,7 @@ export type AssetLifecycleInput = {
   model?: string | null;
   serialNumber?: string | null;
   status?: "ACTIVE" | "INACTIVE" | "OUT_OF_SERVICE" | "DECOMMISSIONED";
+  statusNote?: string | null;
   criticality?: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
   installedAt?: Date | null;
   commissionedAt?: Date | null;
@@ -73,6 +74,17 @@ export async function updateAssetLifecycle(input: AssetLifecycleInput) {
     },
   });
 
+  if (input.status !== undefined && input.status !== current.status) {
+    await db.assetStatusHistory.create({
+      data: {
+        assetId: updated.id,
+        fromStatus: current.status,
+        toStatus: input.status,
+        note: input.statusNote ?? null,
+      },
+    });
+  }
+
   await db.auditLog.create({
     data: {
       actorId: input.actorId ?? null,
@@ -111,6 +123,17 @@ export async function archiveAsset(input: {
     where: { id: input.assetId },
     data: { archivedAt: new Date(), status: "DECOMMISSIONED", decommissionedAt: new Date() },
   });
+
+  if (current.status !== "DECOMMISSIONED") {
+    await db.assetStatusHistory.create({
+      data: {
+        assetId: archived.id,
+        fromStatus: current.status,
+        toStatus: "DECOMMISSIONED",
+        note: "Asset archived",
+      },
+    });
+  }
 
   await db.auditLog.create({
     data: {
