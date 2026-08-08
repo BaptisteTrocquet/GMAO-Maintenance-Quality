@@ -42,7 +42,10 @@ beforeEach(() => {
   });
   mocks.hasSiteAccess.mockReturnValue(true);
   mocks.can.mockReturnValue(true);
-  mocks.siteFindFirst.mockResolvedValue({ id: "site-a" });
+  mocks.siteFindFirst.mockResolvedValue({
+    id: "site-a",
+    organization: { timezone: "Europe/Paris" },
+  });
   mocks.buildPmCompliance.mockResolvedValue({
     due: 5,
     completedOnTime: 4,
@@ -51,32 +54,49 @@ beforeEach(() => {
     missed: 1,
     complianceRate: 80,
     empty: false,
-    from: "2026-07-01T00:00:00.000Z",
-    to: "2026-08-01T00:00:00.000Z",
+    from: "2026-06-30T22:00:00.000Z",
+    to: "2026-07-31T22:00:00.000Z",
     generatedAt: "2026-08-08T10:00:00.000Z",
   });
 });
 
 describe("GET /api/analytics/pm-compliance", () => {
-  it("forwards tenant, site, date window and optional asset to the analytics service", async () => {
+  it("resolves local calendar dates in the organization timezone before querying analytics", async () => {
     const response = await GET(
-      request(
-        "organizationId=org-a&siteId=site-a&from=2026-07-01T00%3A00%3A00.000Z&to=2026-08-01T00%3A00%3A00.000Z&assetId=asset-a",
-      ),
+      request("organizationId=org-a&siteId=site-a&from=2026-07-01&to=2026-07-31&assetId=asset-a"),
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.siteFindFirst).toHaveBeenCalledWith({
+      where: { id: "site-a", organizationId: "org-a", active: true },
+      select: { id: true, organization: { select: { timezone: true } } },
+    });
+    expect(mocks.buildPmCompliance).toHaveBeenCalledWith({
+      organizationId: "org-a",
+      siteId: "site-a",
+      from: new Date("2026-06-30T22:00:00.000Z"),
+      to: new Date("2026-07-31T22:00:00.000Z"),
+      assetId: "asset-a",
+    });
+    expect(mocks.can).toHaveBeenCalledWith("MAINTENANCE_MANAGER", "maintenance:read");
+  });
+
+  it("preserves local day boundaries across the Europe/Paris DST transition", async () => {
+    const response = await GET(
+      request("organizationId=org-a&siteId=site-a&from=2026-03-29&to=2026-03-29"),
     );
 
     expect(response.status).toBe(200);
     expect(mocks.buildPmCompliance).toHaveBeenCalledWith({
       organizationId: "org-a",
       siteId: "site-a",
-      from: new Date("2026-07-01T00:00:00.000Z"),
-      to: new Date("2026-08-01T00:00:00.000Z"),
-      assetId: "asset-a",
+      from: new Date("2026-03-28T23:00:00.000Z"),
+      to: new Date("2026-03-29T22:00:00.000Z"),
+      assetId: undefined,
     });
-    expect(mocks.can).toHaveBeenCalledWith("MAINTENANCE_MANAGER", "maintenance:read");
   });
 
-  it("rejects missing timestamps instead of coercing them to epoch dates", async () => {
+  it("rejects missing calendar dates instead of coercing them to epoch dates", async () => {
     const response = await GET(request("organizationId=org-a&siteId=site-a"));
 
     expect(response.status).toBe(400);
@@ -84,13 +104,22 @@ describe("GET /api/analytics/pm-compliance", () => {
     expect(mocks.buildPmCompliance).not.toHaveBeenCalled();
   });
 
+  it("rejects timestamp-shaped inputs so every analytics caller uses one date contract", async () => {
+    const response = await GET(
+      request(
+        "organizationId=org-a&siteId=site-a&from=2026-07-01T00%3A00%3A00.000Z&to=2026-08-01T00%3A00%3A00.000Z",
+      ),
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocks.authenticateRequest).not.toHaveBeenCalled();
+  });
+
   it("rejects users without site access before analytics queries", async () => {
     mocks.hasSiteAccess.mockReturnValue(false);
 
     const response = await GET(
-      request(
-        "organizationId=org-a&siteId=site-b&from=2026-07-01T00%3A00%3A00.000Z&to=2026-08-01T00%3A00%3A00.000Z",
-      ),
+      request("organizationId=org-a&siteId=site-b&from=2026-07-01&to=2026-07-31"),
     );
 
     expect(response.status).toBe(403);
@@ -102,9 +131,7 @@ describe("GET /api/analytics/pm-compliance", () => {
     mocks.can.mockReturnValue(false);
 
     const response = await GET(
-      request(
-        "organizationId=org-a&siteId=site-a&from=2026-07-01T00%3A00%3A00.000Z&to=2026-08-01T00%3A00%3A00.000Z",
-      ),
+      request("organizationId=org-a&siteId=site-a&from=2026-07-01&to=2026-07-31"),
     );
 
     expect(response.status).toBe(403);
@@ -115,9 +142,7 @@ describe("GET /api/analytics/pm-compliance", () => {
     mocks.siteFindFirst.mockResolvedValue(null);
 
     const response = await GET(
-      request(
-        "organizationId=org-a&siteId=site-a&from=2026-07-01T00%3A00%3A00.000Z&to=2026-08-01T00%3A00%3A00.000Z",
-      ),
+      request("organizationId=org-a&siteId=site-a&from=2026-07-01&to=2026-07-31"),
     );
 
     expect(response.status).toBe(404);
