@@ -13,8 +13,12 @@ export async function queryQualityEvents(input: {
   type?: QualityEventType;
   severity?: QualitySeverity;
 }) {
+  const marker = `"organizationId":"${input.organizationId}","siteId":"${input.siteId}"`;
   const ids = await db.auditLog.findMany({
-    where: { entityType: "QualityEvent" },
+    where: {
+      entityType: "QualityEvent",
+      afterJson: { contains: marker },
+    },
     distinct: ["entityId"],
     select: { entityId: true },
   });
