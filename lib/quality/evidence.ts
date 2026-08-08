@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 
 const ENTITY_TYPE = "QualityEvidence";
 const QUALITY_EVENT_ENTITY_TYPE = "QualityEvent";
+const CAPA_ENTITY_TYPE = "QualityCapa";
 const MAX_TRANSACTION_ATTEMPTS = 4;
 export const MAX_QUALITY_EVIDENCE_BYTES = 25 * 1024 * 1024;
 
@@ -49,6 +50,12 @@ type QualityEventReference = {
   status: "OPEN" | "CONTAINED" | "INVESTIGATING" | "CLOSED";
 };
 
+type CapaReference = {
+  organizationId: string;
+  siteId: string;
+  actions: Array<{ id: string }>;
+};
+
 export class QualityEvidenceError extends Error {
   constructor(
     public readonly code:
@@ -56,6 +63,8 @@ export class QualityEvidenceError extends Error {
       | "EVENT_CLOSED"
       | "EVIDENCE_NOT_FOUND"
       | "EVIDENCE_ALREADY_REVOKED"
+      | "CAPA_ACTION_REQUIRED"
+      | "CAPA_ACTION_NOT_FOUND"
       | "UNSUPPORTED_FILE_TYPE"
       | "FILE_TOO_LARGE"
       | "INVALID_FILE_METADATA"
@@ -87,6 +96,24 @@ function parseEvent(value: string | null): QualityEventReference | null {
   }
 }
 
+function parseCapa(value: string | null): CapaReference | null {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value) as Partial<CapaReference>;
+    if (
+      typeof parsed.organizationId !== "string" ||
+      typeof parsed.siteId !== "string" ||
+      !Array.isArray(parsed.actions) ||
+      parsed.actions.some((action) => !action || typeof action.id !== "string")
+    ) {
+      return null;
+    }
+    return parsed as CapaReference;
+  } catch {
+    return null;
+  }
+}
+
 function parseEvidence(value: string | null): QualityEvidenceSnapshot | null {
   if (!value) return null;
   try {
@@ -107,6 +134,7 @@ function parseEvidence(value: string | null): QualityEvidenceSnapshot | null {
       typeof parsed.storageKey !== "string" ||
       typeof parsed.mimeType !== "string" ||
       typeof parsed.sizeBytes !== "number" ||
+      !(parsed.note === null || typeof parsed.note === "string") ||
       typeof parsed.active !== "boolean" ||
       typeof parsed.uploadedById !== "string" ||
       typeof parsed.uploadedAt !== "string" ||
@@ -141,16 +169,24 @@ async function serializable<T>(work: (tx: Prisma.TransactionClient) => Promise<T
   throw lastError;
 }
 
+async function latestJson(
+  client: Pick<Prisma.TransactionClient, "auditLog">,
+  entityType: string,
+  entityId: string,
+) {
+  const log = await client.auditLog.findFirst({
+    where: { entityType, entityId },
+    orderBy: { createdAt: "desc" },
+    select: { afterJson: true },
+  });
+  return log?.afterJson ?? null;
+}
+
 async function latestEvent(
   client: Pick<Prisma.TransactionClient, "auditLog">,
   eventId: string,
 ) {
-  const log = await client.auditLog.findFirst({
-    where: { entityType: QUALITY_EVENT_ENTITY_TYPE, entityId: eventId },
-    orderBy: { createdAt: "desc" },
-    select: { afterJson: true },
-  });
-  return parseEvent(log?.afterJson ?? null);
+  return parseEvent(await latestJson(client, QUALITY_EVENT_ENTITY_TYPE, eventId));
 }
 
 async function requireEvent(
@@ -185,16 +221,42 @@ function validateFile(input: { fileName: string; storageKey: string; mimeType: s
   }
 }
 
+async function validateRelatedAction(
+  tx: Prisma.TransactionClient,
+  input: {
+    organizationId: string;
+    siteId: string;
+    eventId: string;
+    category: QualityEvidenceCategory;
+    relatedActionId: string | null;
+  },
+) {
+  if (input.category !== "CAPA_ACTION") return;
+  if (!input.relatedActionId) {
+    throw new QualityEvidenceError(
+      "CAPA_ACTION_REQUIRED",
+      "CAPA action evidence must identify the related action",
+    );
+  }
+  const capa = parseCapa(await latestJson(tx, CAPA_ENTITY_TYPE, input.eventId));
+  if (
+    !capa ||
+    capa.organizationId !== input.organizationId ||
+    capa.siteId !== input.siteId ||
+    !capa.actions.some((action) => action.id === input.relatedActionId)
+  ) {
+    throw new QualityEvidenceError(
+      "CAPA_ACTION_NOT_FOUND",
+      "Related CAPA action was not found in this quality event",
+    );
+  }
+}
+
 async function latestEvidence(
   client: Pick<Prisma.TransactionClient, "auditLog">,
   evidenceId: string,
 ) {
-  const log = await client.auditLog.findFirst({
-    where: { entityType: ENTITY_TYPE, entityId: evidenceId },
-    orderBy: { createdAt: "desc" },
-    select: { afterJson: true },
-  });
-  return parseEvidence(log?.afterJson ?? null);
+  return parseEvidence(await latestJson(client, ENTITY_TYPE, evidenceId));
 }
 
 export async function addQualityEvidence(input: {
@@ -213,6 +275,14 @@ export async function addQualityEvidence(input: {
   validateFile(input);
   return serializable(async (tx) => {
     await requireEvent(tx, { ...input, mutable: true });
+    const relatedActionId = input.relatedActionId?.trim() || null;
+    await validateRelatedAction(tx, {
+      organizationId: input.organizationId,
+      siteId: input.siteId,
+      eventId: input.eventId,
+      category: input.category,
+      relatedActionId,
+    });
     const evidenceId = randomUUID();
     const snapshot: QualityEvidenceSnapshot = {
       evidenceId,
@@ -220,7 +290,7 @@ export async function addQualityEvidence(input: {
       organizationId: input.organizationId,
       siteId: input.siteId,
       category: input.category,
-      relatedActionId: input.relatedActionId?.trim() || null,
+      relatedActionId,
       fileName: input.fileName.trim(),
       storageKey: input.storageKey.trim(),
       mimeType: input.mimeType,
