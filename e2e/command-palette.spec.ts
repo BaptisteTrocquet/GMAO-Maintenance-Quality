@@ -8,13 +8,26 @@ test("command palette opens from keyboard and navigates with Enter", async ({ pa
   const dialog = page.getByRole("dialog", { name: "Command palette" });
   await expect(dialog).toBeVisible();
 
-  const input = page.getByLabel("Search permitted records or choose an action");
+  const input = page.getByRole("combobox", {
+    name: "Search permitted records or choose an action",
+  });
   await expect(input).toBeFocused();
+  await expect(input).toHaveAttribute("aria-expanded", "true");
   await expect(page.getByRole("option", { name: /Global search/ })).toHaveAttribute(
     "aria-selected",
     "true",
   );
 
+  await page.keyboard.press("End");
+  await expect(page.getByRole("option", { name: /Team workload/ })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await page.keyboard.press("Home");
+  await expect(page.getByRole("option", { name: /Global search/ })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
   await page.keyboard.press("ArrowDown");
   await expect(page.getByRole("option", { name: /Work-order Kanban/ })).toHaveAttribute(
     "aria-selected",
@@ -43,7 +56,9 @@ test("command palette shortcut toggles closed and clears the previous query", as
   const trigger = page.getByRole("button", { name: /Commands/ });
 
   await page.keyboard.press("Control+K");
-  const input = page.getByLabel("Search permitted records or choose an action");
+  const input = page.getByRole("combobox", {
+    name: "Search permitted records or choose an action",
+  });
   await input.fill("wo");
 
   await page.keyboard.press("Control+K");
