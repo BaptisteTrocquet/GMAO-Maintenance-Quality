@@ -17,7 +17,7 @@ export default async function TechnicianWorkOrderPage({
       <div className="header asset-header">
         <div>
           <Link className="muted" href="/maintenance/my-work">← My work</Link>
-          <div className="title">Technician work order</div>
+          <h1 className="title">Technician work order</h1>
           <div className="muted">Focused execution mode for the shop floor.</div>
         </div>
       </div>
