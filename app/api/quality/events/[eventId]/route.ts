@@ -2,6 +2,7 @@ import { z } from "zod";
 import { AccessDeniedError, assertSitePermission } from "@/lib/access-control";
 import { apiData, apiError } from "@/lib/api-response";
 import { authenticateRequest } from "@/lib/auth/request-auth";
+import { assertCapaClosedForEvent, CapaClosureError } from "@/lib/quality/capa-closure";
 import {
   getQualityEvent,
   listQualityEventTimeline,
@@ -142,6 +143,14 @@ export async function PATCH(
       );
     }
 
+    if (parsed.data.action === "CLOSE") {
+      await assertCapaClosedForEvent({
+        organizationId: parsed.data.organizationId,
+        siteId: parsed.data.siteId,
+        eventId,
+      });
+    }
+
     return apiData(
       await transitionQualityEvent({
         organizationId: parsed.data.organizationId,
@@ -155,6 +164,7 @@ export async function PATCH(
     );
   } catch (error) {
     if (error instanceof QualityEventError) return qualityError(error);
+    if (error instanceof CapaClosureError) return apiError(409, error.code, error.message);
     throw error;
   }
 }
