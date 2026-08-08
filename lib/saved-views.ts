@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { db } from "@/lib/db";
 
 const ENTITY_TYPE = "SavedView";
+export const SAVED_VIEW_LIMIT = 25;
 
 export const SAVED_VIEW_SURFACES = ["WORK_ORDER_KANBAN"] as const;
 export type SavedViewSurface = (typeof SAVED_VIEW_SURFACES)[number];
@@ -24,6 +25,7 @@ export class SavedViewError extends Error {
     public readonly code:
       | "VIEW_NOT_FOUND"
       | "VIEW_NAME_CONFLICT"
+      | "VIEW_LIMIT_REACHED"
       | "INVALID_VIEW_NAME"
       | "INVALID_VIEW_FILTERS",
     message: string,
@@ -198,7 +200,18 @@ export async function createSavedView(input: {
 }) {
   const name = assertName(input.name);
   const filters = normalizeSavedViewFilters(input.surface, input.filters);
-  await assertUniqueName({ ...input, name });
+  const activeViews = await listScopedSnapshots(input);
+  if (activeViews.length >= SAVED_VIEW_LIMIT) {
+    throw new SavedViewError(
+      "VIEW_LIMIT_REACHED",
+      `A user can save at most ${SAVED_VIEW_LIMIT} active views per site`,
+    );
+  }
+  const targetName = nameKey(name);
+  if (activeViews.some((view) => nameKey(view.name) === targetName)) {
+    throw new SavedViewError("VIEW_NAME_CONFLICT", "A saved view with this name already exists");
+  }
+
   const now = new Date().toISOString();
   const snapshot: SavedViewSnapshot = {
     id: randomUUID(),
