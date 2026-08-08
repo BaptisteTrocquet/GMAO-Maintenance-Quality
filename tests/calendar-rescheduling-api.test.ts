@@ -72,6 +72,11 @@ function request() {
 
 const params = { params: Promise.resolve({ workOrderId: "wo-1" }) };
 
+async function expectStatus(response: Response | undefined, status: number) {
+  expect(response).toBeDefined();
+  expect(response?.status).toBe(status);
+}
+
 describe("calendar rescheduling API contract", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -87,7 +92,7 @@ describe("calendar rescheduling API contract", () => {
   it("uses work:manage and writes the existing TRIAGED audit event", async () => {
     const response = await PATCH(request(), params);
 
-    expect(response.status).toBe(200);
+    await expectStatus(response, 200);
     expect(mocks.workOrderUpdate).toHaveBeenCalledWith({
       where: { id: "wo-1" },
       data: expect.objectContaining({
@@ -110,7 +115,7 @@ describe("calendar rescheduling API contract", () => {
 
     const response = await PATCH(request(), params);
 
-    expect(response.status).toBe(403);
+    await expectStatus(response, 403);
     expect(mocks.workOrderUpdate).not.toHaveBeenCalled();
     expect(mocks.auditCreate).not.toHaveBeenCalled();
   });
