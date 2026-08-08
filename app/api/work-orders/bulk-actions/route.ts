@@ -32,14 +32,14 @@ const bulkSchema = z.object({
   operation: operationSchema,
 });
 
-function accessError(error: unknown) {
+function accessError(error: unknown): Response {
   if (error instanceof AccessDeniedError) {
     return apiError(403, "ACCESS_DENIED", error.message);
   }
   throw error;
 }
 
-function bulkError(error: BulkWorkOrderError) {
+function bulkError(error: BulkWorkOrderError): Response {
   switch (error.code) {
     case "EMPTY_SELECTION":
     case "BATCH_TOO_LARGE":
@@ -51,12 +51,15 @@ function bulkError(error: BulkWorkOrderError) {
     case "TEAM_NOT_FOUND":
       return apiError(404, error.code, error.message);
   }
+  return apiError(500, "BULK_ACTION_FAILED", "Bulk action failed");
 }
 
 async function authorize(request: Request, organizationId: string, siteId: string) {
   const auth = await authenticateRequest(request, organizationId);
   if ("error" in auth) {
-    return { error: auth.error ?? apiError(401, "UNAUTHENTICATED", "Authentication required") } as const;
+    return {
+      error: auth.error ?? apiError(401, "UNAUTHENTICATED", "Authentication required"),
+    } as const;
   }
   try {
     assertSitePermission(auth.tenant.scope, siteId, "work:manage");
@@ -68,7 +71,9 @@ async function authorize(request: Request, organizationId: string, siteId: strin
     where: { id: siteId, organizationId, active: true },
     select: { id: true },
   });
-  if (!site) return { error: apiError(404, "SITE_NOT_FOUND", "Active site not found") } as const;
+  if (!site) {
+    return { error: apiError(404, "SITE_NOT_FOUND", "Active site not found") } as const;
+  }
   return { auth } as const;
 }
 
@@ -96,7 +101,12 @@ export async function POST(request: Request): Promise<Response> {
 
   const parsed = bulkSchema.safeParse(body);
   if (!parsed.success) {
-    return apiError(400, "INVALID_PAYLOAD", "Invalid bulk action payload", parsed.error.flatten());
+    return apiError(
+      400,
+      "INVALID_PAYLOAD",
+      "Invalid bulk action payload",
+      parsed.error.flatten(),
+    );
   }
 
   const authorization = await authorize(
