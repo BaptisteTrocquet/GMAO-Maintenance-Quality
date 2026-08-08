@@ -7,6 +7,12 @@ const ROOT_CAUSE_ENTITY = "QualityRootCause";
 const CAPA_ENTITY = "QualityCapa";
 const APPROVAL_ENTITY = "QualityCapaApproval";
 const MAX_TRANSACTION_ATTEMPTS = 4;
+const DRAFT_EDIT_ACTIONS = new Set(["CREATED", "PLAN_UPDATED"]);
+const DRAFT_CYCLE_BOUNDARIES = new Set([
+  "APPROVED",
+  "EFFECTIVENESS_FAILED",
+  "REOPENED",
+]);
 
 type EventState = {
   organizationId: string;
@@ -150,21 +156,34 @@ export async function approveCapaGoverned(input: {
             );
           }
 
-          const draftEdits = await tx.auditLog.findMany({
+          const draftTimeline = await tx.auditLog.findMany({
             where: {
               entityType: CAPA_ENTITY,
               entityId: input.eventId,
-              action: { in: ["CREATED", "PLAN_UPDATED"] },
+              action: {
+                in: [
+                  ...DRAFT_EDIT_ACTIONS,
+                  ...DRAFT_CYCLE_BOUNDARIES,
+                ],
+              },
             },
-            select: { actorId: true },
+            orderBy: { createdAt: "asc" },
+            select: { action: true, actorId: true },
           });
-          const draftAuthors = new Set(
-            draftEdits.flatMap((edit) => (edit.actorId ? [edit.actorId] : [])),
-          );
-          if (draftAuthors.has(input.approverId)) {
+          const currentDraftAuthors = new Set<string>();
+          for (const entry of draftTimeline) {
+            if (DRAFT_CYCLE_BOUNDARIES.has(entry.action)) {
+              currentDraftAuthors.clear();
+              continue;
+            }
+            if (DRAFT_EDIT_ACTIONS.has(entry.action) && entry.actorId) {
+              currentDraftAuthors.add(entry.actorId);
+            }
+          }
+          if (currentDraftAuthors.has(input.approverId)) {
             throw new CapaApprovalError(
               "CAPA_SELF_APPROVAL_NOT_ALLOWED",
-              "A user who authored or edited the CAPA draft cannot approve that CAPA",
+              "A user who authored or edited the current CAPA draft cannot approve that CAPA",
             );
           }
 
