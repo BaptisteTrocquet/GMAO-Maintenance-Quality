@@ -588,7 +588,7 @@ export async function listPurchaseRequests(input: {
   siteId: string;
   status?: PurchaseRequestStatus;
 }) {
-  const marker = `\"organizationId\":\"${input.organizationId}\",\"siteId\":\"${input.siteId}\"`;
+  const marker = `"organizationId":"${input.organizationId}","siteId":"${input.siteId}"`;
   const logs = await db.auditLog.findMany({
     where: { entityType: ENTITY_TYPE, afterJson: { contains: marker } },
     select: { entityId: true, afterJson: true },
