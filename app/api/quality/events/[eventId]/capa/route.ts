@@ -237,6 +237,18 @@ export async function PATCH(
   const denied = authorize(auth.tenant.scope, parsed.data.siteId, "quality:manage");
   if (denied) return denied;
 
+  if (
+    parsed.data.action === "SET_ACTION_STATUS" &&
+    parsed.data.status === "COMPLETED" &&
+    !parsed.data.completionNote?.trim()
+  ) {
+    return apiError(
+      409,
+      "CAPA_ACTION_EVIDENCE_REQUIRED",
+      "Completion evidence is required before a CAPA action can be marked completed",
+    );
+  }
+
   const common = {
     organizationId: parsed.data.organizationId,
     siteId: parsed.data.siteId,
