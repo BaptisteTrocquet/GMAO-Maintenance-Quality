@@ -48,11 +48,11 @@ function expectStatus(response: Response | undefined, status: number) {
 const context = { params: Promise.resolve({ eventId: "event-1" }) };
 const fileBytes = new Uint8Array([1, 2, 3, 4]);
 
-function postRequest() {
+function postRequest(phase: "CAPA" | "EIGHT_D" = "CAPA") {
   const formData = new FormData();
   formData.set("organizationId", "org-a");
   formData.set("siteId", "site-a");
-  formData.set("phase", "CAPA");
+  formData.set("phase", phase);
   formData.set("kind", "DOCUMENT");
   formData.set("description", "Synthetic implementation evidence");
   formData.set(
@@ -72,6 +72,8 @@ describe("quality evidence API", () => {
     mocks.addQualityEvidence.mockResolvedValue({
       id: "evidence-1",
       eventId: "event-1",
+      organizationId: "org-a",
+      siteId: "site-a",
       phase: "CAPA",
       kind: "DOCUMENT",
       fileName: "synthetic-evidence.pdf",
@@ -135,6 +137,33 @@ describe("quality evidence API", () => {
     );
     const payload = mocks.addQualityEvidence.mock.calls[0]?.[0];
     expect(Array.from(payload.data as Uint8Array)).toEqual(Array.from(fileBytes));
+  });
+
+  it("accepts multipart evidence assigned to the 8D phase", async () => {
+    mocks.authenticateRequest.mockResolvedValue(auth("QUALITY_MANAGER"));
+    mocks.addQualityEvidence.mockResolvedValue({
+      id: "evidence-8d",
+      eventId: "event-1",
+      organizationId: "org-a",
+      siteId: "site-a",
+      phase: "EIGHT_D",
+      kind: "DOCUMENT",
+      fileName: "synthetic-evidence.pdf",
+      storageKey: "quality-evidence/org-a/event-1/evidence-8d/checksum",
+      mimeType: "application/pdf",
+      sizeBytes: fileBytes.byteLength,
+      checksum: "synthetic-checksum",
+      description: "Synthetic implementation evidence",
+      createdById: "quality-1",
+      createdAt: "2026-08-08T00:00:00.000Z",
+    });
+
+    const response = await POST(postRequest("EIGHT_D"), context);
+
+    expectStatus(response, 201);
+    expect(mocks.addQualityEvidence).toHaveBeenCalledWith(
+      expect.objectContaining({ phase: "EIGHT_D", eventId: "event-1" }),
+    );
   });
 
   it("returns an opaque 404 when the event is outside tenant/site scope", async () => {
