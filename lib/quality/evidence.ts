@@ -31,6 +31,8 @@ export type QualityEvidenceSnapshot = {
   description: string | null;
   createdById: string;
   createdAt: string;
+  removedAt: string | null;
+  removedById: string | null;
 };
 
 export class QualityEvidenceError extends Error {
@@ -77,7 +79,9 @@ function parseEvidence(value: string | null): QualityEvidenceSnapshot | null {
       typeof parsed.checksum !== "string" ||
       !(parsed.description === null || typeof parsed.description === "string") ||
       typeof parsed.createdById !== "string" ||
-      typeof parsed.createdAt !== "string"
+      typeof parsed.createdAt !== "string" ||
+      !(parsed.removedAt === null || typeof parsed.removedAt === "string") ||
+      !(parsed.removedById === null || typeof parsed.removedById === "string")
     ) {
       return null;
     }
@@ -116,7 +120,7 @@ async function requireQualityEvent(input: {
   if (input.writable && qualityEvent.status === "CLOSED") {
     throw new QualityEvidenceError(
       "EVENT_CLOSED",
-      "Evidence cannot be added after the quality event is closed",
+      "Evidence cannot be changed after the quality event is closed",
     );
   }
   return qualityEvent;
@@ -137,8 +141,11 @@ export async function addQualityEvidence(input: {
 }) {
   const fileName = input.fileName.trim();
   const description = input.description?.trim() || null;
-  if (!fileName) {
-    throw new QualityEvidenceError("INVALID_EVIDENCE_DATA", "Evidence requires a file name");
+  if (!fileName || fileName.length > 255) {
+    throw new QualityEvidenceError(
+      "INVALID_EVIDENCE_DATA",
+      "Evidence requires a file name up to 255 characters",
+    );
   }
   if (input.data.byteLength === 0) {
     throw new QualityEvidenceError("FILE_REQUIRED", "Quality evidence file cannot be empty");
@@ -178,6 +185,8 @@ export async function addQualityEvidence(input: {
     description,
     createdById: input.actorId,
     createdAt: new Date().toISOString(),
+    removedAt: null,
+    removedById: null,
   };
 
   try {
@@ -220,6 +229,7 @@ export async function listQualityEvidence(input: {
   siteId: string;
   eventId: string;
   phase?: QualityEvidencePhase;
+  includeRemoved?: boolean;
 }) {
   try {
     await requireQualityEvent(input);
@@ -235,41 +245,55 @@ export async function listQualityEvidence(input: {
       afterJson: { contains: marker },
     },
     include: { actor: { select: { displayName: true } } },
-    orderBy: { createdAt: "desc" },
+    orderBy: { createdAt: "asc" },
   });
 
-  return records.flatMap((record) => {
+  const latest = new Map<string, { evidence: QualityEvidenceSnapshot; actorName: string }>();
+  for (const record of records) {
     const evidence = parseEvidence(record.afterJson);
-    if (!evidence) return [];
+    if (!evidence) continue;
     if (
       evidence.eventId !== input.eventId ||
       evidence.organizationId !== input.organizationId ||
       evidence.siteId !== input.siteId ||
       (input.phase && evidence.phase !== input.phase)
     ) {
-      return [];
+      continue;
     }
-    return [{ ...evidence, actorName: record.actor?.displayName ?? "System" }];
-  });
+    latest.set(evidence.id, {
+      evidence,
+      actorName: record.actor?.displayName ?? "System",
+    });
+  }
+
+  return [...latest.values()]
+    .filter(({ evidence }) => input.includeRemoved || evidence.removedAt === null)
+    .sort((left, right) => right.evidence.createdAt.localeCompare(left.evidence.createdAt))
+    .map(({ evidence, actorName }) => ({ ...evidence, actorName }));
 }
 
-async function getQualityEvidence(input: {
+export async function getQualityEvidence(input: {
   organizationId: string;
   siteId: string;
   eventId: string;
   evidenceId: string;
+  includeRemoved?: boolean;
 }) {
   await requireQualityEvent(input);
-  const record = await db.auditLog.findFirst({
+  const records = await db.auditLog.findMany({
     where: { entityType: EVIDENCE_ENTITY, entityId: input.evidenceId },
+    orderBy: { createdAt: "asc" },
     select: { afterJson: true },
   });
-  const evidence = parseEvidence(record?.afterJson ?? null);
+  const evidence = records.reduce<QualityEvidenceSnapshot | null>((latest, record) => {
+    return parseEvidence(record.afterJson) ?? latest;
+  }, null);
   if (
     !evidence ||
     evidence.organizationId !== input.organizationId ||
     evidence.siteId !== input.siteId ||
-    evidence.eventId !== input.eventId
+    evidence.eventId !== input.eventId ||
+    (!input.includeRemoved && evidence.removedAt !== null)
   ) {
     throw new QualityEvidenceError(
       "EVIDENCE_NOT_FOUND",
@@ -296,4 +320,68 @@ export async function readQualityEvidence(input: {
     );
   }
   return { ...evidence, data };
+}
+
+export async function removeQualityEvidence(input: {
+  organizationId: string;
+  siteId: string;
+  eventId: string;
+  evidenceId: string;
+  actorId: string;
+  adapter?: StorageAdapter;
+}) {
+  await requireQualityEvent({ ...input, writable: true });
+  const current = await getQualityEvidence({ ...input, includeRemoved: false });
+  const removed: QualityEvidenceSnapshot = {
+    ...current,
+    removedAt: new Date().toISOString(),
+    removedById: input.actorId,
+  };
+
+  await db.$transaction(async (tx) => {
+    await tx.auditLog.create({
+      data: {
+        actorId: input.actorId,
+        entityType: EVIDENCE_ENTITY,
+        entityId: input.evidenceId,
+        action: "EVIDENCE_REMOVED",
+        beforeJson: JSON.stringify(current),
+        afterJson: JSON.stringify(removed),
+      },
+    });
+    await tx.auditLog.create({
+      data: {
+        actorId: input.actorId,
+        entityType: "QualityEvent",
+        entityId: input.eventId,
+        action: "EVIDENCE_REMOVED",
+        afterJson: JSON.stringify({
+          evidenceId: current.id,
+          phase: current.phase,
+          kind: current.kind,
+          fileName: current.fileName,
+        }),
+      },
+    });
+  });
+
+  const adapter = input.adapter ?? storage;
+  let storageDeleted = true;
+  try {
+    await adapter.delete(current.storageKey);
+  } catch {
+    storageDeleted = false;
+    await db.auditLog.create({
+      data: {
+        actorId: input.actorId,
+        entityType: EVIDENCE_ENTITY,
+        entityId: input.evidenceId,
+        action: "EVIDENCE_STORAGE_DELETE_FAILED",
+        beforeJson: JSON.stringify(removed),
+        afterJson: JSON.stringify(removed),
+      },
+    });
+  }
+
+  return { evidence: removed, storageDeleted };
 }
