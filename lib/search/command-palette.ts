@@ -17,17 +17,17 @@ export const COMMAND_PALETTE_QUICK_ACTIONS: CommandPaletteItem[] = [
     badge: "ACTION",
   },
   {
-    key: "action:kanban",
-    label: "Work-order Kanban",
-    description: "Open the operational work-order board",
-    href: "/maintenance/kanban",
-    badge: "ACTION",
-  },
-  {
     key: "action:notifications",
     label: "Notification center",
     description: "Review prioritized operational alerts in the selected site",
     href: "/notifications",
+    badge: "ACTION",
+  },
+  {
+    key: "action:kanban",
+    label: "Work-order Kanban",
+    description: "Open the operational work-order board",
+    href: "/maintenance/kanban",
     badge: "ACTION",
   },
   {
