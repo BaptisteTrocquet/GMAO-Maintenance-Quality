@@ -262,6 +262,26 @@ export default async function QualityEventDetailPage({
       ) : null}
 
       <section className="card section">
+        <h2>Quality workflows</h2>
+        <div className="grid grid-2">
+          <div className="card">
+            <strong>CAPA</strong>
+            <p className="muted">Plan, approve and execute corrective/preventive actions, then verify effectiveness.</p>
+            <Link className="table-link" href={`/quality/${eventId}/capa`}>
+              Open CAPA workspace →
+            </Link>
+          </div>
+          <div className="card">
+            <strong>8D</strong>
+            <p className="muted">Orchestrate D1–D8 with gates tied to containment, RCA and approved/effective CAPA.</p>
+            <Link className="table-link" href={`/quality/${eventId}/eight-d`}>
+              Open 8D workspace →
+            </Link>
+          </div>
+        </div>
+      </section>
+
+      <section className="card section">
         <h2>Quality event timeline</h2>
         {qualityTimeline.length ? (
           <ol className="timeline">
