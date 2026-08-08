@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { offlineReadPartitionFromAuthorization } from "@/lib/pwa/offline-read-cache";
 
 const mocks = vi.hoisted(() => {
   class AccessDeniedError extends Error {}
@@ -34,6 +35,9 @@ vi.mock("@/lib/db", () => ({
 import { GET as GET_QUEUE } from "@/app/api/work-orders/technician/route";
 import { GET as GET_DETAIL } from "@/app/api/work-orders/technician/[workOrderId]/route";
 
+const authorization = "Bearer technician-cache-test-session";
+const expectedPartition = offlineReadPartitionFromAuthorization(authorization);
+
 function auth() {
   return {
     session: { user: { id: "tech-1" } },
@@ -54,12 +58,14 @@ const detailParams = { params: Promise.resolve({ workOrderId: "wo-1" }) };
 function queueRequest() {
   return new Request(
     "http://localhost/api/work-orders/technician?organizationId=org-a&siteId=site-a",
+    { headers: { authorization } },
   );
 }
 
 function detailRequest() {
   return new Request(
     "http://localhost/api/work-orders/technician/wo-1?organizationId=org-a&siteId=site-a",
+    { headers: { authorization } },
   );
 }
 
@@ -103,6 +109,8 @@ describe("technician work-order mode API", () => {
     const response = await GET_QUEUE(queueRequest());
 
     expect(await responseStatus(response)).toBe(200);
+    expect(response?.headers.get("x-opengmao-offline-partition")).toBe(expectedPartition);
+    expect(response?.headers.get("cache-control")).toBe("private, no-store");
     expect(mocks.assertSitePermission).toHaveBeenCalledWith(expect.anything(), "site-a", "work:read");
     expect(mocks.teamMemberFindMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ userId: "tech-1", team: { siteId: "site-a", active: true } }),
@@ -125,6 +133,7 @@ describe("technician work-order mode API", () => {
     const response = await GET_QUEUE(queueRequest());
 
     expect(await responseStatus(response)).toBe(403);
+    expect(response?.headers.get("x-opengmao-offline-partition")).toBeNull();
     expect(mocks.workOrderFindMany).not.toHaveBeenCalled();
   });
 
@@ -132,6 +141,8 @@ describe("technician work-order mode API", () => {
     const response = await GET_DETAIL(detailRequest(), detailParams);
 
     expect(await responseStatus(response)).toBe(200);
+    expect(response?.headers.get("x-opengmao-offline-partition")).toBe(expectedPartition);
+    expect(response?.headers.get("cache-control")).toBe("private, no-store");
     expect(mocks.workOrderFindFirst).toHaveBeenCalledWith(expect.objectContaining({
       where: {
         id: "wo-1",
@@ -154,6 +165,7 @@ describe("technician work-order mode API", () => {
     const response = await GET_DETAIL(detailRequest(), detailParams);
 
     expect(await responseStatus(response)).toBe(403);
+    expect(response?.headers.get("x-opengmao-offline-partition")).toBeNull();
   });
 
   it("returns 404 before assignment checks for work outside the selected tenant scope", async () => {
@@ -162,6 +174,7 @@ describe("technician work-order mode API", () => {
     const response = await GET_DETAIL(detailRequest(), detailParams);
 
     expect(await responseStatus(response)).toBe(404);
+    expect(response?.headers.get("x-opengmao-offline-partition")).toBeNull();
     expect(mocks.canExecuteWorkOrder).not.toHaveBeenCalled();
   });
 });
