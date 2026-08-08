@@ -51,6 +51,27 @@ const SENSITIVE_KEYS = new Set([
   "sessionid",
 ]);
 
+// Configuration and payload fields commonly prefix/suffix secret concepts, for example
+// STORAGE_S3_SECRET_ACCESS_KEY or CONNECTOR_CREDENTIAL_MASTER_KEY_BASE64. Matching only
+// exact normalized names would allow those real production keys to bypass redaction.
+const SENSITIVE_KEY_MARKERS = [
+  "authorization",
+  "cookie",
+  "password",
+  "passwd",
+  "secret",
+  "token",
+  "apikey",
+  "accesskey",
+  "privatekey",
+  "masterkey",
+  "credential",
+  "databaseurl",
+  "connectionstring",
+  "dsn",
+  "session",
+] as const;
+
 function runtimeEnvironment() {
   return typeof process !== "undefined" && process.env.NODE_ENV
     ? process.env.NODE_ENV
@@ -80,11 +101,7 @@ function isSensitiveKey(key: string) {
   const normalized = normalizeKey(key);
   return (
     SENSITIVE_KEYS.has(normalized) ||
-    normalized.endsWith("password") ||
-    normalized.endsWith("secret") ||
-    normalized.endsWith("token") ||
-    normalized.endsWith("apikey") ||
-    normalized.endsWith("privatekey")
+    SENSITIVE_KEY_MARKERS.some((marker) => normalized.includes(marker))
   );
 }
 
