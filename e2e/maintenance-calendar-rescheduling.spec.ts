@@ -94,7 +94,11 @@ test("dragging an unscheduled work order onto a calendar day sends the same scop
   await expect(card).toBeVisible();
   await expect(target).toBeVisible();
 
-  await card.dragTo(target);
+  const dataTransfer = await page.evaluateHandle(() => new DataTransfer());
+  await card.dispatchEvent("dragstart", { dataTransfer });
+  await target.dispatchEvent("dragover", { dataTransfer });
+  await target.dispatchEvent("drop", { dataTransfer });
+  await card.dispatchEvent("dragend", { dataTransfer });
 
   await expect.poll(() => payload).not.toBeNull();
   expect(payload).toMatchObject({
