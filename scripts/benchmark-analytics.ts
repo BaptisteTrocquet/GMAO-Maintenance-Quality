@@ -42,6 +42,9 @@ function chunks<T>(items: T[]) {
 }
 
 async function resetFixture() {
+  await db.workOrderPartConsumption.deleteMany({
+    where: { partId: { startsWith: "benchmark-e9-part-" } },
+  });
   await db.auditLog.deleteMany({
     where: {
       entityType: "WorkOrder",
