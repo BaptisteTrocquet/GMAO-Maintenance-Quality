@@ -68,12 +68,21 @@ describe("deployment example policy", () => {
     expect(() => assertDeploymentExamples(examples)).toThrow(/migrate deploy/i);
   });
 
-  it("rejects a migration image that loses its non-root runtime contract", async () => {
+  it("rejects migration images that stop pruning development dependencies", async () => {
     const examples = await loadExamples();
     examples.dockerfile = examples.dockerfile.replace(
-      "FROM builder AS migration",
-      "FROM builder AS migration-broken",
+      "npm prune --omit=dev --no-audit --no-fund",
+      "npm --version",
     );
-    expect(() => assertDeploymentExamples(examples)).toThrow(/migration target/i);
+    expect(() => assertDeploymentExamples(examples)).toThrow(/prune/i);
+  });
+
+  it("rejects migration runtimes that inherit application builder output", async () => {
+    const examples = await loadExamples();
+    examples.dockerfile = examples.dockerfile.replace(
+      "COPY --from=migration-deps --chown=nextjs:nodejs /app/node_modules ./node_modules",
+      "COPY --from=builder --chown=nextjs:nodejs /app/node_modules ./node_modules",
+    );
+    expect(() => assertDeploymentExamples(examples)).toThrow(/migration-deps|builder/i);
   });
 });
