@@ -4,8 +4,8 @@ import { notFound } from "next/navigation";
 import { db } from "@/lib/db";
 import {
   buildWorkOrderBoard,
-  isWorkOrderOverdue,
-  matchesDueFilter,
+  buildWorkOrderBoardWhere,
+  WORK_ORDER_BOARD_LIMIT,
   type WorkOrderDueFilter,
 } from "@/lib/maintenance/board";
 import WorkOrderCard from "./work-order-card";
@@ -56,21 +56,45 @@ export default async function WorkOrderKanbanPage({
   });
   if (!site) notFound();
 
-  const workOrders = await db.workOrder.findMany({
-    where: {
-      siteId,
-      site: { organizationId, active: true },
-    },
-    include: {
-      asset: { select: { code: true } },
-      assignee: { select: { displayName: true } },
-      team: { select: { name: true } },
-    },
-    orderBy: { requestedAt: "desc" },
-  });
-
   const now = new Date();
-  const items = workOrders.map((workOrder) => ({
+  const [workOrders, overdueCount, dueSoonCount, noDueCount] = await Promise.all([
+    db.workOrder.findMany({
+      where: buildWorkOrderBoardWhere({
+        organizationId,
+        siteId,
+        dueFilter: selectedFilter,
+        now,
+      }),
+      select: {
+        id: true,
+        number: true,
+        title: true,
+        status: true,
+        priority: true,
+        dueAt: true,
+        plannedStart: true,
+        requestedAt: true,
+        asset: { select: { code: true } },
+        assignee: { select: { displayName: true } },
+        team: { select: { name: true } },
+      },
+      orderBy: { requestedAt: "asc" },
+      take: WORK_ORDER_BOARD_LIMIT + 1,
+    }),
+    db.workOrder.count({
+      where: buildWorkOrderBoardWhere({ organizationId, siteId, dueFilter: "OVERDUE", now }),
+    }),
+    db.workOrder.count({
+      where: buildWorkOrderBoardWhere({ organizationId, siteId, dueFilter: "DUE_7_DAYS", now }),
+    }),
+    db.workOrder.count({
+      where: buildWorkOrderBoardWhere({ organizationId, siteId, dueFilter: "NO_DUE_DATE", now }),
+    }),
+  ]);
+
+  const truncated = workOrders.length > WORK_ORDER_BOARD_LIMIT;
+  const boundedWorkOrders = workOrders.slice(0, WORK_ORDER_BOARD_LIMIT);
+  const items = boundedWorkOrders.map((workOrder) => ({
     id: workOrder.id,
     number: workOrder.number,
     title: workOrder.title,
@@ -84,10 +108,7 @@ export default async function WorkOrderKanbanPage({
     teamName: workOrder.team?.name ?? null,
   }));
   const board = buildWorkOrderBoard({ workOrders: items, dueFilter: selectedFilter, now });
-  const activeItems = items.filter((item) => item.status !== "CANCELLED");
-  const overdueCount = activeItems.filter((item) => isWorkOrderOverdue(item, now)).length;
-  const dueSoonCount = activeItems.filter((item) => matchesDueFilter(item, "DUE_7_DAYS", now)).length;
-  const noDueCount = activeItems.filter((item) => item.dueAt === null).length;
+  const visibleCount = board.reduce((sum, column) => sum + column.items.length, 0);
 
   return (
     <>
@@ -96,6 +117,11 @@ export default async function WorkOrderKanbanPage({
           <Link className="muted" href="/maintenance">← Maintenance</Link>
           <div className="title">Work-order Kanban</div>
           <div className="muted">{site.code} · {site.name} · workflow-safe status planning</div>
+        </div>
+        <div className="asset-status">
+          <span className="badge">{visibleCount} visible</span>
+          <span className="badge">{overdueCount} overdue</span>
+          {truncated ? <span className="badge">First {WORK_ORDER_BOARD_LIMIT} shown</span> : null}
         </div>
       </div>
 
@@ -106,7 +132,7 @@ export default async function WorkOrderKanbanPage({
             return (
               <Link
                 key={filter.value}
-                href={`/maintenance/kanban?due=${filter.value}`}
+                href={filter.value === "ALL" ? "/maintenance/kanban" : `/maintenance/kanban?due=${filter.value}`}
                 aria-current={selected ? "page" : undefined}
                 className="badge"
                 style={{
@@ -121,59 +147,68 @@ export default async function WorkOrderKanbanPage({
           })}
         </div>
         <div className="muted" style={{ marginTop: 10 }}>
-          {activeItems.length} active · {overdueCount} overdue · {dueSoonCount} due within 7 days · {noDueCount} without due date
+          {overdueCount} overdue · {dueSoonCount} due within 7 days · {noDueCount} without due date
         </div>
+        {truncated ? (
+          <p className="muted" role="status" style={{ marginBottom: 0, marginTop: 10 }}>
+            This board is bounded to {WORK_ORDER_BOARD_LIMIT} matching work orders for predictable rendering. Narrow the due filter to focus the list.
+          </p>
+        ) : null}
       </section>
 
-      <div
-        className="section"
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
-          gap: 14,
-          alignItems: "start",
-        }}
-      >
-        {board.map((column) => {
-          const headingId = `kanban-${column.status.toLowerCase()}`;
-          return (
-            <section
-              key={column.status}
-              aria-labelledby={headingId}
-              style={{ minWidth: 0, display: "grid", gap: 10 }}
-            >
-              <div className="card" style={{ padding: 12 }}>
-                <h2 id={headingId} style={{ margin: 0, fontSize: 16, textTransform: "capitalize" }}>
-                  {statusLabel(column.status)} · {column.items.length}
-                </h2>
-              </div>
-              {column.items.map((workOrder) => (
-                <WorkOrderCard
-                  key={workOrder.id}
-                  organizationId={organizationId}
-                  siteId={siteId}
-                  workOrder={{
-                    id: workOrder.id,
-                    number: workOrder.number,
-                    title: workOrder.title,
-                    status: workOrder.status,
-                    priority: workOrder.priority,
-                    dueAt: workOrder.dueAt?.toISOString() ?? null,
-                    plannedStart: workOrder.plannedStart?.toISOString() ?? null,
-                    assetCode: workOrder.assetCode,
-                    assigneeName: workOrder.assigneeName,
-                    teamName: workOrder.teamName,
-                    overdue: isWorkOrderOverdue(workOrder, now),
-                  }}
-                />
-              ))}
-              {column.items.length === 0 ? (
-                <div className="card muted" style={{ padding: 14 }}>No work orders in this column.</div>
-              ) : null}
-            </section>
-          );
-        })}
-      </div>
+      <section className="section" aria-label="Work-order Kanban board">
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+            gap: 14,
+            alignItems: "start",
+          }}
+        >
+          {board.map((column) => {
+            const headingId = `kanban-${column.status.toLowerCase()}`;
+            return (
+              <section
+                key={column.status}
+                aria-labelledby={headingId}
+                style={{ minWidth: 0, display: "grid", gap: 10 }}
+              >
+                <div className="card" style={{ padding: 12 }}>
+                  <h2 id={headingId} style={{ margin: 0, fontSize: 16, textTransform: "capitalize" }}>
+                    {statusLabel(column.status)} · {column.items.length}
+                  </h2>
+                </div>
+                {column.items.map((workOrder) => (
+                  <WorkOrderCard
+                    key={workOrder.id}
+                    organizationId={organizationId}
+                    siteId={siteId}
+                    workOrder={{
+                      id: workOrder.id,
+                      number: workOrder.number,
+                      title: workOrder.title,
+                      status: workOrder.status,
+                      priority: workOrder.priority,
+                      dueAt: workOrder.dueAt?.toISOString() ?? null,
+                      plannedStart: workOrder.plannedStart?.toISOString() ?? null,
+                      assetCode: workOrder.assetCode,
+                      assigneeName: workOrder.assigneeName,
+                      teamName: workOrder.teamName,
+                      overdue:
+                        workOrder.dueAt !== null &&
+                        workOrder.dueAt.getTime() < now.getTime() &&
+                        workOrder.status !== "COMPLETED",
+                    }}
+                  />
+                ))}
+                {column.items.length === 0 ? (
+                  <div className="card muted" style={{ padding: 14 }}>No work orders in this column.</div>
+                ) : null}
+              </section>
+            );
+          })}
+        </div>
+      </section>
     </>
   );
 }
