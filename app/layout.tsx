@@ -29,6 +29,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
               <Link href="/maintenance/workload">Workload</Link>
               <Link href="/documents">Documents</Link>
               <Link href="/inventory">Inventory</Link>
+              <Link href="/notifications">Notifications</Link>
               <Link href="/quality">Quality</Link>
             </nav>
             <CommandPalette organizationId={organizationId} siteId={siteId} />
