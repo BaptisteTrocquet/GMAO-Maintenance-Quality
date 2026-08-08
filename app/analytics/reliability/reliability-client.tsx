@@ -110,10 +110,10 @@ export default function ReliabilityClient({
               <p className="muted">{data.definitions.mttr}</p>
             </section>
             <section className="card">
-              <div className="muted">MTBF proxy</div>
+              <div className="muted">MTBF · calendar uptime</div>
               <div className="title">{formatHours(data.mtbf.hours)}</div>
               <p>
-                {data.mtbf.sampleCount} corrective-event interval{data.mtbf.sampleCount === 1 ? "" : "s"}
+                {data.mtbf.sampleCount} repair-to-failure interval{data.mtbf.sampleCount === 1 ? "" : "s"}
                 {data.mtbf.assetCount ? ` across ${data.mtbf.assetCount} asset${data.mtbf.assetCount === 1 ? "" : "s"}` : ""}
               </p>
               <p className="muted">{data.definitions.mtbf}</p>
