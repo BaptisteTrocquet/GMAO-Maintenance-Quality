@@ -15,6 +15,7 @@ export class BulkWorkOrderError extends Error {
       | "EMPTY_SELECTION"
       | "BATCH_TOO_LARGE"
       | "WORK_ORDER_SCOPE_MISMATCH"
+      | "WORK_ORDER_NOT_EDITABLE"
       | "ASSIGNEE_NOT_FOUND"
       | "TEAM_NOT_FOUND",
     message: string,
@@ -36,6 +37,20 @@ function operationData(operation: BulkWorkOrderOperation): Prisma.WorkOrderUnche
       return { assigneeId: operation.assigneeId };
     case "SET_TEAM":
       return { teamId: operation.teamId };
+  }
+}
+
+function alreadyApplied(
+  workOrder: { priority: Priority; assigneeId: string | null; teamId: string | null },
+  operation: BulkWorkOrderOperation,
+) {
+  switch (operation.type) {
+    case "SET_PRIORITY":
+      return workOrder.priority === operation.priority;
+    case "SET_ASSIGNEE":
+      return workOrder.assigneeId === operation.assigneeId;
+    case "SET_TEAM":
+      return workOrder.teamId === operation.teamId;
   }
 }
 
@@ -69,7 +84,12 @@ async function validateAssignment(
 
   if (input.operation.type === "SET_TEAM" && input.operation.teamId) {
     const team = await tx.maintenanceTeam.findFirst({
-      where: { id: input.operation.teamId, siteId: input.siteId, active: true },
+      where: {
+        id: input.operation.teamId,
+        siteId: input.siteId,
+        active: true,
+        site: { organizationId: input.organizationId, active: true },
+      },
       select: { id: true },
     });
     if (!team) {
@@ -114,12 +134,20 @@ export async function bulkTriageWorkOrders(input: {
         "Every selected work order must exist in the requested organization and site",
       );
     }
+    if (workOrders.some((workOrder) => workOrder.status === "COMPLETED" || workOrder.status === "CANCELLED")) {
+      throw new BulkWorkOrderError(
+        "WORK_ORDER_NOT_EDITABLE",
+        "Completed or cancelled work orders cannot be changed by bulk actions",
+      );
+    }
 
     await validateAssignment(tx, input);
     const data = operationData(input.operation);
-    const updated = [];
+    const changed = [];
 
     for (const workOrder of workOrders) {
+      if (alreadyApplied(workOrder, input.operation)) continue;
+
       const next = await tx.workOrder.update({
         where: { id: workOrder.id },
         data,
@@ -135,17 +163,18 @@ export async function bulkTriageWorkOrders(input: {
             workOrder: next,
             bulk: {
               operation: input.operation,
-              batchSize: workOrders.length,
+              selectedCount: workOrders.length,
             },
           }),
         },
       });
-      updated.push(next);
+      changed.push(next);
     }
 
     return {
-      count: updated.length,
-      workOrders: updated,
+      selectedCount: workOrders.length,
+      updatedCount: changed.length,
+      workOrders: changed,
     };
   });
 }
@@ -173,10 +202,14 @@ export async function listBulkActionOptions(input: {
         asset: { select: { code: true } },
       },
       orderBy: [{ dueAt: "asc" }, { number: "asc" }],
-      take: BULK_WORK_ORDER_CANDIDATE_LIMIT,
+      take: BULK_WORK_ORDER_CANDIDATE_LIMIT + 1,
     }),
     db.maintenanceTeam.findMany({
-      where: { siteId: input.siteId, active: true },
+      where: {
+        siteId: input.siteId,
+        active: true,
+        site: { organizationId: input.organizationId, active: true },
+      },
       select: { id: true, code: true, name: true },
       orderBy: { code: "asc" },
     }),
@@ -196,14 +229,15 @@ export async function listBulkActionOptions(input: {
     }),
   ]);
 
+  const truncated = workOrders.length > BULK_WORK_ORDER_CANDIDATE_LIMIT;
   return {
-    workOrders,
+    workOrders: workOrders.slice(0, BULK_WORK_ORDER_CANDIDATE_LIMIT),
     teams,
     assignees: memberships.map((membership: { user: { id: string; displayName: string }; role: MembershipRole }) => ({
       id: membership.user.id,
       displayName: membership.user.displayName,
       role: membership.role,
     })),
-    truncated: workOrders.length >= BULK_WORK_ORDER_CANDIDATE_LIMIT,
+    truncated,
   };
 }
