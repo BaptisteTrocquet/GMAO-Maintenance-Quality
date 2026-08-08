@@ -1,12 +1,18 @@
 import "./globals.css";
 import Link from "next/link";
+import { headers } from "next/headers";
+import CommandPalette from "./command-palette";
 
 export const metadata = {
   title: "OpenGMAO",
   description: "Open-source maintenance and document management"
 };
 
-export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+export default async function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+  const requestHeaders = await headers();
+  const organizationId = requestHeaders.get("x-organization-id") ?? "";
+  const siteId = requestHeaders.get("x-site-id") ?? "";
+
   return (
     <html lang="en">
       <body>
@@ -25,6 +31,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
               <Link href="/inventory">Inventory</Link>
               <Link href="/quality">Quality</Link>
             </nav>
+            <CommandPalette organizationId={organizationId} siteId={siteId} />
           </aside>
           <main className="main">{children}</main>
         </div>
