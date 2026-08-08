@@ -24,7 +24,6 @@ vi.mock("@/lib/webhooks/subscriptions", async (importOriginal) => {
 import {
   listWebhookDeadLetters,
   replayWebhookDeadLetter,
-  WebhookDeadLetterError,
 } from "@/lib/webhooks/dead-letters";
 
 const event = {
@@ -113,7 +112,7 @@ describe("webhook dead letters", () => {
         deadLetterId: "dlq-1",
         actorId: "manager-1",
       }),
-    ).rejects.toMatchObject<Partial<WebhookDeadLetterError>>({
+    ).rejects.toMatchObject({
       code: "WEBHOOK_SUBSCRIPTION_UNAVAILABLE",
     });
     expect(mocks.markReplayed).not.toHaveBeenCalled();
@@ -133,7 +132,7 @@ describe("webhook dead letters", () => {
         deadLetterId: "dlq-1",
         actorId: "manager-1",
       }),
-    ).rejects.toMatchObject<Partial<WebhookDeadLetterError>>({
+    ).rejects.toMatchObject({
       code: "INVALID_WEBHOOK_DEAD_LETTER",
     });
     expect(mocks.deliver).not.toHaveBeenCalled();
