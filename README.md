@@ -39,7 +39,7 @@ npm run dev
 
 Then open `http://localhost:3000`.
 
-`db:bootstrap` generates Prisma Client, applies the committed migration history and loads deterministic synthetic seed data.
+`db:bootstrap` generates Prisma Client, applies the committed migration history and loads deterministic synthetic seed data. It is a clean-clone/development helper, not a production upgrade command.
 
 ## Database migration workflow
 
@@ -59,6 +59,15 @@ npm run prisma:deploy
 ```
 
 Do not use `prisma db push` as the normal project migration path.
+
+Production upgrades must follow [`docs/UPGRADE.md`](docs/UPGRADE.md). In particular, production upgrades do not use `prisma migrate dev`, `prisma db push`, `prisma migrate reset`, or `db:bootstrap`; application rollback is only safe when the migrated schema remains backward compatible with the previous application.
+
+Related production runbooks:
+
+- [`docs/BACKUP.md`](docs/BACKUP.md)
+- [`docs/RESTORE.md`](docs/RESTORE.md)
+- [`docs/PRODUCTION_DOCKER.md`](docs/PRODUCTION_DOCKER.md)
+- [`docs/UPGRADE.md`](docs/UPGRADE.md)
 
 ## Roadmap
 
