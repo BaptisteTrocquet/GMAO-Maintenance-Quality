@@ -90,6 +90,7 @@ export default async function QualityEventDetailPage({
           <span className="badge">{qualityEvent.type}</span>
           <span className="badge">{qualityEvent.severity}</span>
           <span className="badge">{qualityEvent.status}</span>
+          <Link className="table-link" href={`/quality/${eventId}/evidence`}>Evidence →</Link>
         </div>
       </div>
 
