@@ -174,18 +174,24 @@ export async function listQualityEvidence(input: {
   eventId: string;
 }) {
   await requireQualityEvent(input);
-  const marker = `"organizationId":"${input.organizationId}","siteId":"${input.siteId}","eventId":"${input.eventId}"`;
   const records = await db.auditLog.findMany({
     where: {
       entityType: ENTITY_TYPE,
-      afterJson: { contains: marker },
+      AND: [
+        { afterJson: { contains: `"organizationId":"${input.organizationId}"` } },
+        { afterJson: { contains: `"siteId":"${input.siteId}"` } },
+        { afterJson: { contains: `"eventId":"${input.eventId}"` } },
+      ],
     },
     include: { actor: { select: { displayName: true } } },
     orderBy: { createdAt: "desc" },
   });
   return records.flatMap((record) => {
     const evidence = parseSnapshot(record.afterJson);
-    return evidence
+    return evidence &&
+      evidence.organizationId === input.organizationId &&
+      evidence.siteId === input.siteId &&
+      evidence.eventId === input.eventId
       ? [{ ...evidence, uploaderName: record.actor?.displayName ?? "System" }]
       : [];
   });
