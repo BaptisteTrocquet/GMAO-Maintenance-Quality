@@ -46,6 +46,12 @@ function auth() {
   };
 }
 
+function expectResponse(response: Response | undefined) {
+  expect(response).toBeDefined();
+  if (!response) throw new Error("expected response");
+  return response;
+}
+
 function closeRequest() {
   return new Request("http://localhost/api/quality/events/event-1", {
     method: "PATCH",
@@ -73,7 +79,7 @@ describe("quality event CAPA closure gate", () => {
       capa: { status: "ACTIVE" },
     });
 
-    const response = await PATCH(closeRequest(), context);
+    const response = expectResponse(await PATCH(closeRequest(), context));
 
     expect(response.status).toBe(409);
     await expect(response.json()).resolves.toMatchObject({
@@ -89,7 +95,7 @@ describe("quality event CAPA closure gate", () => {
       capa: { status: "CLOSED" },
     });
 
-    const response = await PATCH(closeRequest(), context);
+    const response = expectResponse(await PATCH(closeRequest(), context));
 
     expect(response.status).toBe(200);
     expect(mocks.transitionQualityEvent).toHaveBeenCalledWith({
@@ -109,7 +115,7 @@ describe("quality event CAPA closure gate", () => {
       capa: null,
     });
 
-    const response = await PATCH(closeRequest(), context);
+    const response = expectResponse(await PATCH(closeRequest(), context));
 
     expect(response.status).toBe(200);
     expect(mocks.transitionQualityEvent).toHaveBeenCalledTimes(1);
