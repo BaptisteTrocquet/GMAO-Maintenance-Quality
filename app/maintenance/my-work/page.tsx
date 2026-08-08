@@ -10,7 +10,7 @@ export default async function TechnicianWorkQueuePage() {
     <>
       <div className="header asset-header">
         <div>
-          <div className="title">My work</div>
+          <h1 className="title">My work</h1>
           <div className="muted">Focused mobile work queue for assigned maintenance.</div>
         </div>
       </div>
