@@ -44,7 +44,7 @@ const event = {
   data: { workOrder: { id: "wo-1", number: "WO-P-DEMO" } },
 };
 
-function mockRequestWithStatus(statusCode: number) {
+function mockRequestWithStatus(statusCode: number, headers: Record<string, string> = {}) {
   const request = {
     setTimeout: vi.fn(),
     once: vi.fn(),
@@ -52,7 +52,7 @@ function mockRequestWithStatus(statusCode: number) {
     destroy: vi.fn(),
   };
   mocks.httpsRequest.mockImplementation((options, callback) => {
-    callback({ statusCode, resume: vi.fn() });
+    callback({ statusCode, headers, resume: vi.fn() });
     return request;
   });
   return request;
@@ -99,7 +99,7 @@ describe("webhook delivery", () => {
     });
   });
 
-  it("persists a retryable failure for non-2xx responses", async () => {
+  it("persists a retryable failure for transient responses", async () => {
     mockRequestWithStatus(503);
     const now = new Date("2026-08-07T20:05:00.000Z");
 
@@ -107,11 +107,41 @@ describe("webhook delivery", () => {
 
     expect(result.delivered).toBe(false);
     expect(result.statusCode).toBe(503);
+    expect(result.retryReason).toBe("http_status");
     expect(result.nextAttemptAt).toEqual(new Date("2026-08-07T20:06:00.000Z"));
     expect(mocks.auditCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({
         action: "FAILED",
         afterJson: expect.stringContaining('"attempt":1'),
+      }),
+    });
+  });
+
+  it("honors Retry-After for throttled webhook endpoints", async () => {
+    mockRequestWithStatus(429, { "retry-after": "120" });
+    const now = new Date("2026-08-07T20:05:00.000Z");
+
+    const result = await deliverWebhook({ subscription, event, now });
+
+    expect(result.delivered).toBe(false);
+    expect(result.retryReason).toBe("retry_after");
+    expect(result.nextAttemptAt).toEqual(new Date("2026-08-07T20:07:00.000Z"));
+  });
+
+  it("does not schedule retries for permanent client errors", async () => {
+    mockRequestWithStatus(400);
+    const now = new Date("2026-08-07T20:05:00.000Z");
+
+    const result = await deliverWebhook({ subscription, event, now });
+
+    expect(result.delivered).toBe(false);
+    expect(result.statusCode).toBe(400);
+    expect(result.retryReason).toBe("http_not_retryable");
+    expect(result.nextAttemptAt).toBeNull();
+    expect(mocks.auditCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: "FAILED",
+        afterJson: expect.stringContaining('"nextAttemptAt":null'),
       }),
     });
   });
