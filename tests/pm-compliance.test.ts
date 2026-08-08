@@ -27,7 +27,12 @@ describe("PM compliance analytics", () => {
     vi.clearAllMocks();
     mocks.assetFindFirst.mockResolvedValue({ id: "asset-a" });
     mocks.queryRaw.mockResolvedValue([
-      { due: 10n, completedOnTime: 7n, completedLate: 2n, openOverdue: 1n },
+      {
+        due: BigInt(10),
+        completedOnTime: BigInt(7),
+        completedLate: BigInt(2),
+        openOverdue: BigInt(1),
+      },
     ]);
   });
 
