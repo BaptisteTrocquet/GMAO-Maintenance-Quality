@@ -106,6 +106,24 @@ export async function PATCH(
 
   try {
     if (parsed.data.action === "START") {
+      const capa = await getCapa({
+        organizationId: parsed.data.organizationId,
+        siteId: parsed.data.siteId,
+        eventId,
+      });
+      if (!capa) {
+        return apiError(404, "QUALITY_EVENT_NOT_FOUND", "Quality event not found in site scope");
+      }
+      if (
+        capa.capa?.status !== "READY_FOR_EFFECTIVENESS" ||
+        !capa.capa.actions.some((action) => action.status === "COMPLETED")
+      ) {
+        return apiError(
+          409,
+          "COMPLETED_ACTION_REQUIRED",
+          "Effectiveness review requires CAPA readiness and at least one completed action",
+        );
+      }
       return apiData(
         await startCapaEffectivenessReview({
           organizationId: parsed.data.organizationId,
