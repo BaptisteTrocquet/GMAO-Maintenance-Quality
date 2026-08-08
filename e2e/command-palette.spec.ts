@@ -37,3 +37,20 @@ test("command palette closes with Escape and restores trigger focus", async ({ p
   await expect(page.getByRole("dialog", { name: "Command palette" })).toBeHidden();
   await expect(trigger).toBeFocused();
 });
+
+test("command palette shortcut toggles closed and clears the previous query", async ({ page }) => {
+  await page.goto("/");
+  const trigger = page.getByRole("button", { name: /Commands/ });
+
+  await page.keyboard.press("Control+K");
+  const input = page.getByLabel("Search permitted records or choose an action");
+  await input.fill("wo");
+
+  await page.keyboard.press("Control+K");
+  await expect(page.getByRole("dialog", { name: "Command palette" })).toBeHidden();
+  await expect(trigger).toBeFocused();
+
+  await page.keyboard.press("Control+K");
+  await expect(page.getByRole("dialog", { name: "Command palette" })).toBeVisible();
+  await expect(input).toHaveValue("");
+});
