@@ -11,21 +11,28 @@ import {
 } from "@/lib/saved-views";
 
 const surfaceSchema = z.enum(SAVED_VIEW_SURFACES);
-const filtersSchema = z
-  .record(z.string().min(1).max(50), z.string().max(200))
-  .refine((filters) => Object.keys(filters).length <= 20, "At most 20 filters can be saved");
+const dueFilterSchema = z.enum(["ALL", "OVERDUE", "DUE_7_DAYS", "NO_DUE_DATE"]);
+const kanbanFiltersSchema = z
+  .object({ due: dueFilterSchema.optional() })
+  .strict()
+  .transform((filters) => ({ due: filters.due ?? "ALL" }));
 
 const createSchema = z.object({
   organizationId: z.string().min(1),
   siteId: z.string().min(1),
-  surface: surfaceSchema,
+  surface: z.literal("WORK_ORDER_KANBAN"),
   name: z.string().min(1).max(80),
-  filters: filtersSchema,
+  filters: kanbanFiltersSchema,
 });
 
 function savedViewError(error: unknown) {
   if (error instanceof SavedViewError) {
-    const status = error.code === "VIEW_NAME_CONFLICT" ? 409 : error.code === "VIEW_NOT_FOUND" ? 404 : 400;
+    const status =
+      error.code === "VIEW_NAME_CONFLICT" || error.code === "VIEW_LIMIT_REACHED"
+        ? 409
+        : error.code === "VIEW_NOT_FOUND"
+          ? 404
+          : 400;
     return apiError(status, error.code, error.message);
   }
   if (error instanceof AccessDeniedError) return apiError(403, "ACCESS_DENIED", error.message);
@@ -69,11 +76,12 @@ export async function GET(request: Request) {
   const auth = await authorize(request, parsed.data.organizationId, parsed.data.siteId);
   if (auth instanceof Response) return auth;
 
-  const views = await listSavedViews({
-    userId: auth.session.user.id,
-    ...parsed.data,
-  });
-  return apiData(views);
+  return apiData(
+    await listSavedViews({
+      userId: auth.session.user.id,
+      ...parsed.data,
+    }),
+  );
 }
 
 export async function POST(request: Request) {
@@ -93,11 +101,13 @@ export async function POST(request: Request) {
   if (auth instanceof Response) return auth;
 
   try {
-    const view = await createSavedView({
-      userId: auth.session.user.id,
-      ...parsed.data,
-    });
-    return apiData(view, { status: 201 });
+    return apiData(
+      await createSavedView({
+        userId: auth.session.user.id,
+        ...parsed.data,
+      }),
+      { status: 201 },
+    );
   } catch (error) {
     return savedViewError(error);
   }
