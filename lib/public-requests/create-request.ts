@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import type { PublicMaintenanceRequestToken } from "@prisma/client";
 import { db } from "@/lib/db";
+import { recordIntegrationEventInTransaction } from "@/lib/integrations/event-log";
 
 const REQUESTS_PER_HOUR = 30;
 
@@ -117,7 +118,7 @@ export async function createPublicMaintenanceRequest(input: {
           status: "REQUESTED",
           priority: "NORMAL",
         },
-        select: { id: true, number: true, status: true, requestedAt: true },
+        select: { id: true, number: true, title: true, status: true, requestedAt: true },
       });
 
       const submission = await tx.publicMaintenanceRequestSubmission.create({
@@ -138,7 +139,7 @@ export async function createPublicMaintenanceRequest(input: {
         data: { lastUsedAt: now },
       });
 
-      await tx.auditLog.create({
+      const audit = await tx.auditLog.create({
         data: {
           actorId: null,
           entityType: "WorkOrder",
@@ -155,6 +156,29 @@ export async function createPublicMaintenanceRequest(input: {
             origin: input.origin ?? null,
             idempotencyKey: input.idempotencyKey,
           }),
+        },
+      });
+
+      await recordIntegrationEventInTransaction(tx, {
+        organizationId: input.token.organizationId,
+        siteId: input.token.siteId,
+        direction: "OUTBOUND",
+        channel: "webhook",
+        eventType: "work_order.created",
+        sourceId: audit.id,
+        correlationId: workOrder.id,
+        subjectType: "WorkOrder",
+        subjectId: workOrder.id,
+        occurredAt: workOrder.requestedAt,
+        payload: {
+          workOrder: {
+            id: workOrder.id,
+            number: workOrder.number,
+            title: workOrder.title,
+            status: workOrder.status,
+            requestedAt: workOrder.requestedAt.toISOString(),
+            assetCode: input.assetCode ?? null,
+          },
         },
       });
 
