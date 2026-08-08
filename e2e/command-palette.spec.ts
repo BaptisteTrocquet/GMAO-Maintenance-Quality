@@ -18,6 +18,8 @@ test("command palette opens from keyboard and navigates with Enter", async ({ pa
     "true",
   );
 
+  // Keep the pointer outside the command options so this test exercises keyboard selection only.
+  await page.mouse.move(0, 0);
   await page.keyboard.press("End");
   await expect(page.getByRole("option", { name: /Quality workspace/ })).toHaveAttribute(
     "aria-selected",
