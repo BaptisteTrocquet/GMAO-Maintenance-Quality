@@ -16,6 +16,14 @@ type LaborPayload = {
   laborHours: number;
   unassignedLaborMinutes: number;
   unassignedSharePercent: number | null;
+  capacityMode: "CONFIGURED_BASELINE" | "RECORDED_ONLY";
+  businessDays: number;
+  configuredCapacityUsers: number;
+  capacityMinutes: number;
+  capacityHours: number;
+  capacityCoveredLaborMinutes: number;
+  capacityCoveragePercent: number | null;
+  utilizationPercent: number | null;
   assignees: Array<{
     assigneeId: string | null;
     displayName: string;
@@ -23,6 +31,9 @@ type LaborPayload = {
     laborMinutes: number;
     laborHours: number;
     recordedLaborSharePercent: number;
+    weeklyCapacityMinutes: number | null;
+    capacityMinutes: number | null;
+    utilizationPercent: number | null;
   }>;
   definition: string;
 };
@@ -116,17 +127,36 @@ export default function LaborUtilizationClient({
         <>
           <div className="grid grid-4 section">
             <section className="card">
-              <div className="muted">Recorded labor</div>
-              <div className="title">{data.laborHours.toFixed(1)} h</div>
+              <div className="muted">Baseline utilization</div>
+              <div className="title">{percent(data.utilizationPercent)}</div>
+              <div className="muted">
+                {data.capacityMode === "CONFIGURED_BASELINE"
+                  ? `${data.configuredCapacityUsers} configured user${data.configuredCapacityUsers === 1 ? "" : "s"}`
+                  : "Capacity not configured"}
+              </div>
             </section>
             <section className="card">
-              <div className="muted">Completed work orders</div>
-              <div className="title">{data.completedWorkOrders}</div>
+              <div className="muted">Baseline capacity</div>
+              <div className="title">{data.capacityMode === "CONFIGURED_BASELINE" ? `${data.capacityHours.toFixed(1)} h` : "—"}</div>
+              <div className="muted">{data.businessDays} weekday{data.businessDays === 1 ? "" : "s"}</div>
             </section>
+            <section className="card">
+              <div className="muted">Capacity coverage</div>
+              <div className="title">{percent(data.capacityCoveragePercent)}</div>
+              <div className="muted">Share of assigned recorded labor covered by a capacity profile</div>
+            </section>
+            <section className="card">
+              <div className="muted">Recorded labor</div>
+              <div className="title">{data.laborHours.toFixed(1)} h</div>
+              <div className="muted">{data.completedWorkOrders} completed work order{data.completedWorkOrders === 1 ? "" : "s"}</div>
+            </section>
+          </div>
+
+          <div className="grid grid-2 section">
             <section className="card">
               <div className="muted">Labor recording coverage</div>
               <div className="title">{percent(data.recordingCoveragePercent)}</div>
-              <div className="muted">{data.recordedWorkOrders} with positive laborMinutes</div>
+              <div className="muted">{data.recordedWorkOrders} completed work orders with positive laborMinutes</div>
             </section>
             <section className="card">
               <div className="muted">Unassigned recorded labor</div>
@@ -141,7 +171,7 @@ export default function LaborUtilizationClient({
           </section>
 
           <section className="card responsive-table section">
-            <h2>Recorded labor distribution</h2>
+            <h2>Labor by assignee</h2>
             {data.assignees.length ? (
               <table className="table">
                 <thead>
@@ -149,6 +179,9 @@ export default function LaborUtilizationClient({
                     <th>Assignee</th>
                     <th>Completed work with labor</th>
                     <th>Recorded labor</th>
+                    <th>Weekly baseline</th>
+                    <th>Window capacity</th>
+                    <th>Utilization</th>
                     <th>Share of recorded labor</th>
                   </tr>
                 </thead>
@@ -158,12 +191,15 @@ export default function LaborUtilizationClient({
                       <td>{row.displayName}</td>
                       <td>{row.workOrderCount}</td>
                       <td>{row.laborHours.toFixed(1)} h</td>
+                      <td>{row.weeklyCapacityMinutes === null ? "—" : `${(row.weeklyCapacityMinutes / 60).toFixed(1)} h`}</td>
+                      <td>{row.capacityMinutes === null ? "—" : `${(row.capacityMinutes / 60).toFixed(1)} h`}</td>
+                      <td>{percent(row.utilizationPercent)}</td>
                       <td>{row.recordedLaborSharePercent.toFixed(1)}%</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-            ) : <p className="muted">No positive laborMinutes recorded for completed work in this window.</p>}
+            ) : <p className="muted">No positive laborMinutes or configured capacity profiles in this window.</p>}
           </section>
         </>
       ) : null}
