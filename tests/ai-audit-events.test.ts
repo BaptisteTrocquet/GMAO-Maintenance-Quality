@@ -52,7 +52,8 @@ function provider(input?: { fail?: boolean }) {
 }
 
 function auditSink(input?: { fail?: boolean }) {
-  const write = vi.fn(async (_event: AiAuditEvent) => {
+  const write = vi.fn(async (event: AiAuditEvent) => {
+    void event;
     if (input?.fail) throw new Error("audit database unavailable");
   });
   const sink: AiAuditSink = { write };
