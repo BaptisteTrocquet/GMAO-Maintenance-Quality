@@ -49,6 +49,11 @@ database_dump="$(manifest_value database_dump)"
 [ "$database_dump" = "postgres.dump" ] || fail "unsupported database_dump in manifest"
 
 database_schema="$(manifest_value database_schema)"
+case "$database_schema" in
+  all) ;;
+  ''|*[!A-Za-z0-9_]*) fail "database_schema contains unsupported characters" ;;
+esac
+
 storage_provider="$(manifest_value storage_provider)"
 storage_archive="$(manifest_value storage_archive)"
 
@@ -109,8 +114,7 @@ else
       --tuples-only \
       --no-align \
       --set=ON_ERROR_STOP=1 \
-      --set=restore_schema="$database_schema" \
-      --command="SELECT count(*) FROM pg_catalog.pg_tables WHERE schemaname = :'restore_schema';" \
+      --command="SELECT count(*) FROM pg_catalog.pg_tables WHERE schemaname = '$database_schema';" \
       | tr -d '[:space:]'
   )"
 fi
