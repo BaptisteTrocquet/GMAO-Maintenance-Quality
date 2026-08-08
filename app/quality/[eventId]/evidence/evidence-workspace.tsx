@@ -14,7 +14,8 @@ type EvidenceItem = {
   fileName: string;
   storageKey: string;
   mimeType: string | null;
-  sizeBytes: number | null;
+  sizeBytes: number;
+  checksum: string;
   description: string | null;
   actorName: string;
   createdAt: string;
@@ -34,11 +35,18 @@ const phases: QualityEvidencePhase[] = [
   "ROOT_CAUSE",
   "CAPA",
   "EFFECTIVENESS",
+  "EIGHT_D",
 ];
 const kinds: QualityEvidenceKind[] = ["DOCUMENT", "PHOTO", "RECORD"];
 
 function formatDate(value: string) {
   return `${value.replace("T", " ").slice(0, 16)} UTC`;
+}
+
+function formatBytes(value: number) {
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 export default function EvidenceWorkspace({
@@ -52,10 +60,8 @@ export default function EvidenceWorkspace({
   const [evidence, setEvidence] = useState(initialEvidence);
   const [phase, setPhase] = useState<QualityEvidencePhase>("EVENT");
   const [kind, setKind] = useState<QualityEvidenceKind>("DOCUMENT");
-  const [fileName, setFileName] = useState("");
-  const [storageKey, setStorageKey] = useState("");
-  const [mimeType, setMimeType] = useState("");
-  const [sizeBytes, setSizeBytes] = useState("");
+  const [file, setFile] = useState<File | null>(null);
+  const [fileInputKey, setFileInputKey] = useState(0);
   const [description, setDescription] = useState("");
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState<{ kind: "success" | "error"; message: string } | null>(null);
@@ -70,43 +76,42 @@ export default function EvidenceWorkspace({
   } as const;
 
   async function submit() {
+    if (!file) return;
     setBusy(true);
     setFeedback(null);
     try {
+      const formData = new FormData();
+      formData.set("organizationId", organizationId);
+      formData.set("siteId", siteId);
+      formData.set("phase", phase);
+      formData.set("kind", kind);
+      formData.set("description", description.trim());
+      formData.set("file", file);
+
       const response = await fetch(`/api/quality/events/${eventId}/evidence`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          organizationId,
-          siteId,
-          phase,
-          kind,
-          fileName,
-          storageKey,
-          mimeType: mimeType.trim() || null,
-          sizeBytes: sizeBytes ? Number(sizeBytes) : null,
-          description: description.trim() || null,
-        }),
+        body: formData,
       });
       const body = (await response.json()) as {
-        data?: EvidenceItem;
+        data?: Omit<EvidenceItem, "actorName">;
         error?: { message?: string };
       };
       if (!response.ok || !body.data) {
-        throw new Error(body.error?.message ?? "Evidence attachment failed");
+        throw new Error(body.error?.message ?? "Evidence upload failed");
       }
-      setEvidence((current) => [{ ...body.data!, actorName: body.data!.actorName ?? "Current user" }, ...current]);
-      setFileName("");
-      setStorageKey("");
-      setMimeType("");
-      setSizeBytes("");
+      setEvidence((current) => [
+        { ...body.data!, actorName: "Current user" },
+        ...current,
+      ]);
+      setFile(null);
+      setFileInputKey((value) => value + 1);
       setDescription("");
-      setFeedback({ kind: "success", message: "Evidence reference attached and audited." });
+      setFeedback({ kind: "success", message: "Evidence uploaded, checksummed and audited." });
       router.refresh();
     } catch (error) {
       setFeedback({
         kind: "error",
-        message: error instanceof Error ? error.message : "Evidence attachment failed",
+        message: error instanceof Error ? error.message : "Evidence upload failed",
       });
     } finally {
       setBusy(false);
@@ -125,6 +130,7 @@ export default function EvidenceWorkspace({
                   <th>Phase</th>
                   <th>Type</th>
                   <th>File</th>
+                  <th>Integrity</th>
                   <th>Description</th>
                   <th>Added by</th>
                   <th>Added</th>
@@ -137,7 +143,12 @@ export default function EvidenceWorkspace({
                     <td>{item.kind}</td>
                     <td>
                       <strong>{item.fileName}</strong>
-                      <div className="muted">{item.storageKey}</div>
+                      <div className="muted">{formatBytes(item.sizeBytes)}</div>
+                    </td>
+                    <td>
+                      <span className="muted" title={item.checksum}>
+                        SHA-256 {item.checksum.slice(0, 12)}…
+                      </span>
                     </td>
                     <td>{item.description ?? "—"}</td>
                     <td>{item.actorName}</td>
@@ -153,9 +164,9 @@ export default function EvidenceWorkspace({
       </section>
 
       <section className="card">
-        <h2>Attach evidence reference</h2>
+        <h2>Upload evidence</h2>
         <p className="muted">
-          Store the file through the configured storage workflow, then register its immutable storage key here.
+          Files are stored by the configured storage adapter, checksummed with SHA-256 and registered immutably in the quality audit trail. Maximum size: 20 MB.
         </p>
         {closed ? (
           <p className="muted">This quality event is closed; its evidence register is read-only.</p>
@@ -163,44 +174,51 @@ export default function EvidenceWorkspace({
           <div className="grid grid-2">
             <label>
               <strong>Phase</strong>
-              <select value={phase} onChange={(event) => setPhase(event.target.value as QualityEvidencePhase)} style={{ ...controlStyle, marginTop: 6 }}>
+              <select
+                value={phase}
+                onChange={(event) => setPhase(event.target.value as QualityEvidencePhase)}
+                style={{ ...controlStyle, marginTop: 6 }}
+              >
                 {phases.map((value) => <option key={value} value={value}>{value}</option>)}
               </select>
             </label>
             <label>
               <strong>Evidence type</strong>
-              <select value={kind} onChange={(event) => setKind(event.target.value as QualityEvidenceKind)} style={{ ...controlStyle, marginTop: 6 }}>
+              <select
+                value={kind}
+                onChange={(event) => setKind(event.target.value as QualityEvidenceKind)}
+                style={{ ...controlStyle, marginTop: 6 }}
+              >
                 {kinds.map((value) => <option key={value} value={value}>{value}</option>)}
               </select>
             </label>
-            <label>
-              <strong>File name</strong>
-              <input value={fileName} onChange={(event) => setFileName(event.target.value)} style={{ ...controlStyle, marginTop: 6 }} placeholder="inspection-photo.jpg" />
-            </label>
-            <label>
-              <strong>Storage key</strong>
-              <input value={storageKey} onChange={(event) => setStorageKey(event.target.value)} style={{ ...controlStyle, marginTop: 6 }} placeholder="quality/event-id/inspection-photo.jpg" />
-            </label>
-            <label>
-              <strong>MIME type</strong>
-              <input value={mimeType} onChange={(event) => setMimeType(event.target.value)} style={{ ...controlStyle, marginTop: 6 }} placeholder="image/jpeg" />
-            </label>
-            <label>
-              <strong>Size (bytes)</strong>
-              <input type="number" min="0" value={sizeBytes} onChange={(event) => setSizeBytes(event.target.value)} style={{ ...controlStyle, marginTop: 6 }} />
+            <label style={{ gridColumn: "1 / -1" }}>
+              <strong>File</strong>
+              <input
+                key={fileInputKey}
+                type="file"
+                onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+                style={{ ...controlStyle, marginTop: 6 }}
+              />
             </label>
             <label style={{ gridColumn: "1 / -1" }}>
               <strong>Description</strong>
-              <textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={3} style={{ ...controlStyle, marginTop: 6, resize: "vertical" }} placeholder="What this evidence demonstrates" />
+              <textarea
+                value={description}
+                onChange={(event) => setDescription(event.target.value)}
+                rows={3}
+                style={{ ...controlStyle, marginTop: 6, resize: "vertical" }}
+                placeholder="What this evidence demonstrates"
+              />
             </label>
             <div style={{ gridColumn: "1 / -1" }}>
               <button
                 type="button"
                 onClick={submit}
-                disabled={busy || !fileName.trim() || !storageKey.trim()}
+                disabled={busy || !file}
                 style={{ border: "1px solid #111827", borderRadius: 8, padding: "9px 14px", background: "#111827", color: "white", cursor: "pointer" }}
               >
-                Attach evidence
+                Upload evidence
               </button>
             </div>
           </div>
