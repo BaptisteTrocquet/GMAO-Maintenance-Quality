@@ -6,6 +6,11 @@ const mocks = vi.hoisted(() => {
       super(message);
     }
   }
+  class CapaOwnerScopeError extends Error {
+    constructor(message: string) {
+      super(message);
+    }
+  }
   return {
     authenticateRequest: vi.fn(),
     getCapaWorkspace: vi.fn(),
@@ -15,7 +20,9 @@ const mocks = vi.hoisted(() => {
     transitionCapaAction: vi.fn(),
     submitEffectivenessReview: vi.fn(),
     verifyCapaEffectiveness: vi.fn(),
+    assertCapaOwnersInSite: vi.fn(),
     CapaError,
+    CapaOwnerScopeError,
   };
 });
 
@@ -29,6 +36,10 @@ vi.mock("@/lib/quality/capa", () => ({
   submitEffectivenessReview: mocks.submitEffectivenessReview,
   verifyCapaEffectiveness: mocks.verifyCapaEffectiveness,
   CapaError: mocks.CapaError,
+}));
+vi.mock("@/lib/quality/capa-owner-scope", () => ({
+  assertCapaOwnersInSite: mocks.assertCapaOwnersInSite,
+  CapaOwnerScopeError: mocks.CapaOwnerScopeError,
 }));
 
 import { GET, PATCH } from "@/app/api/quality/events/[eventId]/capa/route";
@@ -59,6 +70,7 @@ const context = { params: Promise.resolve({ eventId: "event-1" }) };
 describe("quality CAPA API", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.assertCapaOwnersInSite.mockResolvedValue(undefined);
     mocks.getCapaWorkspace.mockResolvedValue({
       event: { organizationId: "org-a", siteId: "site-a", status: "INVESTIGATING" },
       rootCauseConfirmed: true,
@@ -102,7 +114,7 @@ describe("quality CAPA API", () => {
     expect(mocks.activateCapa).not.toHaveBeenCalled();
   });
 
-  it("routes CAPA save with typed owners and due dates", async () => {
+  it("routes CAPA save only after action owners are validated in the selected site", async () => {
     mocks.authenticateRequest.mockResolvedValue(auth("QUALITY_MANAGER"));
     const response = await PATCH(
       new Request("http://localhost/api/quality/events/event-1/capa", {
@@ -128,6 +140,11 @@ describe("quality CAPA API", () => {
       context,
     );
     expectStatus(response, 200);
+    expect(mocks.assertCapaOwnersInSite).toHaveBeenCalledWith({
+      organizationId: "org-a",
+      siteId: "site-a",
+      ownerIds: ["owner-1"],
+    });
     expect(mocks.saveCapaWorkspace).toHaveBeenCalledWith({
       organizationId: "org-a",
       siteId: "site-a",
@@ -145,6 +162,39 @@ describe("quality CAPA API", () => {
       ],
       actorId: "quality-1",
     });
+  });
+
+  it("rejects CAPA owners outside the selected site before the workflow service runs", async () => {
+    mocks.authenticateRequest.mockResolvedValue(auth("QUALITY_MANAGER"));
+    mocks.assertCapaOwnersInSite.mockRejectedValue(
+      new mocks.CapaOwnerScopeError("Every CAPA owner must be an active member of the selected site"),
+    );
+
+    const response = await PATCH(
+      new Request("http://localhost/api/quality/events/event-1/capa", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          organizationId: "org-a",
+          siteId: "site-a",
+          action: "SAVE",
+          objective: "Prevent recurrence",
+          actions: [
+            {
+              id: "action-1",
+              type: "CORRECTIVE",
+              title: "Replace seal",
+              ownerId: "owner-other-site",
+              dueAt: "2026-09-01T12:00:00.000Z",
+            },
+          ],
+        }),
+      }),
+      context,
+    );
+
+    expectStatus(response, 404);
+    expect(mocks.saveCapaWorkspace).not.toHaveBeenCalled();
   });
 
   it("routes action completion with required evidence", async () => {
@@ -195,6 +245,11 @@ describe("quality CAPA API", () => {
       context,
     );
     expectStatus(submit, 200);
+    expect(mocks.assertCapaOwnersInSite).toHaveBeenCalledWith({
+      organizationId: "org-a",
+      siteId: "site-a",
+      ownerIds: ["reviewer-1"],
+    });
     expect(mocks.submitEffectivenessReview).toHaveBeenCalledWith({
       organizationId: "org-a",
       siteId: "site-a",
