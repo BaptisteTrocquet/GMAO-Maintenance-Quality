@@ -35,7 +35,7 @@ function authorize(
   scope: Parameters<typeof assertSitePermission>[0],
   siteId: string,
   permission: "quality:read" | "quality:manage",
-) {
+): Response | null {
   try {
     assertSitePermission(scope, siteId, permission);
     return null;
@@ -54,7 +54,7 @@ function eightDError(error: EightDError) {
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ eventId: string }> },
-) {
+): Promise<Response> {
   const { eventId } = await params;
   const url = new URL(request.url);
   const organizationId = url.searchParams.get("organizationId");
@@ -64,7 +64,9 @@ export async function GET(
   }
 
   const auth = await authenticateRequest(request, organizationId);
-  if ("error" in auth) return auth.error;
+  if ("error" in auth) {
+    return auth.error ?? apiError(401, "UNAUTHENTICATED", "Authentication required");
+  }
   const denied = authorize(auth.tenant.scope, siteId, "quality:read");
   if (denied) return denied;
 
@@ -79,7 +81,7 @@ export async function GET(
 export async function PUT(
   request: Request,
   { params }: { params: Promise<{ eventId: string }> },
-) {
+): Promise<Response> {
   const { eventId } = await params;
   let body: unknown;
   try {
@@ -93,7 +95,9 @@ export async function PUT(
   }
 
   const auth = await authenticateRequest(request, parsed.data.organizationId);
-  if ("error" in auth) return auth.error;
+  if ("error" in auth) {
+    return auth.error ?? apiError(401, "UNAUTHENTICATED", "Authentication required");
+  }
   const denied = authorize(auth.tenant.scope, parsed.data.siteId, "quality:manage");
   if (denied) return denied;
 
@@ -120,7 +124,7 @@ export async function PUT(
 export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ eventId: string }> },
-) {
+): Promise<Response> {
   const { eventId } = await params;
   let body: unknown;
   try {
@@ -134,7 +138,9 @@ export async function PATCH(
   }
 
   const auth = await authenticateRequest(request, parsed.data.organizationId);
-  if ("error" in auth) return auth.error;
+  if ("error" in auth) {
+    return auth.error ?? apiError(401, "UNAUTHENTICATED", "Authentication required");
+  }
   const denied = authorize(auth.tenant.scope, parsed.data.siteId, "quality:manage");
   if (denied) return denied;
 
