@@ -5,7 +5,9 @@ import { db } from "@/lib/db";
 import {
   buildCalendarGrid,
   buildPlanningCalendar,
+  buildPlanningCalendarWhere,
   calendarSearchRange,
+  currentCalendarMonth,
   parseCalendarMonth,
   PLANNING_CALENDAR_LIMIT,
   shiftCalendarMonth,
@@ -59,26 +61,20 @@ export default async function MaintenanceCalendarPage({
   });
   if (!site) notFound();
 
+  const now = new Date();
   const { month: requestedMonth } = await searchParams;
   const month = parseCalendarMonth(requestedMonth, {
-    now: new Date(),
+    now,
     timeZone: site.organization.timezone,
   });
   const emptyGrid = buildCalendarGrid(month);
   const range = calendarSearchRange(emptyGrid);
   const previous = shiftCalendarMonth(month, -1);
   const next = shiftCalendarMonth(month, 1);
+  const current = currentCalendarMonth(now, site.organization.timezone);
 
   const workOrders = await db.workOrder.findMany({
-    where: {
-      siteId,
-      site: { organizationId, active: true },
-      status: { not: "CANCELLED" },
-      OR: [
-        { plannedStart: { gte: range.start, lte: range.end } },
-        { dueAt: { gte: range.start, lte: range.end } },
-      ],
-    },
+    where: buildPlanningCalendarWhere({ organizationId, siteId, range }),
     select: {
       id: true,
       number: true,
@@ -135,7 +131,12 @@ export default async function MaintenanceCalendarPage({
       <section className="card" aria-label="Calendar month navigation">
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
           <Link className="table-link" href={`/maintenance/calendar?month=${previous.key}`}>← {previous.key}</Link>
-          <h2 style={{ margin: 0 }}>{monthLabel(month.year, month.month)}</h2>
+          <div style={{ textAlign: "center" }}>
+            <h2 style={{ margin: 0 }}>{monthLabel(month.year, month.month)}</h2>
+            {month.key !== current.key ? (
+              <Link className="table-link" href={`/maintenance/calendar?month=${current.key}`}>Current month</Link>
+            ) : null}
+          </div>
           <Link className="table-link" href={`/maintenance/calendar?month=${next.key}`}>{next.key} →</Link>
         </div>
         <p className="muted" style={{ marginBottom: 0 }}>
