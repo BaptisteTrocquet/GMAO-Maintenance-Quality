@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import {
   localCalendarDate,
@@ -21,14 +22,14 @@ export async function buildBacklogDashboard(input: {
   const sevenDayBoundary = localDateStartUtc(shiftCalendarDate(today, -6), input.timeZone);
   const thirtyDayBoundary = localDateStartUtc(shiftCalendarDate(today, -29), input.timeZone);
   const ninetyDayBoundary = localDateStartUtc(shiftCalendarDate(today, -89), input.timeZone);
-  const scope = {
+  const scope: Prisma.WorkOrderWhereInput = {
     siteId: input.siteId,
     site: { organizationId: input.organizationId, active: true },
-  } as const;
-  const openScope = {
+  };
+  const openScope: Prisma.WorkOrderWhereInput = {
     ...scope,
     status: { in: [...OPEN_STATUSES] },
-  } as const;
+  };
 
   const [
     requested,
