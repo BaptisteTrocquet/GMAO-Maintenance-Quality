@@ -237,20 +237,21 @@ export default function CalendarPlanner({
                   <div style={{ display: "grid", gap: 8 }}>
                     {day.items.map((item) => {
                       const payload = { id: item.id, plannedStart: item.plannedStart };
+                      const canReschedule = item.status !== "COMPLETED" && item.status !== "CANCELLED";
                       return (
                         <article
                           key={`${day.dateKey}-${item.id}`}
-                          draggable={busyId !== item.id}
+                          draggable={canReschedule && busyId !== item.id}
                           onDragStart={(event) => beginDrag(event, payload)}
                           onDragEnd={() => setDropTarget(null)}
-                          aria-label={`${item.number} ${item.title}; draggable work order`}
+                          aria-label={`${item.number} ${item.title}; ${canReschedule ? "draggable work order" : "completed work order"}`}
                           style={{
                             border: "1px solid #e5e7eb",
                             borderRadius: 8,
                             padding: 8,
                             display: "grid",
                             gap: 6,
-                            cursor: busyId === item.id ? "wait" : "grab",
+                            cursor: canReschedule ? (busyId === item.id ? "wait" : "grab") : "default",
                           }}
                         >
                           <div
@@ -275,7 +276,7 @@ export default function CalendarPlanner({
                             {item.due ? <span className="badge">DUE {item.dueTime}</span> : null}
                             <span className="badge">{statusLabel(item.status)}</span>
                           </div>
-                          {dateControl(payload, item.number)}
+                          {canReschedule ? dateControl(payload, item.number) : null}
                         </article>
                       );
                     })}
