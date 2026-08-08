@@ -2,6 +2,7 @@ import { db } from "@/lib/db";
 import { apiData, apiError } from "@/lib/api-response";
 import { assertSitePermission, AccessDeniedError } from "@/lib/access-control";
 import { authenticateRequest } from "@/lib/auth/request-auth";
+import { recordIntegrationEventInTransaction } from "@/lib/integrations/event-log";
 import { z } from "zod";
 
 const createSchema = z.object({
@@ -77,6 +78,7 @@ export async function POST(request: Request) {
     return apiError(404, "SITE_NOT_FOUND", "Site not found");
   }
 
+  let assetCode: string | null = null;
   if (parsed.data.assetId) {
     const asset = await db.asset.findFirst({
       where: {
@@ -84,32 +86,60 @@ export async function POST(request: Request) {
         siteId: parsed.data.siteId,
         archivedAt: null,
       },
-      select: { id: true },
+      select: { id: true, code: true },
     });
     if (!asset) return apiError(404, "ASSET_NOT_FOUND", "Asset not found in site scope");
+    assetCode = asset.code;
   }
 
-  const created = await db.workOrder.create({
-    data: {
-      siteId: parsed.data.siteId,
-      assetId: parsed.data.assetId,
-      requesterId: auth.session.user.id,
-      number: await nextNumber(),
-      title: parsed.data.title,
-      description: parsed.data.description,
-      type: parsed.data.type,
-      priority: parsed.data.priority,
-    },
-  });
+  const number = await nextNumber();
+  const created = await db.$transaction(async (tx) => {
+    const workOrder = await tx.workOrder.create({
+      data: {
+        siteId: parsed.data.siteId,
+        assetId: parsed.data.assetId,
+        requesterId: auth.session.user.id,
+        number,
+        title: parsed.data.title,
+        description: parsed.data.description,
+        type: parsed.data.type,
+        priority: parsed.data.priority,
+      },
+    });
 
-  await db.auditLog.create({
-    data: {
-      actorId: auth.session.user.id,
-      entityType: "WorkOrder",
-      entityId: created.id,
-      action: "CREATED",
-      afterJson: JSON.stringify(created),
-    },
+    const audit = await tx.auditLog.create({
+      data: {
+        actorId: auth.session.user.id,
+        entityType: "WorkOrder",
+        entityId: workOrder.id,
+        action: "CREATED",
+        afterJson: JSON.stringify(workOrder),
+      },
+    });
+
+    await recordIntegrationEventInTransaction(tx, {
+      organizationId: parsed.data.organizationId,
+      siteId: parsed.data.siteId,
+      direction: "OUTBOUND",
+      channel: "webhook",
+      eventType: "work_order.created",
+      sourceId: audit.id,
+      correlationId: workOrder.id,
+      subjectType: "WorkOrder",
+      subjectId: workOrder.id,
+      occurredAt: workOrder.requestedAt,
+      payload: {
+        workOrder: {
+          id: workOrder.id,
+          number: workOrder.number,
+          title: workOrder.title,
+          status: workOrder.status,
+          requestedAt: workOrder.requestedAt.toISOString(),
+          assetCode,
+        },
+      },
+    });
+    return workOrder;
   });
 
   return apiData(created, { status: 201 });
