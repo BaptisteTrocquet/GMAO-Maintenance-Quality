@@ -53,14 +53,14 @@ Both endpoints send `Cache-Control: no-store`.
 
 ## Docker
 
-The production `Dockerfile` defines its built-in `HEALTHCHECK` against `/api/ready`. This means Docker marks the container unhealthy if the application process is running but cannot reach PostgreSQL.
+The production `Dockerfile` defines its built-in `HEALTHCHECK` against `/api/health`, so Docker's process-health signal stays independent of PostgreSQL availability. A transient database outage therefore does not by itself make the container fail its liveness healthcheck.
 
 For orchestrators with separate probe types, use:
 
 - liveness: `/api/health`
 - readiness: `/api/ready`
 
-Do not use readiness failure alone as evidence that the process is dead.
+Readiness failure means the replica should be removed from traffic; it does not mean the process should be restarted.
 
 ## CI verification
 
@@ -71,6 +71,6 @@ The CI pipeline:
 3. builds the real production Docker image;
 4. starts that image against the CI PostgreSQL service;
 5. calls both HTTP probe endpoints;
-6. verifies Docker transitions the container to `healthy`.
+6. verifies Docker transitions the container to `healthy` through the liveness healthcheck.
 
 The probes expose no tenant data and require no organization/site context because their payload is restricted to process/dependency availability.
