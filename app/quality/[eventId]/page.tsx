@@ -165,12 +165,17 @@ export default async function QualityEventDetailPage({
             <h2>Root-cause analysis</h2>
             <div className="muted">Structured 5 Why and Ishikawa investigation workspace.</div>
           </div>
-          {rootCause ? (
-            <div className="asset-status">
-              <span className="badge">{rootCause.method}</span>
-              <span className="badge">{rootCause.status}</span>
-            </div>
-          ) : null}
+          <div className="asset-status">
+            {rootCause ? (
+              <>
+                <span className="badge">{rootCause.method}</span>
+                <span className="badge">{rootCause.status}</span>
+              </>
+            ) : null}
+            <Link className="table-link" href={`/quality/${eventId}/root-cause`}>
+              Open workspace →
+            </Link>
+          </div>
         </div>
 
         {rootCause ? (
