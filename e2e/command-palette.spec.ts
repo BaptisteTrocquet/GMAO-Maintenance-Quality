@@ -56,18 +56,22 @@ test("command palette closes with Escape and restores trigger focus", async ({ p
 test("command palette shortcut toggles closed and clears the previous query", async ({ page }) => {
   await page.goto("/");
   const trigger = page.getByRole("button", { name: /Commands/ });
+  const dialog = page.getByRole("dialog", { name: "Command palette" });
 
-  await page.keyboard.press("Control+K");
+  // Open through the hydrated button first. Keyboard opening itself is covered by the first test;
+  // this scenario specifically verifies that the global shortcut toggles state and clears query data.
+  await trigger.click();
+  await expect(dialog).toBeVisible();
   const input = page.getByRole("combobox", {
     name: "Search permitted records or choose an action",
   });
   await input.fill("wo");
 
   await page.keyboard.press("Control+K");
-  await expect(page.getByRole("dialog", { name: "Command palette" })).toBeHidden();
+  await expect(dialog).toBeHidden();
   await expect(trigger).toBeFocused();
 
   await page.keyboard.press("Control+K");
-  await expect(page.getByRole("dialog", { name: "Command palette" })).toBeVisible();
+  await expect(dialog).toBeVisible();
   await expect(input).toHaveValue("");
 });
