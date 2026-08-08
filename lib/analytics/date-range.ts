@@ -26,6 +26,10 @@ function parseDateParts(value: string) {
   return { year, month, day };
 }
 
+function formatDateParts(input: { year: number; month: number; day: number }) {
+  return `${input.year}-${String(input.month).padStart(2, "0")}-${String(input.day).padStart(2, "0")}`;
+}
+
 function localPartsAt(instant: Date, timeZone: string) {
   let formatter: Intl.DateTimeFormat;
   try {
@@ -67,6 +71,21 @@ function timezoneOffsetMs(instant: Date, timeZone: string) {
   return representedAsUtc - instant.getTime();
 }
 
+export function localCalendarDate(instant: Date, timeZone: string) {
+  const local = localPartsAt(instant, timeZone);
+  return formatDateParts(local);
+}
+
+export function shiftCalendarDate(value: string, days: number) {
+  const { year, month, day } = parseDateParts(value);
+  const shifted = new Date(Date.UTC(year, month - 1, day + days));
+  return formatDateParts({
+    year: shifted.getUTCFullYear(),
+    month: shifted.getUTCMonth() + 1,
+    day: shifted.getUTCDate(),
+  });
+}
+
 export function localDateStartUtc(value: string, timeZone: string) {
   const { year, month, day } = parseDateParts(value);
   const desiredAsUtc = Date.UTC(year, month - 1, day, 0, 0, 0);
@@ -95,9 +114,7 @@ export function localDateStartUtc(value: string, timeZone: string) {
 }
 
 export function nextCalendarDate(value: string) {
-  const { year, month, day } = parseDateParts(value);
-  const next = new Date(Date.UTC(year, month - 1, day + 1));
-  return next.toISOString().slice(0, 10);
+  return shiftCalendarDate(value, 1);
 }
 
 export function resolveAnalyticsDateRange(input: {
