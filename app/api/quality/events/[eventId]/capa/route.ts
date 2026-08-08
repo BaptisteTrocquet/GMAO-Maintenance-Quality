@@ -145,7 +145,7 @@ function activePlanIntegrityError(current: QualityCapaSnapshot | null, payload: 
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ eventId: string }> },
-) {
+): Promise<Response> {
   const { eventId } = await params;
   const url = new URL(request.url);
   const organizationId = url.searchParams.get("organizationId");
@@ -170,7 +170,7 @@ export async function GET(
 export async function PUT(
   request: Request,
   { params }: { params: Promise<{ eventId: string }> },
-) {
+): Promise<Response> {
   const { eventId } = await params;
   let body: unknown;
   try {
@@ -219,7 +219,7 @@ export async function PUT(
 export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ eventId: string }> },
-) {
+): Promise<Response> {
   const { eventId } = await params;
   let body: unknown;
   try {
@@ -286,4 +286,6 @@ export async function PATCH(
     if (error instanceof QualityCapaError) return capaError(error);
     throw error;
   }
+
+  return apiError(400, "INVALID_CAPA_ACTION", "Unsupported CAPA transition action");
 }
