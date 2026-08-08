@@ -18,6 +18,8 @@ test("command palette opens from keyboard and navigates with Enter", async ({ pa
     "true",
   );
 
+  // Keep the pointer outside the command options so this test exercises keyboard selection only.
+  await page.mouse.move(0, 0);
   await page.keyboard.press("End");
   await expect(page.getByRole("option", { name: /Quality workspace/ })).toHaveAttribute(
     "aria-selected",
@@ -29,11 +31,16 @@ test("command palette opens from keyboard and navigates with Enter", async ({ pa
     "true",
   );
   await page.keyboard.press("ArrowDown");
+  await expect(page.getByRole("option", { name: /Notification center/ })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await page.keyboard.press("ArrowDown");
   await expect(page.getByRole("option", { name: /Work-order Kanban/ })).toHaveAttribute(
     "aria-selected",
     "true",
   );
-  await page.keyboard.press("ArrowUp");
+  await page.keyboard.press("Home");
   await page.keyboard.press("Enter");
   await expect(page).toHaveURL(/\/search$/);
 });
