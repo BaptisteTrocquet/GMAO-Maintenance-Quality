@@ -12,8 +12,7 @@ import {
   shiftCalendarMonth,
   UNSCHEDULED_WORK_ORDER_LIMIT,
 } from "@/lib/maintenance/planning-calendar";
-
-const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+import CalendarPlanner from "./calendar-planner";
 
 function monthLabel(year: number, month: number) {
   return new Intl.DateTimeFormat("en", {
@@ -21,10 +20,6 @@ function monthLabel(year: number, month: number) {
     year: "numeric",
     timeZone: "UTC",
   }).format(new Date(Date.UTC(year, month - 1, 1)));
-}
-
-function statusLabel(value: string) {
-  return value.toLowerCase().replaceAll("_", " ");
 }
 
 export default async function MaintenanceCalendarPage({
@@ -169,20 +164,12 @@ export default async function MaintenanceCalendarPage({
       </div>
 
       <section className="card" aria-label="Calendar month navigation">
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: 12,
-            flexWrap: "wrap",
-          }}
-        >
+        <div className="calendar-month-navigation">
           <Link className="table-link" href={`/maintenance/calendar?month=${previous.key}`}>
             ← {previous.key}
           </Link>
-          <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-            <h2 style={{ margin: 0 }}>{monthLabel(month.year, month.month)}</h2>
+          <div className="calendar-month-heading">
+            <h2>{monthLabel(month.year, month.month)}</h2>
             {month.key !== currentMonth.key ? (
               <Link className="table-link" href={`/maintenance/calendar?month=${currentMonth.key}`}>
                 Current month
@@ -193,154 +180,45 @@ export default async function MaintenanceCalendarPage({
             {next.key} →
           </Link>
         </div>
-        <p className="muted" style={{ marginBottom: 0 }}>
-          Planned starts and due dates are rendered in the organization timezone. Date changes continue to use the existing permission-checked work-order API; drag-and-drop rescheduling is intentionally a separate story.
+        <p className="muted calendar-help">
+          Drag a START card onto another day to reschedule it. Keyboard users can choose a date and press Move. Due-only markers remain read-only. All changes use the existing permission-checked and audited work-order API.
         </p>
         {truncated ? (
-          <p className="muted" role="status" style={{ marginBottom: 0 }}>
+          <p className="muted" role="status">
             Calendar rendering is bounded to {PLANNING_CALENDAR_LIMIT} matching work orders for predictable performance.
           </p>
         ) : null}
       </section>
 
-      <section className="section" aria-label="Monthly maintenance calendar" style={{ overflowX: "auto" }}>
-        <div style={{ minWidth: 980 }}>
-          <div
-            aria-hidden="true"
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(7, minmax(140px, 1fr))",
-              gap: 8,
-              marginBottom: 8,
-            }}
-          >
-            {WEEKDAYS.map((weekday) => (
-              <div
-                key={weekday}
-                className="card"
-                style={{ padding: 10, textAlign: "center", fontWeight: 700 }}
-              >
-                {weekday}
-              </div>
-            ))}
-          </div>
-
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(7, minmax(140px, 1fr))",
-              gap: 8,
-            }}
-          >
-            {calendar.map((day) => (
-              <section
-                key={day.dateKey}
-                className="card"
-                aria-label={day.dateKey}
-                style={{
-                  minHeight: 180,
-                  padding: 10,
-                  opacity: day.inMonth ? 1 : 0.62,
-                  alignSelf: "stretch",
-                }}
-              >
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    gap: 8,
-                    marginBottom: 8,
-                  }}
-                >
-                  <strong>{day.dayOfMonth}</strong>
-                  {day.items.length ? <span className="badge">{day.items.length}</span> : null}
-                </div>
-
-                <div style={{ display: "grid", gap: 8 }}>
-                  {day.items.map((item) => (
-                    <article
-                      key={`${day.dateKey}-${item.id}`}
-                      style={{
-                        border: "1px solid #e5e7eb",
-                        borderRadius: 8,
-                        padding: 8,
-                        display: "grid",
-                        gap: 5,
-                      }}
-                    >
-                      <div
-                        style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                          gap: 6,
-                          alignItems: "start",
-                        }}
-                      >
-                        <Link className="table-link" href={`/maintenance/${item.id}`}>
-                          <strong>{item.number}</strong>
-                        </Link>
-                        <span className="badge">{item.priority}</span>
-                      </div>
-                      <div style={{ fontSize: 13, fontWeight: 650 }}>{item.title}</div>
-                      <div className="muted" style={{ fontSize: 12 }}>
-                        {item.assetCode ?? "No asset"} · {item.assigneeName ?? item.teamName ?? "Unassigned"}
-                      </div>
-                      <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
-                        {item.planned ? <span className="badge">START {item.plannedTime}</span> : null}
-                        {item.due ? <span className="badge">DUE {item.dueTime}</span> : null}
-                        <span className="badge">{statusLabel(item.status)}</span>
-                      </div>
-                    </article>
-                  ))}
-                </div>
-              </section>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      <section className="section card responsive-table" aria-labelledby="unscheduled-title">
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-          <div>
-            <h2 id="unscheduled-title" style={{ marginTop: 0 }}>Unscheduled work</h2>
-            <div className="muted">Open work orders without a planned start date.</div>
-          </div>
-          {unscheduledTruncated ? (
-            <span className="badge">First {UNSCHEDULED_WORK_ORDER_LIMIT} shown</span>
-          ) : null}
-        </div>
-        <table className="table">
-          <thead>
-            <tr>
-              <th>WO</th>
-              <th>Priority</th>
-              <th>Status</th>
-              <th>Asset</th>
-              <th>Owner</th>
-              <th>Due</th>
-            </tr>
-          </thead>
-          <tbody>
-            {visibleUnscheduled.map((workOrder) => (
-              <tr key={workOrder.id}>
-                <td>
-                  <Link className="table-link" href={`/maintenance/${workOrder.id}`}>
-                    {workOrder.number} · {workOrder.title}
-                  </Link>
-                </td>
-                <td>{workOrder.priority}</td>
-                <td><span className="badge">{statusLabel(workOrder.status)}</span></td>
-                <td>{workOrder.asset?.code ?? "—"}</td>
-                <td>{workOrder.assignee?.displayName ?? workOrder.team?.name ?? "Unassigned"}</td>
-                <td>{workOrder.dueAt ? workOrder.dueAt.toISOString().slice(0, 10) : "—"}</td>
-              </tr>
-            ))}
-            {visibleUnscheduled.length === 0 ? (
-              <tr><td colSpan={6}>No unscheduled open work orders.</td></tr>
-            ) : null}
-          </tbody>
-        </table>
-      </section>
+      <CalendarPlanner
+        organizationId={organizationId}
+        siteId={siteId}
+        timeZone={site.organization.timezone}
+        days={calendar.map((day) => ({
+          dateKey: day.dateKey,
+          dayOfMonth: day.dayOfMonth,
+          inMonth: day.inMonth,
+          items: day.items.map((item) => ({
+            ...item,
+            plannedStart: item.plannedStart?.toISOString() ?? null,
+            dueAt: item.dueAt?.toISOString() ?? null,
+          })),
+        }))}
+        unscheduled={visibleUnscheduled.map((workOrder) => ({
+          id: workOrder.id,
+          number: workOrder.number,
+          title: workOrder.title,
+          status: workOrder.status,
+          priority: workOrder.priority,
+          plannedStart: null,
+          dueAt: workOrder.dueAt?.toISOString() ?? null,
+          assetCode: workOrder.asset?.code ?? null,
+          assigneeName: workOrder.assignee?.displayName ?? null,
+          teamName: workOrder.team?.name ?? null,
+        }))}
+        unscheduledTruncated={unscheduledTruncated}
+        unscheduledLimit={UNSCHEDULED_WORK_ORDER_LIMIT}
+      />
     </>
   );
 }
