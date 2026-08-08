@@ -70,13 +70,6 @@ function mockNoRecord() {
   mocks.auditFindFirst.mockResolvedValueOnce(null);
 }
 
-function latestSnapshot() {
-  const call = mocks.auditCreate.mock.calls.at(-1)?.[0];
-  const afterJson = call?.data?.afterJson;
-  if (typeof afterJson !== "string") throw new Error("expected CAPA snapshot");
-  return JSON.parse(afterJson) as ReturnType<typeof JSON.parse>;
-}
-
 describe("quality CAPA workflow", () => {
   beforeEach(() => {
     vi.clearAllMocks();
