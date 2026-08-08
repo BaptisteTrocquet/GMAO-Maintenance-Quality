@@ -11,16 +11,18 @@ import {
 } from "@/lib/saved-views";
 
 const surfaceSchema = z.enum(SAVED_VIEW_SURFACES);
-const filtersSchema = z
-  .record(z.string().min(1).max(50), z.string().max(200))
-  .refine((filters) => Object.keys(filters).length <= 20, "At most 20 filters can be saved");
+const dueFilterSchema = z.enum(["ALL", "OVERDUE", "DUE_7_DAYS", "NO_DUE_DATE"]);
+const kanbanFiltersSchema = z
+  .object({ due: dueFilterSchema.optional() })
+  .strict()
+  .transform((filters) => ({ due: filters.due ?? "ALL" }));
 
 const createSchema = z.object({
   organizationId: z.string().min(1),
   siteId: z.string().min(1),
-  surface: surfaceSchema,
+  surface: z.literal("WORK_ORDER_KANBAN"),
   name: z.string().min(1).max(80),
-  filters: filtersSchema,
+  filters: kanbanFiltersSchema,
 });
 
 function savedViewError(error: unknown) {
