@@ -1,7 +1,13 @@
 "use client";
 
-import Link from "next/link";
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+} from "react";
 import { useRouter } from "next/navigation";
 import {
   COMMAND_PALETTE_QUICK_ACTIONS,
@@ -20,14 +26,17 @@ type Props = {
 };
 
 type SearchResponse = {
-  data?: {
-    results: GlobalSearchResult[];
-  };
+  data?: { results: GlobalSearchResult[] };
   error?: { message?: string };
 };
 
+const FOCUSABLE_SELECTOR =
+  'button:not([disabled]), input:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])';
+
 export default function CommandPalette({ organizationId, siteId }: Props) {
   const router = useRouter();
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useRef<HTMLElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -36,18 +45,31 @@ export default function CommandPalette({ organizationId, siteId }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [activeIndex, setActiveIndex] = useState(0);
 
+  const close = useCallback(({ restoreFocus = true }: { restoreFocus?: boolean } = {}) => {
+    setOpen(false);
+    setQuery("");
+    setResults([]);
+    setLoading(false);
+    setError(null);
+    if (restoreFocus) {
+      window.requestAnimationFrame(() => triggerRef.current?.focus());
+    }
+  }, []);
+
   useEffect(() => {
     function globalKeyDown(event: globalThis.KeyboardEvent) {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
-        setOpen((value) => !value);
-      } else if (event.key === "Escape") {
-        setOpen(false);
+        if (open) close();
+        else setOpen(true);
+      } else if (event.key === "Escape" && open) {
+        event.preventDefault();
+        close();
       }
     }
     window.addEventListener("keydown", globalKeyDown);
     return () => window.removeEventListener("keydown", globalKeyDown);
-  }, []);
+  }, [close, open]);
 
   useEffect(() => {
     if (!open) return;
@@ -56,22 +78,28 @@ export default function CommandPalette({ organizationId, siteId }: Props) {
   }, [open]);
 
   useEffect(() => {
-    if (!open || !organizationId || !siteId || query.trim().length < GLOBAL_SEARCH_MIN_LENGTH) {
+    const normalized = query.trim();
+    if (!open || normalized.length < GLOBAL_SEARCH_MIN_LENGTH) {
       setResults([]);
       setLoading(false);
       setError(null);
       return;
     }
+    if (!organizationId || !siteId) {
+      setResults([]);
+      setLoading(false);
+      setError("Select an organization and site to search records.");
+      return;
+    }
+
+    // Never leave stale commands actionable while a new query is in its debounce window.
+    setResults([]);
+    setLoading(true);
+    setError(null);
 
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
-      const params = new URLSearchParams({
-        organizationId,
-        siteId,
-        q: query.trim(),
-      });
-      setLoading(true);
-      setError(null);
+      const params = new URLSearchParams({ organizationId, siteId, q: normalized });
       void fetch(`/api/search?${params.toString()}`, { signal: controller.signal })
         .then(async (response) => {
           const body = (await response.json()) as SearchResponse;
@@ -99,17 +127,12 @@ export default function CommandPalette({ organizationId, siteId }: Props) {
     return results.map(searchResultToCommand);
   }, [query, results]);
 
-  useEffect(() => setActiveIndex(items.length ? 0 : -1), [items]);
-
-  function close() {
-    setOpen(false);
-    setQuery("");
-    setResults([]);
-    setError(null);
-  }
+  useEffect(() => {
+    setActiveIndex(items.length ? 0 : -1);
+  }, [items]);
 
   function navigate(item: CommandPaletteItem) {
-    close();
+    close({ restoreFocus: false });
     router.push(item.href);
   }
 
@@ -120,6 +143,12 @@ export default function CommandPalette({ organizationId, siteId }: Props) {
     } else if (event.key === "ArrowUp") {
       event.preventDefault();
       setActiveIndex((current) => nextCommandIndex({ current, direction: -1, total: items.length }));
+    } else if (event.key === "Home" && items.length) {
+      event.preventDefault();
+      setActiveIndex(0);
+    } else if (event.key === "End" && items.length) {
+      event.preventDefault();
+      setActiveIndex(items.length - 1);
     } else if (event.key === "Enter") {
       const item = items[activeIndex];
       if (!item) return;
@@ -127,17 +156,43 @@ export default function CommandPalette({ organizationId, siteId }: Props) {
       navigate(item);
     } else if (event.key === "Escape") {
       event.preventDefault();
+      event.stopPropagation();
       close();
+    }
+  }
+
+  function onDialogKeyDown(event: KeyboardEvent<HTMLElement>) {
+    if (event.key !== "Tab") return;
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const focusable = Array.from(dialog.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
+      (element) => !element.hasAttribute("disabled") && element.getAttribute("aria-hidden") !== "true",
+    );
+    if (!focusable.length) {
+      event.preventDefault();
+      return;
+    }
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    const active = document.activeElement;
+    if (event.shiftKey && active === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && active === last) {
+      event.preventDefault();
+      first.focus();
     }
   }
 
   return (
     <>
       <button
+        ref={triggerRef}
         type="button"
         onClick={() => setOpen(true)}
         aria-haspopup="dialog"
         aria-expanded={open}
+        aria-keyshortcuts="Control+K Meta+K"
         style={{ margin: "12px 16px 0", width: "calc(100% - 32px)", textAlign: "left" }}
       >
         Commands <span aria-hidden="true">⌘K</span>
@@ -161,47 +216,61 @@ export default function CommandPalette({ organizationId, siteId }: Props) {
           }}
         >
           <section
+            ref={dialogRef}
             role="dialog"
             aria-modal="true"
             aria-labelledby="command-palette-title"
+            onKeyDown={onDialogKeyDown}
             style={{ width: "min(720px, 100%)", maxHeight: "72vh", overflow: "auto" }}
             className="card"
           >
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
               <h2 id="command-palette-title" style={{ margin: 0 }}>Command palette</h2>
-              <button type="button" onClick={close} aria-label="Close command palette">Esc</button>
+              <button type="button" onClick={() => close()} aria-label="Close command palette">Esc</button>
             </div>
 
             <label htmlFor="command-palette-input" className="muted" style={{ display: "block", marginTop: 12 }}>
-              Search records or choose an action
+              Search permitted records or choose an action
             </label>
             <input
               ref={inputRef}
               id="command-palette-input"
+              role="combobox"
+              aria-autocomplete="list"
+              aria-expanded="true"
+              aria-controls="command-palette-results"
+              aria-activedescendant={activeIndex >= 0 ? `command-item-${activeIndex}` : undefined}
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               onKeyDown={onInputKeyDown}
               autoComplete="off"
               placeholder="Type at least two characters…"
-              aria-controls="command-palette-results"
-              aria-activedescendant={activeIndex >= 0 ? `command-item-${activeIndex}` : undefined}
               style={{ width: "100%", marginTop: 6 }}
             />
 
             <div className="muted" style={{ marginTop: 8, fontSize: 12 }} aria-live="polite">
-              {loading ? "Searching…" : query.trim().length < GLOBAL_SEARCH_MIN_LENGTH ? "Quick actions · use ↑/↓ and Enter" : `${items.length} result${items.length === 1 ? "" : "s"}`}
+              {loading
+                ? "Searching…"
+                : query.trim().length < GLOBAL_SEARCH_MIN_LENGTH
+                  ? "Quick actions · use ↑/↓ and Enter"
+                  : `${items.length} result${items.length === 1 ? "" : "s"}`}
             </div>
             {error ? <div role="alert" style={{ marginTop: 8 }}>{error}</div> : null}
 
-            <div id="command-palette-results" role="listbox" aria-label="Command results" style={{ display: "grid", gap: 6, marginTop: 12 }}>
+            <div
+              id="command-palette-results"
+              role="listbox"
+              aria-label="Command results"
+              style={{ display: "grid", gap: 6, marginTop: 12 }}
+            >
               {items.map((item, index) => (
-                <Link
+                <button
                   id={`command-item-${index}`}
                   role="option"
                   aria-selected={index === activeIndex}
                   key={item.key}
-                  href={item.href}
-                  onClick={close}
+                  type="button"
+                  onClick={() => navigate(item)}
                   onMouseEnter={() => setActiveIndex(index)}
                   style={{
                     display: "grid",
@@ -212,7 +281,10 @@ export default function CommandPalette({ organizationId, siteId }: Props) {
                     borderRadius: 8,
                     outline: index === activeIndex ? "2px solid currentColor" : undefined,
                     outlineOffset: -2,
-                    textDecoration: "none",
+                    textAlign: "left",
+                    background: "transparent",
+                    color: "inherit",
+                    width: "100%",
                   }}
                 >
                   <span style={{ display: "grid", gap: 3 }}>
@@ -220,7 +292,7 @@ export default function CommandPalette({ organizationId, siteId }: Props) {
                     <span className="muted" style={{ fontSize: 12 }}>{item.description}</span>
                   </span>
                   <span className="badge">{item.badge}</span>
-                </Link>
+                </button>
               ))}
               {!loading && !error && query.trim().length >= GLOBAL_SEARCH_MIN_LENGTH && items.length === 0 ? (
                 <div className="muted">No permitted results in the selected site.</div>
