@@ -23,6 +23,11 @@ type Options = {
   truncated: boolean;
 };
 
+type BulkResult = {
+  selectedCount: number;
+  updatedCount: number;
+};
+
 type ApiResponse<T> = { data?: T; error?: { message?: string } };
 type ActionType = "SET_PRIORITY" | "SET_ASSIGNEE" | "SET_TEAM";
 
@@ -78,9 +83,13 @@ export default function BulkActionsClient({
     void load();
   }, [load]);
 
-  const allSelected = useMemo(
-    () => Boolean(options?.workOrders.length) && selected.size === options?.workOrders.length,
-    [options, selected],
+  const selectableIds = useMemo(
+    () => options?.workOrders.slice(0, BULK_WORK_ORDER_LIMIT).map((workOrder) => workOrder.id) ?? [],
+    [options],
+  );
+  const allSelectableSelected = useMemo(
+    () => selectableIds.length > 0 && selectableIds.every((id) => selected.has(id)),
+    [selectableIds, selected],
   );
 
   function changeAction(next: ActionType) {
@@ -98,13 +107,12 @@ export default function BulkActionsClient({
     });
   }
 
-  function toggleAll() {
-    if (!options) return;
-    if (allSelected) {
+  function toggleSelectable() {
+    if (allSelectableSelected) {
       setSelected(new Set());
       return;
     }
-    setSelected(new Set(options.workOrders.slice(0, BULK_WORK_ORDER_LIMIT).map((workOrder) => workOrder.id)));
+    setSelected(new Set(selectableIds));
   }
 
   async function apply() {
@@ -133,11 +141,15 @@ export default function BulkActionsClient({
           operation,
         }),
       });
-      const body = (await response.json()) as ApiResponse<{ count: number }>;
+      const body = (await response.json()) as ApiResponse<BulkResult>;
       if (!response.ok || !body.data) {
         throw new Error(body.error?.message ?? "Bulk action failed");
       }
-      setMessage(`${body.data.count} work order${body.data.count === 1 ? "" : "s"} updated.`);
+      setMessage(
+        body.data.updatedCount === 0
+          ? `No changes needed for ${body.data.selectedCount} selected work order${body.data.selectedCount === 1 ? "" : "s"}.`
+          : `${body.data.updatedCount} of ${body.data.selectedCount} selected work order${body.data.selectedCount === 1 ? "" : "s"} updated.`,
+      );
       setSelected(new Set());
       await load();
     } catch (saveError) {
@@ -176,12 +188,9 @@ export default function BulkActionsClient({
             <label style={{ display: "grid", gap: 4 }}>
               <span>Priority</span>
               <select value={value} onChange={(event) => setValue(event.target.value)}>
-                {[
-                  "LOW",
-                  "NORMAL",
-                  "HIGH",
-                  "URGENT",
-                ].map((priority) => <option key={priority} value={priority}>{priority}</option>)}
+                {["LOW", "NORMAL", "HIGH", "URGENT"].map((priority) => (
+                  <option key={priority} value={priority}>{priority}</option>
+                ))}
               </select>
             </label>
           ) : null}
@@ -232,9 +241,9 @@ export default function BulkActionsClient({
                 <th>
                   <input
                     type="checkbox"
-                    aria-label="Select all visible work orders"
-                    checked={allSelected}
-                    onChange={toggleAll}
+                    aria-label={`Select first ${Math.min(options.workOrders.length, BULK_WORK_ORDER_LIMIT)} visible work orders`}
+                    checked={allSelectableSelected}
+                    onChange={toggleSelectable}
                   />
                 </th>
                 <th>WO</th><th>Asset</th><th>Status</th><th>Priority</th><th>Assignee</th><th>Team</th><th>Due</th>
