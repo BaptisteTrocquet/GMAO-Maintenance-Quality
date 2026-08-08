@@ -3,20 +3,25 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   authenticateRequest: vi.fn(),
   siteFindFirst: vi.fn(),
+  transaction: vi.fn(),
   workOrderFindFirst: vi.fn(),
   workOrderUpdate: vi.fn(),
   auditCreate: vi.fn(),
 }));
 
+const tx = {
+  workOrder: {
+    findFirst: mocks.workOrderFindFirst,
+    update: mocks.workOrderUpdate,
+  },
+  auditLog: { create: mocks.auditCreate },
+};
+
 vi.mock("@/lib/auth/request-auth", () => ({ authenticateRequest: mocks.authenticateRequest }));
 vi.mock("@/lib/db", () => ({
   db: {
     site: { findFirst: mocks.siteFindFirst },
-    workOrder: {
-      findFirst: mocks.workOrderFindFirst,
-      update: mocks.workOrderUpdate,
-    },
-    auditLog: { create: mocks.auditCreate },
+    $transaction: mocks.transaction,
   },
 }));
 
@@ -59,6 +64,9 @@ describe("maintenance calendar rescheduling API", () => {
       id: "site-a",
       organization: { timezone: "Europe/Paris" },
     });
+    mocks.transaction.mockImplementation(
+      async (callback: (transaction: typeof tx) => Promise<unknown>) => callback(tx),
+    );
     mocks.workOrderFindFirst.mockResolvedValue({
       id: "wo-1",
       siteId: "site-a",
@@ -74,10 +82,11 @@ describe("maintenance calendar rescheduling API", () => {
     mocks.auditCreate.mockResolvedValue({ id: "audit-1" });
   });
 
-  it("preserves local wall-clock planning through DST and writes a RESCHEDULED audit", async () => {
+  it("preserves local wall-clock planning through DST and writes audit in the same transaction", async () => {
     const response = await PATCH(request(), context);
     expect(response.status).toBe(200);
 
+    expect(mocks.transaction).toHaveBeenCalledTimes(1);
     expect(mocks.workOrderUpdate).toHaveBeenCalledWith({
       where: { id: "wo-1" },
       data: {
@@ -96,6 +105,15 @@ describe("maintenance calendar rescheduling API", () => {
     });
   });
 
+  it("rolls back update and audit together when the transaction fails", async () => {
+    mocks.auditCreate.mockRejectedValue(new Error("audit failed"));
+
+    await expect(PATCH(request(), context)).rejects.toThrow("audit failed");
+    expect(mocks.transaction).toHaveBeenCalledTimes(1);
+    expect(mocks.workOrderUpdate).toHaveBeenCalledTimes(1);
+    expect(mocks.auditCreate).toHaveBeenCalledTimes(1);
+  });
+
   it("requires work:manage before reading or changing planning data", async () => {
     mocks.authenticateRequest.mockResolvedValue(auth("TECHNICIAN"));
 
@@ -103,6 +121,7 @@ describe("maintenance calendar rescheduling API", () => {
 
     expect(response.status).toBe(403);
     expect(mocks.siteFindFirst).not.toHaveBeenCalled();
+    expect(mocks.transaction).not.toHaveBeenCalled();
     expect(mocks.workOrderUpdate).not.toHaveBeenCalled();
     expect(mocks.auditCreate).not.toHaveBeenCalled();
   });
