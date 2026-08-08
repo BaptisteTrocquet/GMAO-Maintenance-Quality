@@ -11,9 +11,12 @@ import {
   PLANNING_CALENDAR_LIMIT,
   startOfDateKeyInTimeZone,
 } from "@/lib/maintenance/planning-calendar";
+import {
+  buildScheduledPlanningWhere,
+  buildUnscheduledPlanningWhere,
+} from "@/lib/maintenance/planning-calendar-query";
 import CalendarPlanner from "./calendar-planner";
 
-const ACTIVE_STATUSES = ["REQUESTED", "APPROVED", "PLANNED", "IN_PROGRESS", "BLOCKED"] as const;
 const UNSCHEDULED_LIMIT = 60;
 
 function dateLabel(dateKey: string) {
@@ -68,18 +71,9 @@ export default async function MaintenanceCalendarPage({
   const rangeEnd = startOfDateKeyInTimeZone(endKey, timeZone);
   const dayKeys = calendarDateKeys(startKey);
 
-  const scope = {
-    siteId,
-    site: { organizationId, active: true },
-    status: { in: [...ACTIVE_STATUSES] },
-  } as const;
-
   const [scheduledRows, unscheduledRows] = await Promise.all([
     db.workOrder.findMany({
-      where: {
-        ...scope,
-        plannedStart: { gte: rangeStart, lt: rangeEnd },
-      },
+      where: buildScheduledPlanningWhere({ organizationId, siteId, rangeStart, rangeEnd }),
       select: {
         id: true,
         number: true,
@@ -96,10 +90,7 @@ export default async function MaintenanceCalendarPage({
       take: PLANNING_CALENDAR_LIMIT + 1,
     }),
     db.workOrder.findMany({
-      where: {
-        ...scope,
-        plannedStart: null,
-      },
+      where: buildUnscheduledPlanningWhere({ organizationId, siteId }),
       select: {
         id: true,
         number: true,
