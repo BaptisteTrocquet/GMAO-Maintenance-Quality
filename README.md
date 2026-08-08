@@ -60,6 +60,14 @@ npm run prisma:deploy
 
 Do not use `prisma db push` as the normal project migration path.
 
+Before a production build or upgrade, the repository also runs:
+
+```bash
+npm run upgrade:check
+```
+
+See [`docs/UPGRADING.md`](docs/UPGRADING.md) for the production expand/contract, backup, migration, rollback and forward-fix procedure.
+
 ## Roadmap
 
 - [x] Core data model
