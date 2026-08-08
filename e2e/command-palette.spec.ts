@@ -33,13 +33,13 @@ test("command palette closes with Escape and restores trigger focus", async ({ p
   expect(response?.ok()).toBe(true);
 
   const trigger = page.getByRole("button", { name: /Commands/ });
-  await trigger.focus();
-  await expect(trigger).toBeFocused();
+  await expect(trigger).toBeVisible();
+  await trigger.click();
 
-  await page.keyboard.press("Control+K");
-  await expect(page.getByRole("dialog", { name: "Command palette" })).toBeVisible();
+  const dialog = page.getByRole("dialog", { name: "Command palette" });
+  await expect(dialog).toBeVisible();
   await page.keyboard.press("Escape");
 
-  await expect(page.getByRole("dialog", { name: "Command palette" })).toBeHidden();
+  await expect(dialog).toBeHidden();
   await expect(trigger).toBeFocused();
 });
