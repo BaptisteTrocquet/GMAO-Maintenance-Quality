@@ -3,6 +3,7 @@ import { db } from "../lib/db";
 import { buildBacklogDashboard } from "../lib/analytics/backlog";
 import { buildDowntimeDashboard } from "../lib/analytics/downtime";
 import { buildFailurePareto } from "../lib/analytics/failure-pareto";
+import { buildLaborUtilizationDashboard } from "../lib/analytics/labor-utilization";
 import { buildPartsCostDashboard } from "../lib/analytics/parts-cost";
 import { buildPmCompliance } from "../lib/analytics/pm-compliance";
 import { buildReliabilityDashboard } from "../lib/analytics/reliability";
@@ -22,6 +23,7 @@ const budgetsMs = {
   downtime: 5_000,
   failurePareto: 5_000,
   partsCost: 5_000,
+  laborUtilization: 5_000,
 } as const;
 
 type BenchmarkName = keyof typeof budgetsMs;
@@ -41,6 +43,11 @@ function chunks<T>(items: T[]) {
 }
 
 async function resetFixture() {
+  // WorkOrderPartConsumption references both WorkOrder and Part without cascading from Part,
+  // so remove synthetic consumption lines before deleting the benchmark organization/parts.
+  await db.workOrderPartConsumption.deleteMany({
+    where: { workOrderId: { startsWith: "benchmark-e9-wo-" } },
+  });
   await db.auditLog.deleteMany({
     where: {
       entityType: "WorkOrder",
@@ -164,6 +171,7 @@ async function main() {
     const downtimeSample = await buildDowntimeDashboard({ ...common, ...localRange });
     const paretoSample = await buildFailurePareto({ ...common, ...localRange });
     const partsCostSample = await buildPartsCostDashboard({ ...common, ...localRange });
+    const laborSample = await buildLaborUtilizationDashboard({ ...common, ...localRange });
 
     if (backlogSample.totalOpen <= 0) throw new Error("Benchmark fixture produced no open backlog");
     if (pmSample.due <= 0) throw new Error("Benchmark fixture produced no scheduled PM occurrences");
@@ -173,6 +181,7 @@ async function main() {
     if (paretoSample.totalEventCount <= 0) throw new Error("Benchmark fixture produced no corrective Pareto events");
     if (partsCostSample.lineCount <= 0) throw new Error("Benchmark fixture produced no parts-consumption lines");
     if (partsCostSample.unpricedLineCount <= 0) throw new Error("Benchmark fixture must exercise unpriced cost coverage");
+    if (laborSample.recordedWorkOrders <= 0) throw new Error("Benchmark fixture produced no recorded labor samples");
 
     const results = await Promise.all([
       measure("backlog", () => buildBacklogDashboard({ ...common, ...localRange })),
@@ -188,6 +197,9 @@ async function main() {
       measure("downtime", () => buildDowntimeDashboard({ ...common, ...localRange })),
       measure("failurePareto", () => buildFailurePareto({ ...common, ...localRange })),
       measure("partsCost", () => buildPartsCostDashboard({ ...common, ...localRange })),
+      measure("laborUtilization", () =>
+        buildLaborUtilizationDashboard({ ...common, ...localRange }),
+      ),
     ]);
 
     const totalMedianMs = Number(
@@ -217,6 +229,7 @@ async function main() {
             failurePareto: paretoSample.totalEventCount,
             partsConsumptionLines: partsCostSample.lineCount,
             unpricedPartsLines: partsCostSample.unpricedLineCount,
+            recordedLaborWorkOrders: laborSample.recordedWorkOrders,
           },
         },
         null,
