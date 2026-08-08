@@ -304,7 +304,7 @@ export async function listQualityEvidence(input: {
   const logs = await db.auditLog.findMany({
     where: {
       entityType: ENTITY_TYPE,
-      afterJson: { contains: `\"eventId\":\"${input.eventId}\"` },
+      afterJson: { contains: `"eventId":"${input.eventId}"` },
     },
     orderBy: { createdAt: "asc" },
     select: { entityId: true, afterJson: true },
