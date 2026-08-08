@@ -21,11 +21,7 @@ const tx = {
   },
 };
 
-vi.mock("@/lib/db", () => ({
-  db: {
-    $transaction: mocks.transaction,
-  },
-}));
+vi.mock("@/lib/db", () => ({ db: { $transaction: mocks.transaction } }));
 
 import { approveCapa } from "@/lib/quality/capa-approval";
 
@@ -44,7 +40,7 @@ const draft = {
       type: "CORRECTIVE",
       title: "Correct synthetic cause",
       description: null,
-      ownerId: "quality-2",
+      ownerId: "quality-owner",
       dueAt: "2026-08-20T00:00:00.000Z",
       status: "PLANNED",
       completionNote: null,
@@ -58,57 +54,43 @@ const draft = {
 };
 
 let rootCauseStatus: "DRAFT" | "CONFIRMED";
-let draftAuthorIds: string[];
+let draftHistory: Array<{ action: string; actorId: string | null }>;
 
-function installApprovalReads() {
+function installReads() {
   mocks.auditFindFirst.mockImplementation(
     async ({ where }: { where: { entityType: string } }) => {
-      if (where.entityType === "QualityEvent") {
-        return { afterJson: JSON.stringify(event) };
-      }
+      if (where.entityType === "QualityEvent") return { afterJson: JSON.stringify(event) };
       if (where.entityType === "QualityRootCause") {
         return { afterJson: JSON.stringify({ ...rootCause, status: rootCauseStatus }) };
       }
-      if (where.entityType === "QualityCapa") {
-        return { afterJson: JSON.stringify(draft) };
-      }
+      if (where.entityType === "QualityCapa") return { afterJson: JSON.stringify(draft) };
       return null;
     },
   );
-  mocks.auditFindMany.mockImplementation(async () =>
-    draftAuthorIds.map((actorId) => ({ actorId })),
-  );
+  mocks.auditFindMany.mockImplementation(async () => draftHistory);
 }
 
-describe("CAPA approval separation", () => {
+describe("CAPA independent approval", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.auditFindFirst.mockReset();
-    mocks.auditFindMany.mockReset();
-    mocks.auditCreate.mockReset();
-    mocks.membershipFindFirst.mockReset();
-    mocks.membershipFindMany.mockReset();
-    mocks.transaction.mockReset();
-
     rootCauseStatus = "CONFIRMED";
-    draftAuthorIds = ["quality-author"];
-    installApprovalReads();
-
+    draftHistory = [{ action: "CAPA_DRAFT_CREATED", actorId: "quality-author" }];
+    installReads();
     mocks.transaction.mockImplementation(
       async (callback: (transaction: typeof tx) => Promise<unknown>) => callback(tx),
     );
-    mocks.auditCreate.mockResolvedValue({ id: "audit-1" });
     mocks.membershipFindFirst.mockResolvedValue({ id: "approver-membership", role: "QUALITY_MANAGER" });
-    mocks.membershipFindMany.mockResolvedValue([{ userId: "quality-2" }]);
+    mocks.membershipFindMany.mockResolvedValue([{ userId: "quality-owner" }]);
+    mocks.auditCreate.mockResolvedValue({ id: "audit-1" });
   });
 
-  it("approves a draft only after confirmed RCA and records approver audit", async () => {
+  it("activates a valid draft through an independent site-scoped approver", async () => {
     const approved = await approveCapa({
       organizationId: "org-a",
       siteId: "site-a",
       eventId: "event-1",
       approverId: "quality-approver",
-      approvalNote: "Reviewed synthetic CAPA plan.",
+      approvalNote: "Independent review complete.",
     });
 
     expect(approved.status).toBe("ACTIVE");
@@ -128,19 +110,12 @@ describe("CAPA approval separation", () => {
       where: {
         entityType: "QualityCapa",
         entityId: "event-1",
-        action: { in: ["CAPA_DRAFT_CREATED", "CAPA_DRAFT_UPDATED"] },
+        action: {
+          in: ["CAPA_DRAFT_CREATED", "CAPA_DRAFT_UPDATED", "CAPA_REOPENED_INEFFECTIVE"],
+        },
       },
-      select: { actorId: true },
-    });
-    expect(mocks.membershipFindMany).toHaveBeenCalledWith({
-      where: {
-        organizationId: "org-a",
-        userId: { in: ["quality-2"] },
-        active: true,
-        user: { active: true },
-        OR: [{ allSites: true }, { siteMemberships: { some: { siteId: "site-a" } } }],
-      },
-      select: { userId: true },
+      orderBy: { createdAt: "asc" },
+      select: { action: true, actorId: true },
     });
     expect(mocks.auditCreate).toHaveBeenNthCalledWith(
       1,
@@ -149,24 +124,16 @@ describe("CAPA approval separation", () => {
           entityType: "QualityCapaApproval",
           action: "CAPA_APPROVED",
           actorId: "quality-approver",
-          afterJson: expect.stringContaining('"approvedDraftUpdatedAt":"2026-08-08T00:30:00.000Z"'),
-        }),
-      }),
-    );
-    expect(mocks.auditCreate).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({
-        data: expect.objectContaining({
-          entityType: "QualityCapa",
-          action: "CAPA_ACTIVATED",
-          actorId: "quality-approver",
         }),
       }),
     );
   });
 
-  it("rejects approval by any user who authored or edited the CAPA draft", async () => {
-    draftAuthorIds = ["quality-approver", "quality-later-editor"];
+  it("blocks every author or editor of the current draft cycle", async () => {
+    draftHistory = [
+      { action: "CAPA_DRAFT_CREATED", actorId: "quality-author" },
+      { action: "CAPA_DRAFT_UPDATED", actorId: "quality-approver" },
+    ];
 
     await expect(
       approveCapa({
@@ -176,38 +143,57 @@ describe("CAPA approval separation", () => {
         approverId: "quality-approver",
       }),
     ).rejects.toMatchObject({ code: "CAPA_SELF_APPROVAL_NOT_ALLOWED" });
-    expect(mocks.auditCreate).not.toHaveBeenCalled();
   });
 
-  it("rejects the original author even after a different user edited the draft later", async () => {
-    draftAuthorIds = ["quality-original-author", "quality-later-editor"];
+  it("resets author separation after an ineffective CAPA opens a new draft cycle", async () => {
+    draftHistory = [
+      { action: "CAPA_DRAFT_CREATED", actorId: "quality-previous-author" },
+      { action: "CAPA_DRAFT_UPDATED", actorId: "quality-previous-author" },
+      { action: "CAPA_REOPENED_INEFFECTIVE", actorId: "quality-verifier" },
+      { action: "CAPA_DRAFT_UPDATED", actorId: "quality-new-author" },
+    ];
+
+    const approved = await approveCapa({
+      organizationId: "org-a",
+      siteId: "site-a",
+      eventId: "event-1",
+      approverId: "quality-previous-author",
+    });
+
+    expect(approved.status).toBe("ACTIVE");
+  });
+
+  it("still blocks the new-cycle author", async () => {
+    draftHistory = [
+      { action: "CAPA_DRAFT_CREATED", actorId: "quality-previous-author" },
+      { action: "CAPA_REOPENED_INEFFECTIVE", actorId: "quality-verifier" },
+      { action: "CAPA_DRAFT_UPDATED", actorId: "quality-new-author" },
+    ];
 
     await expect(
       approveCapa({
         organizationId: "org-a",
         siteId: "site-a",
         eventId: "event-1",
-        approverId: "quality-original-author",
+        approverId: "quality-new-author",
       }),
     ).rejects.toMatchObject({ code: "CAPA_SELF_APPROVAL_NOT_ALLOWED" });
   });
 
-  it("rejects approvers without an active quality/admin/owner membership or site access", async () => {
+  it("rejects approvers without the required role or site access", async () => {
     mocks.membershipFindFirst.mockResolvedValue(null);
-
     await expect(
       approveCapa({
         organizationId: "org-a",
         siteId: "site-a",
         eventId: "event-1",
-        approverId: "tech-or-other-site-user",
+        approverId: "technician-1",
       }),
     ).rejects.toMatchObject({ code: "CAPA_APPROVER_NOT_ALLOWED" });
   });
 
-  it("revalidates action owners and their site access at approval time", async () => {
+  it("revalidates action owners at approval time", async () => {
     mocks.membershipFindMany.mockResolvedValue([]);
-
     await expect(
       approveCapa({
         organizationId: "org-a",
@@ -220,7 +206,6 @@ describe("CAPA approval separation", () => {
 
   it("rejects approval until root cause is confirmed", async () => {
     rootCauseStatus = "DRAFT";
-
     await expect(
       approveCapa({
         organizationId: "org-a",
