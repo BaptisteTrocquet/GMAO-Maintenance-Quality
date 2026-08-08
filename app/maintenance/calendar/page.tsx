@@ -27,6 +27,16 @@ function statusLabel(value: string) {
   return value.toLowerCase().replaceAll("_", " ");
 }
 
+function localDateLabel(value: Date | null, timeZone: string) {
+  if (!value) return "—";
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(value);
+}
+
 export default async function MaintenanceCalendarPage({
   searchParams,
 }: {
@@ -332,7 +342,7 @@ export default async function MaintenanceCalendarPage({
                 <td><span className="badge">{statusLabel(workOrder.status)}</span></td>
                 <td>{workOrder.asset?.code ?? "—"}</td>
                 <td>{workOrder.assignee?.displayName ?? workOrder.team?.name ?? "Unassigned"}</td>
-                <td>{workOrder.dueAt ? workOrder.dueAt.toISOString().slice(0, 10) : "—"}</td>
+                <td>{localDateLabel(workOrder.dueAt, site.organization.timezone)}</td>
               </tr>
             ))}
             {visibleUnscheduled.length === 0 ? (
