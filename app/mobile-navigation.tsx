@@ -34,6 +34,7 @@ export default function MobileNavigation() {
       if (event.key === "Escape") {
         event.preventDefault();
         setOpen(false);
+        requestAnimationFrame(() => triggerRef.current?.focus());
         return;
       }
       if (event.key !== "Tab" || !drawerRef.current) return;
