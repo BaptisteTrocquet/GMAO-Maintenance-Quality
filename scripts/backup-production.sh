@@ -34,6 +34,7 @@ case "$storage_provider" in
     ;;
 esac
 
+require_command node
 require_command pg_dump
 require_command pg_restore
 require_command sha256sum
@@ -73,13 +74,31 @@ trap cleanup_partial EXIT HUP INT TERM
 mkdir -p "$partial_dir"
 chmod 700 "$partial_dir"
 
+# Prisma accepts a `schema` query parameter in DATABASE_URL, while libpq/pg_dump does not.
+# Remove only that Prisma-specific parameter and pass the schema explicitly to pg_dump.
+pg_database_url="$(node -e '
+  const url = new URL(process.env.DATABASE_URL);
+  url.searchParams.delete("schema");
+  process.stdout.write(url.toString());
+')"
+pg_database_schema="$(node -e '
+  const url = new URL(process.env.DATABASE_URL);
+  process.stdout.write(url.searchParams.get("schema") ?? "");
+')"
+
 database_dump="$partial_dir/postgres.dump"
-pg_dump \
-  --dbname="$DATABASE_URL" \
-  --format=custom \
-  --no-owner \
-  --no-privileges \
+pg_dump_args=(
+  --dbname="$pg_database_url"
+  --format=custom
+  --no-owner
+  --no-privileges
   --file="$database_dump"
+)
+if [ -n "$pg_database_schema" ]; then
+  pg_dump_args+=(--schema="$pg_database_schema")
+fi
+pg_dump "${pg_dump_args[@]}"
+unset pg_database_url
 
 # A custom-format archive should be parseable before it is accepted as a backup artifact.
 pg_restore --list "$database_dump" >/dev/null
@@ -105,6 +124,7 @@ cat > "$partial_dir/manifest.txt" <<EOF
 format_version=1
 created_at_utc=$backup_timestamp
 database_dump=postgres.dump
+database_schema=${pg_database_schema:-all}
 storage_provider=$storage_provider
 storage_archive=$storage_archive
 consistency=$consistency_mode
