@@ -9,7 +9,11 @@ permissions:
   contents: read
 
 jobs:
+  upgrade-from-previous-supported-release:
+    uses: ./.github/workflows/upgrade-drill.yml
+
   verify-release-tag:
+    needs: upgrade-from-previous-supported-release
     runs-on: ubuntu-latest
     timeout-minutes: 25
 
