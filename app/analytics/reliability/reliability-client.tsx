@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 
 type ReliabilityData = {
   generatedAt: string;
-  mttr: { hours: number | null; sampleCount: number };
+  mttr: { hours: number | null; sampleCount: number; excludedIncomplete: number };
   mtbfProxy: { hours: number | null; sampleCount: number; assetCount: number };
   definitions: { mttr: string; mtbfProxy: string };
 };
@@ -77,6 +77,9 @@ export default function ReliabilityClient({
           <div className="metric">{hoursLabel(data.mttr.hours)}</div>
           <p>{data.definitions.mttr}</p>
           <div className="muted">Sample: {data.mttr.sampleCount} completed corrective work orders</div>
+          {data.mttr.excludedIncomplete > 0 ? (
+            <div className="muted">Excluded incomplete/invalid records: {data.mttr.excludedIncomplete}</div>
+          ) : null}
         </section>
 
         <section className="card">
