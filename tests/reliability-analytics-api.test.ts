@@ -58,9 +58,9 @@ describe("reliability analytics API", () => {
       timezone: "Europe/Paris",
       range: { from: "2026-06-30T22:00:00.000Z", toExclusive: "2026-08-08T10:00:00.000Z" },
       assetId: null,
-      mttr: { hours: null, sampleCount: 0 },
+      mttr: { hours: null, sampleCount: 0, excludedIncomplete: 2 },
       mtbf: { hours: null, sampleCount: 0, assetCount: 0 },
-      definitions: { mttr: "definition", mtbf: "definition" },
+      definitions: { mttr: "definition", mtbf: "proxy definition" },
     });
   });
 
