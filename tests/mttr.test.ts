@@ -46,9 +46,10 @@ describe("MTTR analytics", () => {
     expect(result.mttrMinutes).toBe(150);
     expect(result.mttrHours).toBe(2.5);
     expect(result.empty).toBe(false);
+    expect(result.insufficientData).toBe(false);
   });
 
-  it("returns null instead of zero when no repair has complete timestamps", () => {
+  it("distinguishes incomplete timing data from an actually empty reporting window", () => {
     const result = calculateMttr(
       {
         completedCorrective: 2,
@@ -61,7 +62,23 @@ describe("MTTR analytics", () => {
 
     expect(result.mttrMinutes).toBeNull();
     expect(result.mttrHours).toBeNull();
+    expect(result.empty).toBe(false);
+    expect(result.insufficientData).toBe(true);
+  });
+
+  it("marks a scope with no completed corrective work as empty", () => {
+    const result = calculateMttr(
+      {
+        completedCorrective: 0,
+        validRepairs: 0,
+        incompleteRepairs: 0,
+        totalRepairMinutes: 0,
+      },
+      { from, to, generatedAt: now },
+    );
+
     expect(result.empty).toBe(true);
+    expect(result.insufficientData).toBe(true);
   });
 
   it("converts aggregate bigint/string values without losing the KPI formula", async () => {
@@ -103,6 +120,7 @@ describe("MTTR analytics", () => {
     });
 
     expect(result.empty).toBe(true);
+    expect(result.insufficientData).toBe(true);
     expect(mocks.queryRaw).not.toHaveBeenCalled();
   });
 
