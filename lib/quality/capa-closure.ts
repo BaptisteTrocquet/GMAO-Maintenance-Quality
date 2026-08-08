@@ -50,7 +50,10 @@ export async function assertEffectiveCapaForEvent(input: {
   if (!capaLog) return;
 
   const capa = scopedSnapshot(capaLog.afterJson, input);
-  if (!capa || capa.status !== "READY_FOR_EFFECTIVENESS") {
+  // Keep cross-tenant event IDs opaque. The normal quality-event transition
+  // remains responsible for returning the scoped not-found result.
+  if (!capa) return;
+  if (capa.status !== "READY_FOR_EFFECTIVENESS") {
     throw new CapaClosureError(
       "CAPA_INCOMPLETE",
       "Quality event cannot close while its CAPA actions are incomplete",
