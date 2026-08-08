@@ -60,6 +60,16 @@ export default async function RootCausePage({
       />
 
       <section className="card section">
+        <div className="header asset-header">
+          <div>
+            <h2 style={{ margin: 0 }}>CAPA</h2>
+            <div className="muted">Turn the confirmed root cause into owned corrective and preventive actions.</div>
+          </div>
+          <Link className="table-link" href={`/quality/${eventId}/capa`}>Open CAPA →</Link>
+        </div>
+      </section>
+
+      <section className="card section">
         <h2>Root-cause revision timeline</h2>
         {timeline?.length ? (
           <ol className="timeline">
