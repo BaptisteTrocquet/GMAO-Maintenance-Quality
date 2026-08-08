@@ -210,10 +210,12 @@ export async function buildNotificationCenter(input: {
   }
 
   for (const event of qualityEvents) {
+    const severity: NotificationCenterSeverity =
+      event.severity === "CRITICAL" ? "CRITICAL" : "HIGH";
     items.push({
       id: `quality:${event.id}`,
       kind: "QUALITY_ALERT",
-      severity: event.severity,
+      severity,
       title: `${event.eventNumber} · ${event.title}`,
       detail: `${event.type.replaceAll("_", " ")} · ${event.status.replaceAll("_", " ")}`,
       href: `/quality/${event.id}`,
