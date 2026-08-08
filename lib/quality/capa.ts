@@ -1,35 +1,27 @@
-import { randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 
-const ENTITY_TYPE = "QualityCapa";
-const QUALITY_EVENT_ENTITY_TYPE = "QualityEvent";
-const ROOT_CAUSE_ENTITY_TYPE = "QualityRootCause";
+const CAPA_ENTITY = "QualityCapa";
+const QUALITY_EVENT_ENTITY = "QualityEvent";
+const ROOT_CAUSE_ENTITY = "QualityRootCause";
 const MAX_TRANSACTION_ATTEMPTS = 4;
 
-export type CapaStatus = "DRAFT" | "ACTIVE" | "CLOSED";
-export type CapaActionType = "CORRECTIVE" | "PREVENTIVE";
-export type CapaActionStatus = "OPEN" | "COMPLETED";
-export type EffectivenessResult = "EFFECTIVE" | "INEFFECTIVE";
+export type CapaStatus = "DRAFT" | "ACTIVE" | "READY_FOR_EFFECTIVENESS";
+export type QualityActionType = "CORRECTIVE" | "PREVENTIVE";
+export type QualityActionStatus = "PLANNED" | "IN_PROGRESS" | "COMPLETED" | "CANCELLED";
 
-export type CapaAction = {
+export type QualityActionSnapshot = {
   id: string;
-  type: CapaActionType;
+  actionKey: string;
+  type: QualityActionType;
   title: string;
   description: string | null;
   ownerId: string;
   dueAt: string;
-  status: CapaActionStatus;
+  status: QualityActionStatus;
   completionNote: string | null;
-  completedById: string | null;
   completedAt: string | null;
-};
-
-export type EffectivenessCheck = {
-  result: EffectivenessResult;
-  note: string;
-  verifiedById: string;
-  verifiedAt: string;
 };
 
 export type CapaSnapshot = {
@@ -37,23 +29,21 @@ export type CapaSnapshot = {
   organizationId: string;
   siteId: string;
   status: CapaStatus;
-  planSummary: string;
-  actions: CapaAction[];
-  approvedById: string | null;
-  approvedAt: string | null;
-  effectivenessChecks: EffectivenessCheck[];
+  objective: string;
+  actions: QualityActionSnapshot[];
   createdAt: string;
   updatedAt: string;
-  closedAt: string | null;
+  activatedAt: string | null;
+  readyForEffectivenessAt: string | null;
 };
 
-type QualityEventReference = {
+type QualityEventState = {
   organizationId: string;
   siteId: string;
   status: "OPEN" | "CONTAINED" | "INVESTIGATING" | "CLOSED";
 };
 
-type RootCauseReference = {
+type RootCauseState = {
   organizationId: string;
   siteId: string;
   status: "DRAFT" | "CONFIRMED";
@@ -63,19 +53,18 @@ export class CapaError extends Error {
   constructor(
     public readonly code:
       | "QUALITY_EVENT_NOT_FOUND"
-      | "INVESTIGATION_REQUIRED"
-      | "EVENT_CLOSED"
-      | "ROOT_CAUSE_REQUIRED"
+      | "EVENT_NOT_INVESTIGATING"
+      | "ROOT_CAUSE_CONFIRMATION_REQUIRED"
       | "CAPA_NOT_FOUND"
-      | "CAPA_LOCKED"
-      | "CAPA_ALREADY_CLOSED"
-      | "ACTION_REQUIRED"
+      | "CAPA_NOT_DRAFT"
+      | "CAPA_NOT_ACTIVE"
       | "ACTION_NOT_FOUND"
       | "ACTION_OWNER_NOT_FOUND"
+      | "DUPLICATE_ACTION_KEY"
+      | "ACTION_DATA_REQUIRED"
+      | "INVALID_ACTION_TRANSITION"
       | "ACTION_COMPLETION_NOTE_REQUIRED"
-      | "ACTIONS_INCOMPLETE"
-      | "EFFECTIVENESS_NOTE_REQUIRED"
-      | "INVALID_ACTIONS",
+      | "OPEN_ACTIONS_REMAIN",
     message: string,
   ) {
     super(message);
@@ -83,10 +72,14 @@ export class CapaError extends Error {
   }
 }
 
-function parseQualityEvent(value: string | null): QualityEventReference | null {
+function stableActionId(eventId: string, actionKey: string) {
+  return createHash("sha256").update(`${eventId}:${actionKey}`).digest("hex");
+}
+
+function parseEvent(value: string | null): QualityEventState | null {
   if (!value) return null;
   try {
-    const parsed = JSON.parse(value) as Partial<QualityEventReference>;
+    const parsed = JSON.parse(value) as Partial<QualityEventState>;
     if (
       typeof parsed.organizationId !== "string" ||
       typeof parsed.siteId !== "string" ||
@@ -94,33 +87,29 @@ function parseQualityEvent(value: string | null): QualityEventReference | null {
         parsed.status !== "CONTAINED" &&
         parsed.status !== "INVESTIGATING" &&
         parsed.status !== "CLOSED")
-    ) {
-      return null;
-    }
-    return parsed as QualityEventReference;
+    ) return null;
+    return parsed as QualityEventState;
   } catch {
     return null;
   }
 }
 
-function parseRootCause(value: string | null): RootCauseReference | null {
+function parseRootCause(value: string | null): RootCauseState | null {
   if (!value) return null;
   try {
-    const parsed = JSON.parse(value) as Partial<RootCauseReference>;
+    const parsed = JSON.parse(value) as Partial<RootCauseState>;
     if (
       typeof parsed.organizationId !== "string" ||
       typeof parsed.siteId !== "string" ||
       (parsed.status !== "DRAFT" && parsed.status !== "CONFIRMED")
-    ) {
-      return null;
-    }
-    return parsed as RootCauseReference;
+    ) return null;
+    return parsed as RootCauseState;
   } catch {
     return null;
   }
 }
 
-function parseSnapshot(value: string | null): CapaSnapshot | null {
+function parseCapa(value: string | null): CapaSnapshot | null {
   if (!value) return null;
   try {
     const parsed = JSON.parse(value) as Partial<CapaSnapshot>;
@@ -128,18 +117,12 @@ function parseSnapshot(value: string | null): CapaSnapshot | null {
       typeof parsed.eventId !== "string" ||
       typeof parsed.organizationId !== "string" ||
       typeof parsed.siteId !== "string" ||
-      (parsed.status !== "DRAFT" && parsed.status !== "ACTIVE" && parsed.status !== "CLOSED") ||
-      typeof parsed.planSummary !== "string" ||
+      (parsed.status !== "DRAFT" && parsed.status !== "ACTIVE" && parsed.status !== "READY_FOR_EFFECTIVENESS") ||
+      typeof parsed.objective !== "string" ||
       !Array.isArray(parsed.actions) ||
-      !Array.isArray(parsed.effectivenessChecks) ||
       typeof parsed.createdAt !== "string" ||
-      typeof parsed.updatedAt !== "string" ||
-      !(parsed.approvedById === null || typeof parsed.approvedById === "string") ||
-      !(parsed.approvedAt === null || typeof parsed.approvedAt === "string") ||
-      !(parsed.closedAt === null || typeof parsed.closedAt === "string")
-    ) {
-      return null;
-    }
+      typeof parsed.updatedAt !== "string"
+    ) return null;
     return parsed as CapaSnapshot;
   } catch {
     return null;
@@ -165,66 +148,38 @@ async function serializable<T>(work: (tx: Prisma.TransactionClient) => Promise<T
   throw lastError;
 }
 
-async function currentQualityEvent(
+async function latestJson(
   client: Pick<Prisma.TransactionClient, "auditLog">,
-  eventId: string,
+  entityType: string,
+  entityId: string,
 ) {
-  const log = await client.auditLog.findFirst({
-    where: { entityType: QUALITY_EVENT_ENTITY_TYPE, entityId: eventId },
+  const record = await client.auditLog.findFirst({
+    where: { entityType, entityId },
     orderBy: { createdAt: "desc" },
     select: { afterJson: true },
   });
-  return parseQualityEvent(log?.afterJson ?? null);
+  return record?.afterJson ?? null;
 }
 
-async function currentRootCause(
-  client: Pick<Prisma.TransactionClient, "auditLog">,
-  eventId: string,
-) {
-  const log = await client.auditLog.findFirst({
-    where: { entityType: ROOT_CAUSE_ENTITY_TYPE, entityId: eventId },
-    orderBy: { createdAt: "desc" },
-    select: { afterJson: true },
-  });
-  return parseRootCause(log?.afterJson ?? null);
-}
-
-export async function latestCapaSnapshot(
-  client: Pick<Prisma.TransactionClient, "auditLog">,
-  eventId: string,
-) {
-  const log = await client.auditLog.findFirst({
-    where: { entityType: ENTITY_TYPE, entityId: eventId },
-    orderBy: { createdAt: "desc" },
-    select: { afterJson: true },
-  });
-  return parseSnapshot(log?.afterJson ?? null);
-}
-
-async function requireCapaContext(
+async function requireInvestigatingEvent(
   tx: Prisma.TransactionClient,
   input: { organizationId: string; siteId: string; eventId: string },
 ) {
-  const [event, rootCause] = await Promise.all([
-    currentQualityEvent(tx, input.eventId),
-    currentRootCause(tx, input.eventId),
-  ]);
-  if (
-    !event ||
-    event.organizationId !== input.organizationId ||
-    event.siteId !== input.siteId
-  ) {
+  const event = parseEvent(await latestJson(tx, QUALITY_EVENT_ENTITY, input.eventId));
+  if (!event || event.organizationId !== input.organizationId || event.siteId !== input.siteId) {
     throw new CapaError("QUALITY_EVENT_NOT_FOUND", "Quality event not found in site scope");
   }
-  if (event.status === "CLOSED") {
-    throw new CapaError("EVENT_CLOSED", "Closed quality events cannot change CAPA");
-  }
   if (event.status !== "INVESTIGATING") {
-    throw new CapaError(
-      "INVESTIGATION_REQUIRED",
-      "Start the quality-event investigation before managing CAPA",
-    );
+    throw new CapaError("EVENT_NOT_INVESTIGATING", "CAPA can only be changed while the quality event is investigating");
   }
+  return event;
+}
+
+async function requireConfirmedRootCause(
+  tx: Prisma.TransactionClient,
+  input: { organizationId: string; siteId: string; eventId: string },
+) {
+  const rootCause = parseRootCause(await latestJson(tx, ROOT_CAUSE_ENTITY, input.eventId));
   if (
     !rootCause ||
     rootCause.organizationId !== input.organizationId ||
@@ -232,35 +187,81 @@ async function requireCapaContext(
     rootCause.status !== "CONFIRMED"
   ) {
     throw new CapaError(
-      "ROOT_CAUSE_REQUIRED",
-      "Confirm root-cause analysis before creating or approving CAPA",
+      "ROOT_CAUSE_CONFIRMATION_REQUIRED",
+      "Confirm root-cause analysis before activating CAPA",
     );
   }
 }
 
-async function validateActionOwner(
+async function latestCapa(client: Pick<Prisma.TransactionClient, "auditLog">, eventId: string) {
+  return parseCapa(await latestJson(client, CAPA_ENTITY, eventId));
+}
+
+async function validateOwners(
   tx: Prisma.TransactionClient,
-  input: { organizationId: string; siteId: string; ownerId: string },
+  organizationId: string,
+  siteId: string,
+  ownerIds: string[],
 ) {
-  const membership = await tx.organizationMembership.findFirst({
+  const uniqueOwnerIds = [...new Set(ownerIds)];
+  if (!uniqueOwnerIds.length) return;
+  const memberships = await tx.organizationMembership.findMany({
     where: {
-      organizationId: input.organizationId,
-      userId: input.ownerId,
+      organizationId,
+      userId: { in: uniqueOwnerIds },
       active: true,
       user: { active: true },
-      OR: [
-        { allSites: true },
-        { siteMemberships: { some: { siteId: input.siteId } } },
-      ],
+      OR: [{ allSites: true }, { siteMemberships: { some: { siteId } } }],
     },
-    select: { id: true },
+    select: { userId: true },
   });
-  if (!membership) {
+  const valid = new Set(memberships.map((membership) => membership.userId));
+  const missing = uniqueOwnerIds.find((ownerId) => !valid.has(ownerId));
+  if (missing) {
     throw new CapaError(
       "ACTION_OWNER_NOT_FOUND",
-      "CAPA action owner must be an active member with access to this site",
+      "Each CAPA action owner must be an active organization member with access to this site",
     );
   }
+}
+
+function normalizeActions(
+  eventId: string,
+  actions: Array<{
+    actionKey: string;
+    type: QualityActionType;
+    title: string;
+    description?: string | null;
+    ownerId: string;
+    dueAt: Date;
+  }>,
+  previous?: CapaSnapshot | null,
+) {
+  const keys = new Set<string>();
+  const previousByKey = new Map((previous?.actions ?? []).map((action) => [action.actionKey, action]));
+  return actions.map((input) => {
+    const actionKey = input.actionKey.trim();
+    if (!actionKey || keys.has(actionKey)) {
+      throw new CapaError("DUPLICATE_ACTION_KEY", "CAPA actionKey values must be non-empty and unique");
+    }
+    keys.add(actionKey);
+    if (!input.title.trim() || !input.ownerId.trim() || Number.isNaN(input.dueAt.getTime())) {
+      throw new CapaError("ACTION_DATA_REQUIRED", "Each CAPA action requires title, owner and due date");
+    }
+    const existing = previousByKey.get(actionKey);
+    return {
+      id: existing?.id ?? stableActionId(eventId, actionKey),
+      actionKey,
+      type: input.type,
+      title: input.title.trim(),
+      description: input.description?.trim() || null,
+      ownerId: input.ownerId,
+      dueAt: input.dueAt.toISOString(),
+      status: existing?.status ?? ("PLANNED" as const),
+      completionNote: existing?.completionNote ?? null,
+      completedAt: existing?.completedAt ?? null,
+    } satisfies QualityActionSnapshot;
+  });
 }
 
 async function appendSnapshot(
@@ -271,7 +272,7 @@ async function appendSnapshot(
   await tx.auditLog.create({
     data: {
       actorId: input.actorId,
-      entityType: ENTITY_TYPE,
+      entityType: CAPA_ENTITY,
       entityId: snapshot.eventId,
       action: input.action,
       beforeJson: input.previous ? JSON.stringify(input.previous) : null,
@@ -280,323 +281,196 @@ async function appendSnapshot(
   });
 }
 
-export type SaveCapaActionInput = {
-  id?: string;
-  type: CapaActionType;
-  title: string;
-  description?: string | null;
-  ownerId: string;
-  dueAt: Date;
-};
-
-function actionMeaningChanged(existing: CapaAction, next: {
-  type: CapaActionType;
-  title: string;
-  description: string | null;
-  ownerId: string;
-  dueAt: string;
-}) {
-  return (
-    existing.type !== next.type ||
-    existing.title !== next.title ||
-    existing.description !== next.description ||
-    existing.ownerId !== next.ownerId ||
-    existing.dueAt !== next.dueAt
-  );
-}
-
 export async function saveCapaDraft(input: {
   organizationId: string;
   siteId: string;
   eventId: string;
-  planSummary: string;
-  actions: SaveCapaActionInput[];
+  objective: string;
+  actions: Array<{
+    actionKey: string;
+    type: QualityActionType;
+    title: string;
+    description?: string | null;
+    ownerId: string;
+    dueAt: Date;
+  }>;
   actorId: string;
 }) {
   return serializable(async (tx) => {
-    await requireCapaContext(tx, input);
-    const previous = await latestCapaSnapshot(tx, input.eventId);
-    if (previous && previous.status !== "DRAFT") {
-      throw new CapaError("CAPA_LOCKED", "Approved CAPA must be reopened before editing its plan");
+    await requireInvestigatingEvent(tx, input);
+    const previous = await latestCapa(tx, input.eventId);
+    if (previous?.status !== undefined && previous.status !== "DRAFT") {
+      throw new CapaError("CAPA_NOT_DRAFT", "Only draft CAPA plans can change plan structure");
     }
-
-    const ids = new Set<string>();
-    const previousById = new Map((previous?.actions ?? []).map((action) => [action.id, action]));
-    const actions: CapaAction[] = [];
-    for (const rawAction of input.actions) {
-      const title = rawAction.title.trim();
-      if (!title || !Number.isFinite(rawAction.dueAt.getTime())) {
-        throw new CapaError("INVALID_ACTIONS", "Each CAPA action requires a title and valid due date");
-      }
-      await validateActionOwner(tx, {
-        organizationId: input.organizationId,
-        siteId: input.siteId,
-        ownerId: rawAction.ownerId,
-      });
-      const id = rawAction.id?.trim() || randomUUID();
-      if (ids.has(id)) {
-        throw new CapaError("INVALID_ACTIONS", "CAPA action IDs must be unique");
-      }
-      ids.add(id);
-      const existing = previousById.get(id);
-      const nextMeaning = {
-        type: rawAction.type,
-        title,
-        description: rawAction.description?.trim() || null,
-        ownerId: rawAction.ownerId,
-        dueAt: rawAction.dueAt.toISOString(),
-      };
-      const preserveCompletion = Boolean(existing && !actionMeaningChanged(existing, nextMeaning));
-      actions.push({
-        id,
-        ...nextMeaning,
-        status: preserveCompletion ? existing!.status : "OPEN",
-        completionNote: preserveCompletion ? existing!.completionNote : null,
-        completedById: preserveCompletion ? existing!.completedById : null,
-        completedAt: preserveCompletion ? existing!.completedAt : null,
-      });
-    }
-
+    const actions = normalizeActions(input.eventId, input.actions, previous);
+    await validateOwners(tx, input.organizationId, input.siteId, actions.map((action) => action.ownerId));
     const now = new Date().toISOString();
     const snapshot: CapaSnapshot = {
       eventId: input.eventId,
       organizationId: input.organizationId,
       siteId: input.siteId,
       status: "DRAFT",
-      planSummary: input.planSummary.trim(),
+      objective: input.objective.trim(),
       actions,
-      approvedById: null,
-      approvedAt: null,
-      effectivenessChecks: previous?.effectivenessChecks ?? [],
       createdAt: previous?.createdAt ?? now,
       updatedAt: now,
-      closedAt: null,
+      activatedAt: null,
+      readyForEffectivenessAt: null,
     };
     await appendSnapshot(tx, snapshot, {
       actorId: input.actorId,
-      action: previous ? "PLAN_UPDATED" : "CREATED",
+      action: previous ? "CAPA_DRAFT_UPDATED" : "CAPA_DRAFT_CREATED",
       previous,
     });
     return snapshot;
   });
 }
 
-export async function approveCapa(input: {
+export async function activateCapa(input: {
   organizationId: string;
   siteId: string;
   eventId: string;
   actorId: string;
 }) {
   return serializable(async (tx) => {
-    await requireCapaContext(tx, input);
-    const previous = await latestCapaSnapshot(tx, input.eventId);
+    await requireInvestigatingEvent(tx, input);
+    await requireConfirmedRootCause(tx, input);
+    const previous = await latestCapa(tx, input.eventId);
     if (!previous || previous.organizationId !== input.organizationId || previous.siteId !== input.siteId) {
       throw new CapaError("CAPA_NOT_FOUND", "CAPA plan not found in site scope");
     }
-    if (previous.status === "CLOSED") return previous;
-    if (previous.status !== "DRAFT") {
-      throw new CapaError("CAPA_LOCKED", "Only draft CAPA can be approved");
+    if (previous.status !== "DRAFT") throw new CapaError("CAPA_NOT_DRAFT", "Only draft CAPA can be activated");
+    if (!previous.objective.trim() || previous.actions.length === 0) {
+      throw new CapaError("ACTION_DATA_REQUIRED", "CAPA activation requires an objective and at least one action");
     }
-    if (!previous.planSummary.trim() || previous.actions.length === 0) {
-      throw new CapaError("ACTION_REQUIRED", "CAPA approval requires a plan summary and at least one action");
-    }
-    for (const action of previous.actions) {
-      await validateActionOwner(tx, {
-        organizationId: input.organizationId,
-        siteId: input.siteId,
-        ownerId: action.ownerId,
-      });
-    }
-
+    await validateOwners(tx, input.organizationId, input.siteId, previous.actions.map((action) => action.ownerId));
     const now = new Date().toISOString();
     const snapshot: CapaSnapshot = {
       ...previous,
       status: "ACTIVE",
-      approvedById: input.actorId,
-      approvedAt: now,
       updatedAt: now,
-      closedAt: null,
+      activatedAt: now,
     };
-    await appendSnapshot(tx, snapshot, { actorId: input.actorId, action: "APPROVED", previous });
+    await appendSnapshot(tx, snapshot, { actorId: input.actorId, action: "CAPA_ACTIVATED", previous });
     return snapshot;
   });
 }
 
-export async function completeCapaAction(input: {
+function transitionAction(
+  action: QualityActionSnapshot,
+  transition: "START" | "COMPLETE" | "CANCEL",
+  completionNote?: string | null,
+) {
+  if (transition === "START" && action.status === "PLANNED") {
+    return { ...action, status: "IN_PROGRESS" as const };
+  }
+  if (transition === "COMPLETE" && (action.status === "PLANNED" || action.status === "IN_PROGRESS")) {
+    const note = completionNote?.trim();
+    if (!note) {
+      throw new CapaError("ACTION_COMPLETION_NOTE_REQUIRED", "A completion note is required when completing a CAPA action");
+    }
+    return {
+      ...action,
+      status: "COMPLETED" as const,
+      completionNote: note,
+      completedAt: new Date().toISOString(),
+    };
+  }
+  if (transition === "CANCEL" && (action.status === "PLANNED" || action.status === "IN_PROGRESS")) {
+    return { ...action, status: "CANCELLED" as const, completionNote: completionNote?.trim() || null };
+  }
+  throw new CapaError("INVALID_ACTION_TRANSITION", "Unsupported CAPA action status transition");
+}
+
+function actionAuditName(transition: "START" | "COMPLETE" | "CANCEL") {
+  if (transition === "START") return "CAPA_ACTION_STARTED";
+  if (transition === "COMPLETE") return "CAPA_ACTION_COMPLETED";
+  return "CAPA_ACTION_CANCELLED";
+}
+
+export async function transitionCapaAction(input: {
   organizationId: string;
   siteId: string;
   eventId: string;
   actionId: string;
-  completionNote: string;
+  transition: "START" | "COMPLETE" | "CANCEL";
+  completionNote?: string | null;
   actorId: string;
 }) {
   return serializable(async (tx) => {
-    await requireCapaContext(tx, input);
-    const previous = await latestCapaSnapshot(tx, input.eventId);
+    await requireInvestigatingEvent(tx, input);
+    const previous = await latestCapa(tx, input.eventId);
     if (!previous || previous.organizationId !== input.organizationId || previous.siteId !== input.siteId) {
       throw new CapaError("CAPA_NOT_FOUND", "CAPA plan not found in site scope");
     }
-    if (previous.status !== "ACTIVE") {
-      throw new CapaError("CAPA_LOCKED", "CAPA actions can only be completed after plan approval");
-    }
+    if (previous.status !== "ACTIVE") throw new CapaError("CAPA_NOT_ACTIVE", "CAPA actions can only execute while CAPA is active");
     const index = previous.actions.findIndex((action) => action.id === input.actionId);
     if (index < 0) throw new CapaError("ACTION_NOT_FOUND", "CAPA action not found");
-    if (previous.actions[index].status === "COMPLETED") return previous;
-    const note = input.completionNote.trim();
-    if (!note) {
-      throw new CapaError(
-        "ACTION_COMPLETION_NOTE_REQUIRED",
-        "A completion note is required to close a CAPA action",
-      );
-    }
-
-    const now = new Date().toISOString();
-    const actions = previous.actions.map((action, actionIndex) =>
-      actionIndex === index
-        ? {
-            ...action,
-            status: "COMPLETED" as const,
-            completionNote: note,
-            completedById: input.actorId,
-            completedAt: now,
-          }
-        : action,
-    );
-    const snapshot: CapaSnapshot = { ...previous, actions, updatedAt: now };
+    const updatedAction = transitionAction(previous.actions[index], input.transition, input.completionNote);
+    const actions = previous.actions.map((action, actionIndex) => actionIndex === index ? updatedAction : action);
+    const snapshot: CapaSnapshot = { ...previous, actions, updatedAt: new Date().toISOString() };
     await appendSnapshot(tx, snapshot, {
       actorId: input.actorId,
-      action: "ACTION_COMPLETED",
+      action: actionAuditName(input.transition),
       previous,
     });
     return snapshot;
   });
 }
 
-export async function verifyCapaEffectiveness(input: {
+export async function markCapaReadyForEffectiveness(input: {
   organizationId: string;
   siteId: string;
   eventId: string;
-  result: EffectivenessResult;
-  note: string;
   actorId: string;
 }) {
   return serializable(async (tx) => {
-    await requireCapaContext(tx, input);
-    const previous = await latestCapaSnapshot(tx, input.eventId);
+    await requireInvestigatingEvent(tx, input);
+    const previous = await latestCapa(tx, input.eventId);
     if (!previous || previous.organizationId !== input.organizationId || previous.siteId !== input.siteId) {
       throw new CapaError("CAPA_NOT_FOUND", "CAPA plan not found in site scope");
     }
-    if (previous.status !== "ACTIVE") {
-      throw new CapaError("CAPA_LOCKED", "Only active CAPA can be verified");
+    if (previous.status !== "ACTIVE") throw new CapaError("CAPA_NOT_ACTIVE", "Only active CAPA can move to effectiveness verification");
+    if (previous.actions.some((action) => action.status !== "COMPLETED" && action.status !== "CANCELLED")) {
+      throw new CapaError("OPEN_ACTIONS_REMAIN", "Complete or cancel every CAPA action before effectiveness verification");
     }
-    if (previous.actions.some((action) => action.status !== "COMPLETED")) {
-      throw new CapaError("ACTIONS_INCOMPLETE", "Complete every CAPA action before effectiveness verification");
-    }
-    const note = input.note.trim();
-    if (!note) {
-      throw new CapaError(
-        "EFFECTIVENESS_NOTE_REQUIRED",
-        "Effectiveness verification requires an evidence-based note",
-      );
-    }
-
     const now = new Date().toISOString();
-    const effectivenessChecks = [
-      ...previous.effectivenessChecks,
-      { result: input.result, note, verifiedById: input.actorId, verifiedAt: now },
-    ];
-    const snapshot: CapaSnapshot =
-      input.result === "EFFECTIVE"
-        ? {
-            ...previous,
-            status: "CLOSED",
-            effectivenessChecks,
-            updatedAt: now,
-            closedAt: now,
-          }
-        : {
-            ...previous,
-            status: "DRAFT",
-            approvedById: null,
-            approvedAt: null,
-            effectivenessChecks,
-            updatedAt: now,
-            closedAt: null,
-          };
-    await appendSnapshot(tx, snapshot, {
-      actorId: input.actorId,
-      action: input.result === "EFFECTIVE" ? "EFFECTIVENESS_CONFIRMED" : "EFFECTIVENESS_FAILED",
-      previous,
-    });
-    return snapshot;
-  });
-}
-
-export async function reopenCapa(input: {
-  organizationId: string;
-  siteId: string;
-  eventId: string;
-  actorId: string;
-}) {
-  return serializable(async (tx) => {
-    await requireCapaContext(tx, input);
-    const previous = await latestCapaSnapshot(tx, input.eventId);
-    if (!previous || previous.organizationId !== input.organizationId || previous.siteId !== input.siteId) {
-      throw new CapaError("CAPA_NOT_FOUND", "CAPA plan not found in site scope");
-    }
-    if (previous.status !== "CLOSED") {
-      throw new CapaError("CAPA_ALREADY_CLOSED", "Only closed CAPA can be reopened");
-    }
     const snapshot: CapaSnapshot = {
       ...previous,
-      status: "DRAFT",
-      approvedById: null,
-      approvedAt: null,
-      updatedAt: new Date().toISOString(),
-      closedAt: null,
+      status: "READY_FOR_EFFECTIVENESS",
+      updatedAt: now,
+      readyForEffectivenessAt: now,
     };
-    await appendSnapshot(tx, snapshot, { actorId: input.actorId, action: "REOPENED", previous });
+    await appendSnapshot(tx, snapshot, {
+      actorId: input.actorId,
+      action: "CAPA_READY_FOR_EFFECTIVENESS",
+      previous,
+    });
     return snapshot;
   });
 }
 
-export async function getCapaWorkspace(input: {
-  organizationId: string;
-  siteId: string;
-  eventId: string;
-}) {
-  const [event, rootCause, capa] = await Promise.all([
-    currentQualityEvent(db as unknown as Pick<Prisma.TransactionClient, "auditLog">, input.eventId),
-    currentRootCause(db as unknown as Pick<Prisma.TransactionClient, "auditLog">, input.eventId),
-    latestCapaSnapshot(db as unknown as Pick<Prisma.TransactionClient, "auditLog">, input.eventId),
-  ]);
-  if (!event || event.organizationId !== input.organizationId || event.siteId !== input.siteId) {
-    return null;
-  }
-  if (capa && (capa.organizationId !== input.organizationId || capa.siteId !== input.siteId)) {
-    return null;
-  }
-  return { event, rootCause, capa };
+export async function getCapa(input: { organizationId: string; siteId: string; eventId: string }) {
+  const event = parseEvent(
+    await latestJson(db as unknown as Pick<Prisma.TransactionClient, "auditLog">, QUALITY_EVENT_ENTITY, input.eventId),
+  );
+  if (!event || event.organizationId !== input.organizationId || event.siteId !== input.siteId) return null;
+  const capa = await latestCapa(db as unknown as Pick<Prisma.TransactionClient, "auditLog">, input.eventId);
+  if (capa && (capa.organizationId !== input.organizationId || capa.siteId !== input.siteId)) return null;
+  return { event, capa };
 }
 
-export async function listCapaTimeline(input: {
-  organizationId: string;
-  siteId: string;
-  eventId: string;
-}) {
-  const workspace = await getCapaWorkspace(input);
-  if (!workspace) return null;
-  const logs = await db.auditLog.findMany({
-    where: { entityType: ENTITY_TYPE, entityId: input.eventId },
+export async function listCapaTimeline(input: { organizationId: string; siteId: string; eventId: string }) {
+  const scoped = await getCapa(input);
+  if (!scoped) return null;
+  const records = await db.auditLog.findMany({
+    where: { entityType: CAPA_ENTITY, entityId: input.eventId },
     include: { actor: { select: { displayName: true } } },
     orderBy: { createdAt: "asc" },
   });
-  return logs.map((log) => ({
-    id: log.id,
-    action: log.action,
-    actorName: log.actor?.displayName ?? "System",
-    createdAt: log.createdAt,
-    before: parseSnapshot(log.beforeJson),
-    after: parseSnapshot(log.afterJson),
-  }));
+  return records.flatMap((record) => {
+    const after = parseCapa(record.afterJson);
+    if (!after || after.organizationId !== input.organizationId || after.siteId !== input.siteId) return [];
+    return [{ id: record.id, action: record.action, createdAt: record.createdAt, actorName: record.actor?.displayName ?? "System", after }];
+  });
 }

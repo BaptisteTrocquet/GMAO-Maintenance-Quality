@@ -1,6 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
-import type { CapaSnapshot } from "@/lib/quality/capa";
+import { type CapaSnapshot } from "@/lib/quality/capa";
 
 const CAPA_ENTITY = "QualityCapa";
 const APPROVAL_ENTITY = "QualityCapaApproval";
@@ -18,11 +18,6 @@ type RootCauseState = {
   organizationId: string;
   siteId: string;
   status: "DRAFT" | "CONFIRMED";
-};
-
-type DraftAudit = {
-  action: string;
-  actorId: string | null;
 };
 
 export class CapaApprovalError extends Error {
@@ -60,10 +55,11 @@ function parseCapa(value: string | null): CapaSnapshot | null {
     typeof parsed.eventId !== "string" ||
     typeof parsed.organizationId !== "string" ||
     typeof parsed.siteId !== "string" ||
-    (parsed.status !== "DRAFT" && parsed.status !== "ACTIVE" && parsed.status !== "CLOSED") ||
-    typeof parsed.planSummary !== "string" ||
+    (parsed.status !== "DRAFT" &&
+      parsed.status !== "ACTIVE" &&
+      parsed.status !== "READY_FOR_EFFECTIVENESS") ||
+    typeof parsed.objective !== "string" ||
     !Array.isArray(parsed.actions) ||
-    !Array.isArray(parsed.effectivenessChecks) ||
     typeof parsed.createdAt !== "string" ||
     typeof parsed.updatedAt !== "string"
   ) {
@@ -104,23 +100,7 @@ async function serializable<T>(work: (tx: Prisma.TransactionClient) => Promise<T
   throw lastError;
 }
 
-function currentDraftAuthors(logs: DraftAudit[]) {
-  let cycleStart = 0;
-  for (let index = 0; index < logs.length; index += 1) {
-    if (logs[index].action === "EFFECTIVENESS_FAILED" || logs[index].action === "REOPENED") {
-      cycleStart = index + 1;
-    }
-  }
-
-  return new Set(
-    logs
-      .slice(cycleStart)
-      .filter((log) => log.action === "CREATED" || log.action === "PLAN_UPDATED")
-      .flatMap((log) => (log.actorId ? [log.actorId] : [])),
-  );
-}
-
-export async function approveCapaWithGovernance(input: {
+export async function approveCapa(input: {
   organizationId: string;
   siteId: string;
   eventId: string;
@@ -159,10 +139,10 @@ export async function approveCapaWithGovernance(input: {
     if (capa.status !== "DRAFT") {
       throw new CapaApprovalError("CAPA_NOT_DRAFT", "Only draft CAPA plans can be approved");
     }
-    if (!capa.planSummary.trim() || capa.actions.length === 0) {
+    if (!capa.objective.trim() || capa.actions.length === 0) {
       throw new CapaApprovalError(
         "ACTION_DATA_REQUIRED",
-        "CAPA approval requires a plan summary and at least one action",
+        "CAPA approval requires an objective and at least one action",
       );
     }
 
@@ -184,19 +164,21 @@ export async function approveCapaWithGovernance(input: {
       );
     }
 
-    const draftHistory = await tx.auditLog.findMany({
+    const draftEdits = await tx.auditLog.findMany({
       where: {
         entityType: CAPA_ENTITY,
         entityId: input.eventId,
-        action: { in: ["CREATED", "PLAN_UPDATED", "EFFECTIVENESS_FAILED", "REOPENED"] },
+        action: { in: ["CAPA_DRAFT_CREATED", "CAPA_DRAFT_UPDATED"] },
       },
-      orderBy: { createdAt: "asc" },
-      select: { action: true, actorId: true },
+      select: { actorId: true },
     });
-    if (currentDraftAuthors(draftHistory).has(input.approverId)) {
+    const draftAuthors = new Set(
+      draftEdits.flatMap((edit) => (edit.actorId ? [edit.actorId] : [])),
+    );
+    if (draftAuthors.has(input.approverId)) {
       throw new CapaApprovalError(
         "CAPA_SELF_APPROVAL_NOT_ALLOWED",
-        "A user who authored or edited the current CAPA draft cannot approve it",
+        "A user who authored or edited the CAPA draft cannot approve it",
       );
     }
 
@@ -211,8 +193,8 @@ export async function approveCapaWithGovernance(input: {
       },
       select: { userId: true },
     });
-    const validOwnerIds = new Set(owners.map((owner) => owner.userId));
-    if (ownerIds.some((ownerId) => !validOwnerIds.has(ownerId))) {
+    const validOwners = new Set(owners.map((owner) => owner.userId));
+    if (ownerIds.some((ownerId) => !validOwners.has(ownerId))) {
       throw new CapaApprovalError(
         "ACTION_OWNER_NOT_FOUND",
         "Each CAPA action owner must still have active access to this site at approval time",
@@ -223,10 +205,8 @@ export async function approveCapaWithGovernance(input: {
     const approved: CapaSnapshot = {
       ...capa,
       status: "ACTIVE",
-      approvedById: input.approverId,
-      approvedAt: now,
       updatedAt: now,
-      closedAt: null,
+      activatedAt: now,
     };
 
     await tx.auditLog.create({
@@ -252,7 +232,7 @@ export async function approveCapaWithGovernance(input: {
         actorId: input.approverId,
         entityType: CAPA_ENTITY,
         entityId: input.eventId,
-        action: "APPROVED",
+        action: "CAPA_ACTIVATED",
         beforeJson: JSON.stringify(capa),
         afterJson: JSON.stringify(approved),
       },

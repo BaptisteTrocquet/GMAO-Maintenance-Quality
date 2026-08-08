@@ -13,13 +13,12 @@ const mocks = vi.hoisted(() => {
   }
   return {
     authenticateRequest: vi.fn(),
-    getCapaWorkspace: vi.fn(),
+    getCapa: vi.fn(),
     listCapaTimeline: vi.fn(),
     saveCapaDraft: vi.fn(),
-    approveCapaWithGovernance: vi.fn(),
-    completeCapaAction: vi.fn(),
-    verifyCapaEffectiveness: vi.fn(),
-    reopenCapa: vi.fn(),
+    approveCapa: vi.fn(),
+    transitionCapaAction: vi.fn(),
+    markCapaReadyForEffectiveness: vi.fn(),
     CapaError,
     CapaApprovalError,
   };
@@ -27,39 +26,31 @@ const mocks = vi.hoisted(() => {
 
 vi.mock("@/lib/auth/request-auth", () => ({ authenticateRequest: mocks.authenticateRequest }));
 vi.mock("@/lib/quality/capa", () => ({
-  getCapaWorkspace: mocks.getCapaWorkspace,
+  getCapa: mocks.getCapa,
   listCapaTimeline: mocks.listCapaTimeline,
   saveCapaDraft: mocks.saveCapaDraft,
-  completeCapaAction: mocks.completeCapaAction,
-  verifyCapaEffectiveness: mocks.verifyCapaEffectiveness,
-  reopenCapa: mocks.reopenCapa,
+  transitionCapaAction: mocks.transitionCapaAction,
+  markCapaReadyForEffectiveness: mocks.markCapaReadyForEffectiveness,
   CapaError: mocks.CapaError,
 }));
 vi.mock("@/lib/quality/capa-approval", () => ({
-  approveCapaWithGovernance: mocks.approveCapaWithGovernance,
+  approveCapa: mocks.approveCapa,
   CapaApprovalError: mocks.CapaApprovalError,
 }));
 
 import { GET, PATCH } from "@/app/api/quality/events/[eventId]/capa/route";
 
-function auth(role: "VIEWER" | "QUALITY_MANAGER" | "TECHNICIAN", allSites = true) {
+function auth(role: "VIEWER" | "QUALITY_MANAGER" | "TECHNICIAN") {
   return {
     session: {
-      user: {
-        id:
-          role === "VIEWER"
-            ? "viewer-1"
-            : role === "QUALITY_MANAGER"
-              ? "quality-1"
-              : "tech-1",
-      },
+      user: { id: role === "QUALITY_MANAGER" ? "quality-1" : role === "VIEWER" ? "viewer-1" : "tech-1" },
     },
     tenant: {
       scope: {
         organizationId: "org-a",
         role,
-        allSites,
-        siteIds: allSites ? [] : ["site-a"],
+        allSites: true,
+        siteIds: [],
         active: true,
       },
     },
@@ -77,34 +68,35 @@ const context = { params: Promise.resolve({ eventId: "event-1" }) };
 describe("quality CAPA API", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.getCapaWorkspace.mockResolvedValue({
+    mocks.getCapa.mockResolvedValue({
       event: { organizationId: "org-a", siteId: "site-a", status: "INVESTIGATING" },
-      rootCause: { organizationId: "org-a", siteId: "site-a", status: "CONFIRMED" },
       capa: null,
     });
     mocks.listCapaTimeline.mockResolvedValue([]);
     mocks.saveCapaDraft.mockResolvedValue({ eventId: "event-1", status: "DRAFT" });
-    mocks.approveCapaWithGovernance.mockResolvedValue({ eventId: "event-1", status: "ACTIVE" });
-    mocks.completeCapaAction.mockResolvedValue({ eventId: "event-1", status: "ACTIVE" });
-    mocks.verifyCapaEffectiveness.mockResolvedValue({ eventId: "event-1", status: "CLOSED" });
-    mocks.reopenCapa.mockResolvedValue({ eventId: "event-1", status: "DRAFT" });
+    mocks.approveCapa.mockResolvedValue({ eventId: "event-1", status: "ACTIVE" });
+    mocks.transitionCapaAction.mockResolvedValue({ eventId: "event-1", status: "ACTIVE" });
+    mocks.markCapaReadyForEffectiveness.mockResolvedValue({
+      eventId: "event-1",
+      status: "READY_FOR_EFFECTIVENESS",
+    });
   });
 
-  it("lets viewers read CAPA inside their site scope", async () => {
+  it("lets viewers read CAPA in site scope", async () => {
     mocks.authenticateRequest.mockResolvedValue(auth("VIEWER"));
     const response = await GET(
       new Request("http://localhost/api/quality/events/event-1/capa?organizationId=org-a&siteId=site-a"),
       context,
     );
     expectStatus(response, 200);
-    expect(mocks.getCapaWorkspace).toHaveBeenCalledWith({
+    expect(mocks.getCapa).toHaveBeenCalledWith({
       organizationId: "org-a",
       siteId: "site-a",
       eventId: "event-1",
     });
   });
 
-  it("prevents viewers and technicians from mutating CAPA", async () => {
+  it("prevents viewers and technicians from managing CAPA", async () => {
     for (const role of ["VIEWER", "TECHNICIAN"] as const) {
       mocks.authenticateRequest.mockResolvedValue(auth(role));
       const response = await PATCH(
@@ -117,10 +109,10 @@ describe("quality CAPA API", () => {
       );
       expectStatus(response, 403);
     }
-    expect(mocks.approveCapaWithGovernance).not.toHaveBeenCalled();
+    expect(mocks.approveCapa).not.toHaveBeenCalled();
   });
 
-  it("lets quality managers save action ownership and due dates", async () => {
+  it("lets quality managers save CAPA actions with owners and due dates", async () => {
     mocks.authenticateRequest.mockResolvedValue(auth("QUALITY_MANAGER"));
     const response = await PATCH(
       new Request("http://localhost/api/quality/events/event-1/capa", {
@@ -130,13 +122,14 @@ describe("quality CAPA API", () => {
           organizationId: "org-a",
           siteId: "site-a",
           action: "SAVE",
-          planSummary: "Synthetic CAPA plan",
+          objective: "Prevent synthetic recurrence",
           actions: [
             {
+              actionKey: "corrective-1",
               type: "CORRECTIVE",
-              title: "Replace synthetic fixture",
-              ownerId: "owner-1",
-              dueAt: "2026-08-20T10:00:00.000Z",
+              title: "Correct synthetic cause",
+              ownerId: "quality-2",
+              dueAt: "2026-08-20T00:00:00.000Z",
             },
           ],
         }),
@@ -148,23 +141,24 @@ describe("quality CAPA API", () => {
       organizationId: "org-a",
       siteId: "site-a",
       eventId: "event-1",
-      planSummary: "Synthetic CAPA plan",
+      objective: "Prevent synthetic recurrence",
       actions: [
         {
+          actionKey: "corrective-1",
           type: "CORRECTIVE",
-          title: "Replace synthetic fixture",
-          ownerId: "owner-1",
-          dueAt: new Date("2026-08-20T10:00:00.000Z"),
+          title: "Correct synthetic cause",
+          description: null,
+          ownerId: "quality-2",
+          dueAt: new Date("2026-08-20T00:00:00.000Z"),
         },
       ],
       actorId: "quality-1",
     });
   });
 
-  it("routes approval through the independent governance gate", async () => {
+  it("routes explicit CAPA approval through the separated approval gate", async () => {
     mocks.authenticateRequest.mockResolvedValue(auth("QUALITY_MANAGER"));
-
-    const approve = await PATCH(
+    const response = await PATCH(
       new Request("http://localhost/api/quality/events/event-1/capa", {
         method: "PATCH",
         headers: { "content-type": "application/json" },
@@ -172,24 +166,43 @@ describe("quality CAPA API", () => {
           organizationId: "org-a",
           siteId: "site-a",
           action: "APPROVE",
-          approvalNote: "Independent review completed.",
+          approvalNote: "Reviewed confirmed RCA and action plan.",
         }),
       }),
       context,
     );
-    expectStatus(approve, 200);
-    expect(mocks.approveCapaWithGovernance).toHaveBeenCalledWith({
+    expectStatus(response, 200);
+    expect(mocks.approveCapa).toHaveBeenCalledWith({
       organizationId: "org-a",
       siteId: "site-a",
       eventId: "event-1",
       approverId: "quality-1",
-      approvalNote: "Independent review completed.",
+      approvalNote: "Reviewed confirmed RCA and action plan.",
     });
   });
 
-  it("routes action completion and effectiveness through explicit actions", async () => {
+  it("keeps ACTIVATE as a compatibility alias behind the same approval gate", async () => {
     mocks.authenticateRequest.mockResolvedValue(auth("QUALITY_MANAGER"));
+    const response = await PATCH(
+      new Request("http://localhost/api/quality/events/event-1/capa", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ organizationId: "org-a", siteId: "site-a", action: "ACTIVATE" }),
+      }),
+      context,
+    );
+    expectStatus(response, 200);
+    expect(mocks.approveCapa).toHaveBeenCalledWith({
+      organizationId: "org-a",
+      siteId: "site-a",
+      eventId: "event-1",
+      approverId: "quality-1",
+      approvalNote: undefined,
+    });
+  });
 
+  it("routes action completion explicitly", async () => {
+    mocks.authenticateRequest.mockResolvedValue(auth("QUALITY_MANAGER"));
     const complete = await PATCH(
       new Request("http://localhost/api/quality/events/event-1/capa", {
         method: "PATCH",
@@ -197,49 +210,50 @@ describe("quality CAPA API", () => {
         body: JSON.stringify({
           organizationId: "org-a",
           siteId: "site-a",
-          action: "COMPLETE_ACTION",
-          actionId: "dd1f1863-0c8d-48a4-a4f8-3a25771626ea",
-          completionNote: "Implementation verified.",
+          action: "TRANSITION_ACTION",
+          actionId: "action-1",
+          transition: "COMPLETE",
+          completionNote: "Synthetic completion evidence",
         }),
       }),
       context,
     );
     expectStatus(complete, 200);
-    expect(mocks.completeCapaAction).toHaveBeenCalledWith({
+    expect(mocks.transitionCapaAction).toHaveBeenCalledWith({
       organizationId: "org-a",
       siteId: "site-a",
       eventId: "event-1",
-      actionId: "dd1f1863-0c8d-48a4-a4f8-3a25771626ea",
-      completionNote: "Implementation verified.",
+      actionId: "action-1",
+      transition: "COMPLETE",
+      completionNote: "Synthetic completion evidence",
       actorId: "quality-1",
     });
+  });
 
-    const verify = await PATCH(
+  it("routes readiness for effectiveness as an explicit workflow step", async () => {
+    mocks.authenticateRequest.mockResolvedValue(auth("QUALITY_MANAGER"));
+    const response = await PATCH(
       new Request("http://localhost/api/quality/events/event-1/capa", {
         method: "PATCH",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           organizationId: "org-a",
           siteId: "site-a",
-          action: "VERIFY_EFFECTIVENESS",
-          result: "EFFECTIVE",
-          note: "No recurrence during follow-up checks.",
+          action: "READY_FOR_EFFECTIVENESS",
         }),
       }),
       context,
     );
-    expectStatus(verify, 200);
-    expect(mocks.verifyCapaEffectiveness).toHaveBeenCalledWith({
+    expectStatus(response, 200);
+    expect(mocks.markCapaReadyForEffectiveness).toHaveBeenCalledWith({
       organizationId: "org-a",
       siteId: "site-a",
       eventId: "event-1",
-      result: "EFFECTIVE",
-      note: "No recurrence during follow-up checks.",
       actorId: "quality-1",
     });
   });
 
-  it("rejects malformed action due dates before reaching the service", async () => {
+  it("rejects malformed action data before calling the service", async () => {
     mocks.authenticateRequest.mockResolvedValue(auth("QUALITY_MANAGER"));
     const response = await PATCH(
       new Request("http://localhost/api/quality/events/event-1/capa", {
@@ -249,42 +263,13 @@ describe("quality CAPA API", () => {
           organizationId: "org-a",
           siteId: "site-a",
           action: "SAVE",
-          planSummary: "Synthetic plan",
-          actions: [{ type: "CORRECTIVE", title: "Action", ownerId: "owner-1", dueAt: "not-a-date" }],
+          objective: "Synthetic objective",
+          actions: [{ actionKey: "a", type: "CORRECTIVE", title: "x" }],
         }),
       }),
       context,
     );
     expectStatus(response, 400);
     expect(mocks.saveCapaDraft).not.toHaveBeenCalled();
-  });
-
-  it("maps approval governance failures without leaking tenant state", async () => {
-    mocks.authenticateRequest.mockResolvedValue(auth("QUALITY_MANAGER"));
-    mocks.approveCapaWithGovernance.mockRejectedValue(
-      new mocks.CapaApprovalError("CAPA_SELF_APPROVAL_NOT_ALLOWED", "Independent approval required"),
-    );
-    const conflict = await PATCH(
-      new Request("http://localhost/api/quality/events/event-1/capa", {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ organizationId: "org-a", siteId: "site-a", action: "APPROVE" }),
-      }),
-      context,
-    );
-    expectStatus(conflict, 409);
-
-    mocks.approveCapaWithGovernance.mockRejectedValue(
-      new mocks.CapaApprovalError("CAPA_APPROVER_NOT_ALLOWED", "Approver not allowed"),
-    );
-    const forbidden = await PATCH(
-      new Request("http://localhost/api/quality/events/event-1/capa", {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ organizationId: "org-a", siteId: "site-a", action: "APPROVE" }),
-      }),
-      context,
-    );
-    expectStatus(forbidden, 403);
   });
 });

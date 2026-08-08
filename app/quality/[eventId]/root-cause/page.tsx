@@ -48,7 +48,6 @@ export default async function RootCausePage({
           <span className="badge">{qualityEvent.status}</span>
           <span className="badge">{workspace.rootCause?.status ?? "NOT STARTED"}</span>
           {workspace.rootCause ? <span className="badge">{workspace.rootCause.method}</span> : null}
-          <Link className="table-link" href={`/quality/${eventId}/capa`}>CAPA →</Link>
         </div>
       </div>
 
@@ -59,6 +58,16 @@ export default async function RootCausePage({
         eventStatus={qualityEvent.status}
         initialRootCause={workspace.rootCause}
       />
+
+      <section className="card section">
+        <div className="header asset-header">
+          <div>
+            <h2 style={{ margin: 0 }}>CAPA</h2>
+            <div className="muted">Turn the confirmed root cause into owned corrective and preventive actions.</div>
+          </div>
+          <Link className="table-link" href={`/quality/${eventId}/capa`}>Open CAPA →</Link>
+        </div>
+      </section>
 
       <section className="card section">
         <h2>Root-cause revision timeline</h2>
