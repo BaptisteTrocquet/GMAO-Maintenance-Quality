@@ -1,0 +1,16 @@
+model AiVectorRecord {
+  id             String   @id @default(cuid())
+  organizationId String
+  siteScope      String   @default("")
+  namespace      String
+  recordId       String
+  dimensions     Int
+  vector         Float[]
+  metadataJson   Json
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([organizationId, siteScope, namespace, recordId])
+  @@index([organizationId, siteScope, namespace, dimensions])
+  @@index([organizationId, updatedAt])
+}
