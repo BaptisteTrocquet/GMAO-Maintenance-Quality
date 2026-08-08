@@ -1,4 +1,4 @@
-import type { Priority, WorkOrderStatus } from "@prisma/client";
+import { Prisma, type Priority, type WorkOrderStatus } from "@prisma/client";
 
 export const PLANNING_CALENDAR_LIMIT = 1000;
 
@@ -139,6 +139,23 @@ export function calendarSearchRange(days: PlanningCalendarDay[]) {
   return {
     start: new Date(start.getTime() - 18 * 60 * 60 * 1000),
     end: new Date(end.getTime() + 18 * 60 * 60 * 1000),
+  };
+}
+
+export function buildPlanningCalendarWhere(input: {
+  organizationId: string;
+  siteId: string;
+  start: Date;
+  end: Date;
+}): Prisma.WorkOrderWhereInput {
+  return {
+    siteId: input.siteId,
+    site: { organizationId: input.organizationId, active: true },
+    status: { not: "CANCELLED" },
+    OR: [
+      { plannedStart: { gte: input.start, lte: input.end } },
+      { dueAt: { gte: input.start, lte: input.end } },
+    ],
   };
 }
 
