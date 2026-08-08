@@ -16,6 +16,8 @@ metadata:
 spec:
   replicas: 1
   strategy:
+    # The local-storage example uses a ReadWriteOnce PVC. Use shared object storage
+    # before scaling replicas or changing this rollout strategy.
     type: Recreate
   selector:
     matchLabels:
@@ -35,7 +37,8 @@ spec:
           type: RuntimeDefault
       containers:
         - name: app
-          image: ghcr.io/example/gmao-maintenance-quality:REPLACE_WITH_RELEASE
+          # Placeholder digest: replace with the digest produced for the reviewed release.
+          image: ghcr.io/example/gmao-maintenance-quality@sha256:0000000000000000000000000000000000000000000000000000000000000000
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
