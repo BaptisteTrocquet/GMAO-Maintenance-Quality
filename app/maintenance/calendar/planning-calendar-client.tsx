@@ -127,6 +127,7 @@ export default function PlanningCalendarClient({
       if (!response.ok) {
         throw new Error(body.error?.message ?? "Unable to reschedule work order");
       }
+      setTargetDates((current) => ({ ...current, [workOrderId]: targetDateKey }));
       router.refresh();
     } catch (moveError) {
       setError(moveError instanceof Error ? moveError.message : "Unable to reschedule work order");
