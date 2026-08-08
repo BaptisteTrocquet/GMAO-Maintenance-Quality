@@ -5,6 +5,9 @@ on:
     branches:
       - agent/e0-prisma-migration-baseline
 
+permissions:
+  contents: write
+
 jobs:
   baseline:
     runs-on: ubuntu-latest
@@ -23,14 +26,14 @@ jobs:
 
       - name: Generate baseline SQL
         run: |
-          mkdir -p generated/prisma/migrations/0_init
-          npx prisma migrate diff --from-empty --to-schema-datamodel prisma/schema.prisma --script --output generated/prisma/migrations/0_init/migration.sql
+          mkdir -p prisma/migrations/0_init
+          npx prisma migrate diff --from-empty --to-schema-datamodel prisma/schema.prisma --script --output prisma/migrations/0_init/migration.sql
 
-      - name: Upload generated baseline and lockfile
-        uses: actions/upload-artifact@v4
-        with:
-          name: e0-generated-baseline
-          path: |
-            generated/prisma/migrations/0_init/migration.sql
-            package-lock.json
-          if-no-files-found: error
+      - name: Commit generated baseline and lockfile
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package-lock.json prisma/migrations/0_init/migration.sql
+          git rm .github/workflows/generate-prisma-baseline.yml
+          git commit -m "E0: add reproducible dependency lock and Prisma baseline"
+          git push origin HEAD:agent/e0-prisma-migration-baseline
