@@ -66,6 +66,10 @@ function referenceSnapshot(reference: {
   };
 }
 
+function optionalNullable<T>(value: T | null | undefined, previous: T | null | undefined) {
+  return value === undefined ? (previous ?? null) : value;
+}
+
 async function requirePartSupplierScope(
   tx: Prisma.TransactionClient,
   input: { organizationId: string; partId: string; supplierId: string },
@@ -295,9 +299,9 @@ export async function setPartSupplierReference(input: {
       update: {
         supplierPartNumber: input.supplierPartNumber,
         preferred: preferred && active,
-        leadTimeDays: input.leadTimeDays ?? previous?.leadTimeDays ?? null,
-        minOrderQuantity: input.minOrderQuantity ?? previous?.minOrderQuantity ?? null,
-        unitCost: input.unitCost ?? previous?.unitCost ?? null,
+        leadTimeDays: optionalNullable(input.leadTimeDays, previous?.leadTimeDays),
+        minOrderQuantity: optionalNullable(input.minOrderQuantity, previous?.minOrderQuantity),
+        unitCost: optionalNullable(input.unitCost, previous?.unitCost ? Number(previous.unitCost) : null),
         currency: input.currency ?? previous?.currency ?? "EUR",
         active,
       },
