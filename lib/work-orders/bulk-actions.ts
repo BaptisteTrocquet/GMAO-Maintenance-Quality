@@ -172,6 +172,7 @@ export async function bulkTriageWorkOrders(input: {
     }
 
     return {
+      count: changed.length,
       selectedCount: workOrders.length,
       updatedCount: changed.length,
       workOrders: changed,
