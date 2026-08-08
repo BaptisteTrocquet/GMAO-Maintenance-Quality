@@ -8,7 +8,7 @@ import {
   QualityEvidenceError,
 } from "@/lib/quality/evidence";
 
-const phaseSchema = z.enum(["EVENT", "CONTAINMENT", "ROOT_CAUSE", "CAPA", "EFFECTIVENESS"]);
+const phaseSchema = z.enum(["EVENT", "CONTAINMENT", "ROOT_CAUSE", "CAPA", "EFFECTIVENESS", "EIGHT_D"]);
 
 const createSchema = z.object({
   organizationId: z.string().min(1),
