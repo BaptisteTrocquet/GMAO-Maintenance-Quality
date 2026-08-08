@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import {
   localCalendarDate,
   localDateStartUtc,
+  resolveAnalyticsDateRange,
   shiftCalendarDate,
 } from "@/lib/analytics/date-range";
 
@@ -11,12 +12,64 @@ export const BACKLOG_EXPORT_LIMIT = 5000;
 
 const OPEN_STATUSES = ["REQUESTED", "APPROVED", "PLANNED", "IN_PROGRESS", "BLOCKED"] as const;
 
-function openBacklogScope(input: { organizationId: string; siteId: string }): Prisma.WorkOrderWhereInput {
+type BacklogFilterInput = {
+  organizationId: string;
+  siteId: string;
+  assetId?: string | null;
+  from?: string | null;
+  to?: string | null;
+  timeZone?: string;
+};
+
+type BacklogRange = {
+  from: Date | null;
+  toExclusive: Date | null;
+};
+
+function requestedRange(input: BacklogFilterInput): BacklogRange {
+  if (!input.from && !input.to) return { from: null, toExclusive: null };
+  const range = resolveAnalyticsDateRange({
+    from: input.from,
+    to: input.to,
+    timeZone: input.timeZone ?? "UTC",
+  });
+  return { from: range.from, toExclusive: range.toExclusive };
+}
+
+function baseBacklogScope(
+  input: BacklogFilterInput,
+  range: BacklogRange,
+): Prisma.WorkOrderWhereInput {
+  const requestedAt: Prisma.DateTimeFilter = {};
+  if (range.from) requestedAt.gte = range.from;
+  if (range.toExclusive) requestedAt.lt = range.toExclusive;
+
   return {
     siteId: input.siteId,
     site: { organizationId: input.organizationId, active: true },
+    ...(input.assetId ? { assetId: input.assetId } : {}),
+    ...(range.from || range.toExclusive ? { requestedAt } : {}),
+  };
+}
+
+function openBacklogScope(
+  input: BacklogFilterInput,
+  range: BacklogRange,
+): Prisma.WorkOrderWhereInput {
+  return {
+    ...baseBacklogScope(input, range),
     status: { in: [...OPEN_STATUSES] },
   };
+}
+
+function withAgeConstraint(
+  openScope: Prisma.WorkOrderWhereInput,
+  ageConstraint: Prisma.DateTimeFilter,
+  hasRequestedRange: boolean,
+): Prisma.WorkOrderWhereInput {
+  return hasRequestedRange
+    ? { AND: [openScope, { requestedAt: ageConstraint }] }
+    : { ...openScope, requestedAt: ageConstraint };
 }
 
 function csvCell(value: string | number | null | undefined) {
@@ -28,19 +81,21 @@ export async function buildBacklogDashboard(input: {
   organizationId: string;
   siteId: string;
   timeZone: string;
+  assetId?: string | null;
+  from?: string | null;
+  to?: string | null;
   now?: Date;
 }) {
   const now = input.now ?? new Date();
+  const range = requestedRange(input);
+  const hasRequestedRange = Boolean(range.from || range.toExclusive);
   const today = localCalendarDate(now, input.timeZone);
   const dueSoonExclusive = localDateStartUtc(shiftCalendarDate(today, 7), input.timeZone);
   const sevenDayBoundary = localDateStartUtc(shiftCalendarDate(today, -6), input.timeZone);
   const thirtyDayBoundary = localDateStartUtc(shiftCalendarDate(today, -29), input.timeZone);
   const ninetyDayBoundary = localDateStartUtc(shiftCalendarDate(today, -89), input.timeZone);
-  const scope: Prisma.WorkOrderWhereInput = {
-    siteId: input.siteId,
-    site: { organizationId: input.organizationId, active: true },
-  };
-  const openScope = openBacklogScope(input);
+  const scope = baseBacklogScope(input, range);
+  const openScope = openBacklogScope(input, range);
 
   const [
     requested,
@@ -68,15 +123,29 @@ export async function buildBacklogDashboard(input: {
     db.workOrder.count({ where: { ...openScope, plannedStart: null } }),
     db.workOrder.count({ where: { ...openScope, priority: "URGENT" } }),
     db.workOrder.count({
-      where: { ...openScope, requestedAt: { gte: sevenDayBoundary, lte: now } },
+      where: withAgeConstraint(
+        openScope,
+        { gte: sevenDayBoundary, lte: now },
+        hasRequestedRange,
+      ),
     }),
     db.workOrder.count({
-      where: { ...openScope, requestedAt: { gte: thirtyDayBoundary, lt: sevenDayBoundary } },
+      where: withAgeConstraint(
+        openScope,
+        { gte: thirtyDayBoundary, lt: sevenDayBoundary },
+        hasRequestedRange,
+      ),
     }),
     db.workOrder.count({
-      where: { ...openScope, requestedAt: { gte: ninetyDayBoundary, lt: thirtyDayBoundary } },
+      where: withAgeConstraint(
+        openScope,
+        { gte: ninetyDayBoundary, lt: thirtyDayBoundary },
+        hasRequestedRange,
+      ),
     }),
-    db.workOrder.count({ where: { ...openScope, requestedAt: { lt: ninetyDayBoundary } } }),
+    db.workOrder.count({
+      where: withAgeConstraint(openScope, { lt: ninetyDayBoundary }, hasRequestedRange),
+    }),
     db.workOrder.findMany({
       where: openScope,
       select: {
@@ -98,6 +167,12 @@ export async function buildBacklogDashboard(input: {
   return {
     generatedAt: now.toISOString(),
     timezone: input.timeZone,
+    filters: {
+      assetId: input.assetId ?? null,
+      from: input.from ?? null,
+      to: input.to ?? null,
+      dateField: "requestedAt" as const,
+    },
     empty: totalOpen === 0,
     totalOpen,
     overdue,
@@ -121,12 +196,10 @@ export async function buildBacklogDashboard(input: {
   };
 }
 
-export async function exportBacklogCsv(input: {
-  organizationId: string;
-  siteId: string;
-}) {
+export async function exportBacklogCsv(input: BacklogFilterInput) {
+  const range = requestedRange(input);
   const rows = await db.workOrder.findMany({
-    where: openBacklogScope(input),
+    where: openBacklogScope(input, range),
     select: {
       number: true,
       title: true,
