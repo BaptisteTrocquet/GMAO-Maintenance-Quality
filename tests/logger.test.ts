@@ -91,6 +91,50 @@ describe("logger", () => {
     });
   });
 
+  it("redacts compound production configuration secret keys", () => {
+    const spy = vi.spyOn(console, "info").mockImplementation(() => undefined);
+
+    logger.info("configuration_loaded", {
+      STORAGE_S3_SECRET_ACCESS_KEY: "s3-secret-value",
+      STORAGE_S3_ACCESS_KEY_ID: "s3-access-key-id",
+      CONNECTOR_CREDENTIAL_MASTER_KEY_BASE64: "connector-master-key",
+      CONNECTOR_CREDENTIAL_PREVIOUS_MASTER_KEY_BASE64: "previous-master-key",
+      OAUTH_CLIENT_SECRET_VALUE: "oauth-client-secret",
+      nested: {
+        upstreamAuthorizationHeader: "Bearer header-secret",
+        sessionMetadata: "session-secret",
+      },
+      OIDC_CLIENT_ID: "public-client-id",
+    });
+
+    const raw = String(spy.mock.calls[0][0]);
+    for (const secret of [
+      "s3-secret-value",
+      "s3-access-key-id",
+      "connector-master-key",
+      "previous-master-key",
+      "oauth-client-secret",
+      "header-secret",
+      "session-secret",
+    ]) {
+      expect(raw).not.toContain(secret);
+    }
+
+    const payload = parseFirstCall(spy);
+    expect(payload).toMatchObject({
+      STORAGE_S3_SECRET_ACCESS_KEY: "[REDACTED]",
+      STORAGE_S3_ACCESS_KEY_ID: "[REDACTED]",
+      CONNECTOR_CREDENTIAL_MASTER_KEY_BASE64: "[REDACTED]",
+      CONNECTOR_CREDENTIAL_PREVIOUS_MASTER_KEY_BASE64: "[REDACTED]",
+      OAUTH_CLIENT_SECRET_VALUE: "[REDACTED]",
+      nested: {
+        upstreamAuthorizationHeader: "[REDACTED]",
+        sessionMetadata: "[REDACTED]",
+      },
+      OIDC_CLIENT_ID: "public-client-id",
+    });
+  });
+
   it("redacts secret-shaped values even when their field name is generic", () => {
     const spy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
