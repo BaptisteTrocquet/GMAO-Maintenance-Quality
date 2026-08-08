@@ -1,6 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
 import { request as httpsRequest } from "node:https";
 import { db } from "@/lib/db";
+import {
+  recordIntegrationDeadLetter,
+  resolveIntegrationDeadLetter,
+} from "@/lib/integrations/dead-letter";
 import { createRetryPolicy, type RetryOutcome } from "@/lib/integrations/retry-policy";
 import {
   resolvePublicWebhookTarget,
@@ -157,6 +161,12 @@ export async function deliverWebhook(input: {
         createdAt: now,
       },
     });
+    await resolveIntegrationDeadLetter({
+      organizationId: input.subscription.organizationId,
+      channel: "webhook",
+      sourceId: deliveryId,
+      now,
+    });
     return { delivered: true, deliveryId, attempt, statusCode };
   }
 
@@ -176,6 +186,45 @@ export async function deliverWebhook(input: {
     statusCode,
     error: errorMessage,
   };
+
+  if (!retryDecision.retry) {
+    const deadLetter = await recordIntegrationDeadLetter({
+      organizationId: input.subscription.organizationId,
+      siteId: input.subscription.siteId,
+      channel: "webhook",
+      sourceId: deliveryId,
+      reason: retryDecision.reason,
+      attempts: attempt,
+      statusCode,
+      errorCode: outcome.kind === "network" ? "NETWORK_ERROR" : "HTTP_DELIVERY_ERROR",
+      payload: {
+        subscriptionId: input.subscription.id,
+        event: input.event,
+      },
+      now,
+    });
+    await db.auditLog.create({
+      data: {
+        actorId: null,
+        entityType: "WebhookDelivery",
+        entityId: deliveryId,
+        action: "DEAD_LETTERED",
+        afterJson: JSON.stringify({ ...snapshot, deadLetterId: deadLetter.id }),
+        createdAt: now,
+      },
+    });
+    return {
+      delivered: false,
+      deliveryId,
+      attempt,
+      statusCode,
+      nextAttemptAt: null,
+      retryReason: retryDecision.reason,
+      deadLetterId: deadLetter.id,
+      error: errorMessage,
+    };
+  }
+
   await db.auditLog.create({
     data: {
       actorId: null,
@@ -203,7 +252,10 @@ export async function retryFailedWebhookDeliveries(input: {
 }) {
   const now = input.now ?? new Date();
   const logs = await db.auditLog.findMany({
-    where: { entityType: "WebhookDelivery", action: { in: ["FAILED", "DELIVERED"] } },
+    where: {
+      entityType: "WebhookDelivery",
+      action: { in: ["FAILED", "DELIVERED", "DEAD_LETTERED"] },
+    },
     orderBy: { createdAt: "desc" },
     take: Math.max((input.limit ?? 50) * 10, 100),
   });
@@ -236,7 +288,7 @@ export async function retryFailedWebhookDeliveries(input: {
     const subscription = await getWebhookSubscription(snapshot.subscriptionId);
     if (!subscription || subscription.revokedAt) continue;
     const state = await latestDeliveryState(log.entityId);
-    if (state?.action === "DELIVERED") continue;
+    if (state?.action === "DELIVERED" || state?.action === "DEAD_LETTERED") continue;
 
     results.push(
       await deliverWebhook({

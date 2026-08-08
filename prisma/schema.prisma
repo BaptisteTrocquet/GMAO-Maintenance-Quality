@@ -280,7 +280,7 @@ model Asset {
   description      String?
   category         String?
   manufacturer     String?
-  model            String?
+  model             String?
   serialNumber     String?
   status           AssetStatus @default(ACTIVE)
   criticality      Criticality @default(MEDIUM)
@@ -479,7 +479,7 @@ model Supplier {
   name           String
   contactName    String?
   email          String?
-  phone          String?
+  phone           String?
   website        String?
   active         Boolean        @default(true)
   createdAt      DateTime       @default(now())
@@ -770,4 +770,25 @@ model AuditLog {
 
   @@index([entityType, entityId])
   @@index([createdAt])
+}
+
+model IntegrationDeadLetter {
+  id             String   @id @default(cuid())
+  organizationId String
+  siteId         String?
+  channel        String
+  sourceId       String
+  reason         String
+  attempts       Int
+  statusCode     Int?
+  errorCode      String?
+  payloadJson    String
+  replayCount    Int      @default(0)
+  lastReplayedAt DateTime?
+  resolvedAt     DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([organizationId, channel, sourceId])
+  @@index([organizationId, siteId, resolvedAt, createdAt])
 }
