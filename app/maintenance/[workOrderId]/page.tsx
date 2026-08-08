@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { db } from "@/lib/db";
 import { listWorkOrderReservations } from "@/lib/inventory/reservations";
+import WorkOrderCameraAttachments from "./work-order-camera-attachments";
 
 function formatDate(value: Date | null | undefined) {
   return value ? value.toISOString().replace("T", " ").slice(0, 16) : "—";
@@ -21,6 +22,22 @@ function auditDetail(afterJson: string | null, actorName: string | null | undefi
     return "";
   }
   return "";
+}
+
+function attachmentFileHref(input: {
+  attachmentId: string;
+  storageKey: string;
+  organizationId: string;
+  siteId: string;
+  workOrderId: string;
+}) {
+  const prefix = `work-orders/${input.organizationId}/${input.siteId}/${input.workOrderId}/`;
+  if (!input.storageKey.startsWith(prefix)) return null;
+  const query = new URLSearchParams({
+    organizationId: input.organizationId,
+    siteId: input.siteId,
+  });
+  return `/api/work-orders/${encodeURIComponent(input.workOrderId)}/attachments/${encodeURIComponent(input.attachmentId)}/file?${query.toString()}`;
 }
 
 export default async function WorkOrderDetailPage({
@@ -192,14 +209,40 @@ export default async function WorkOrderDetailPage({
 
         <section className="card">
           <h2>Attachments</h2>
+          <WorkOrderCameraAttachments
+            organizationId={workOrder.site.organizationId}
+            siteId={workOrder.siteId}
+            workOrderId={workOrder.id}
+            disabled={workOrder.status === "CANCELLED"}
+          />
           {workOrder.attachments.length ? (
             <div className="stack-list">
-              {workOrder.attachments.map((attachment) => (
-                <div key={attachment.id}>
-                  <strong>{attachment.fileName}</strong>
-                  <span className="muted"> · {attachment.kind}</span>
-                </div>
-              ))}
+              {workOrder.attachments.map((attachment) => {
+                const fileHref = attachmentFileHref({
+                  attachmentId: attachment.id,
+                  storageKey: attachment.storageKey,
+                  organizationId: workOrder.site.organizationId,
+                  siteId: workOrder.siteId,
+                  workOrderId: workOrder.id,
+                });
+                return (
+                  <div key={attachment.id}>
+                    <strong>{attachment.fileName}</strong>
+                    <span className="muted">
+                      {` · ${attachment.kind}`}
+                      {attachment.sizeBytes ? ` · ${(attachment.sizeBytes / 1024 / 1024).toFixed(2)} MB` : ""}
+                    </span>
+                    {fileHref ? (
+                      <span>
+                        {" · "}
+                        <a className="table-link" href={fileHref} target="_blank" rel="noreferrer">
+                          {attachment.kind === "PHOTO" ? "View photo" : "Download"}
+                        </a>
+                      </span>
+                    ) : null}
+                  </div>
+                );
+              })}
             </div>
           ) : <div className="muted">No attachments.</div>}
         </section>
