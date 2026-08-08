@@ -328,7 +328,6 @@ export async function removeQualityEvidence(input: {
   eventId: string;
   evidenceId: string;
   actorId: string;
-  adapter?: StorageAdapter;
 }) {
   await requireQualityEvent({ ...input, writable: true });
   const current = await getQualityEvidence({ ...input, includeRemoved: false });
@@ -365,23 +364,5 @@ export async function removeQualityEvidence(input: {
     });
   });
 
-  const adapter = input.adapter ?? storage;
-  let storageDeleted = true;
-  try {
-    await adapter.delete(current.storageKey);
-  } catch {
-    storageDeleted = false;
-    await db.auditLog.create({
-      data: {
-        actorId: input.actorId,
-        entityType: EVIDENCE_ENTITY,
-        entityId: input.evidenceId,
-        action: "EVIDENCE_STORAGE_DELETE_FAILED",
-        beforeJson: JSON.stringify(removed),
-        afterJson: JSON.stringify(removed),
-      },
-    });
-  }
-
-  return { evidence: removed, storageDeleted };
+  return { evidence: removed, storageRetained: true };
 }
