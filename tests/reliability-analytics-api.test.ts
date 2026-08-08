@@ -42,7 +42,7 @@ describe("reliability analytics API", () => {
     mocks.authenticateRequest.mockResolvedValue(auth());
     mocks.siteFindFirst.mockResolvedValue({ id: "site-a" });
     mocks.buildReliabilityDashboard.mockResolvedValue({
-      mttr: { hours: null, sampleCount: 0 },
+      mttr: { hours: null, sampleCount: 0, excludedIncomplete: 0 },
       mtbfProxy: { hours: null, sampleCount: 0, assetCount: 0 },
     });
   });
@@ -63,6 +63,16 @@ describe("reliability analytics API", () => {
 
   it("rejects a site outside explicit membership before querying the database", async () => {
     const response = await GET(request("site-b"));
+
+    expect(response.status).toBe(403);
+    expect(mocks.siteFindFirst).not.toHaveBeenCalled();
+    expect(mocks.buildReliabilityDashboard).not.toHaveBeenCalled();
+  });
+
+  it("requires maintenance-read permission rather than generic work visibility", async () => {
+    mocks.authenticateRequest.mockResolvedValue(auth({ role: "VIEWER" }));
+
+    const response = await GET(request());
 
     expect(response.status).toBe(403);
     expect(mocks.siteFindFirst).not.toHaveBeenCalled();
