@@ -187,7 +187,7 @@ jobs:
           test ! -e /app/.env &&
           test "$NODE_ENV" = "production"'
 
-      - name: Verify production health probes
+      - name: Verify production health probes and metrics
         shell: bash
         run: |
           set -euo pipefail
@@ -219,6 +219,8 @@ jobs:
           done
 
           node -e "fetch('http://127.0.0.1:3000/api/ready').then(async (response) => { const body = await response.json(); if (response.status !== 200 || body?.data?.status !== 'ready' || body?.data?.checks?.database !== 'reachable') process.exit(1); }).catch(() => process.exit(1));"
+
+          node -e "fetch('http://127.0.0.1:3000/api/metrics').then(async (response) => { const body = await response.text(); const contentType = response.headers.get('content-type') ?? ''; if (response.status !== 200 || !contentType.startsWith('text/plain; version=0.0.4') || !body.includes('opengmao_database_ready 1') || !body.includes('opengmao_process_uptime_seconds') || !body.includes('opengmao_metrics_scrapes_total 1') || !body.includes('opengmao_readiness_checks_total{result=\"success\"} 1')) process.exit(1); }).catch(() => process.exit(1));"
 
           for attempt in {1..15}; do
             status="$(docker inspect --format '{{.State.Health.Status}}' "$container_name")"
