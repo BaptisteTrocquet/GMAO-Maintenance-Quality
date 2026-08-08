@@ -56,6 +56,11 @@ function request(targetDateKey = "2026-10-26") {
   });
 }
 
+function requireResponse(response: Response | undefined) {
+  expect(response).toBeDefined();
+  return response as Response;
+}
+
 describe("maintenance calendar rescheduling API", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -84,7 +89,7 @@ describe("maintenance calendar rescheduling API", () => {
   });
 
   it("moves plannedStart in site timezone, preserves dueAt and audits inside one transaction", async () => {
-    const response = await PATCH(request(), context);
+    const response = requireResponse(await PATCH(request(), context));
     expect(response.status).toBe(200);
 
     expect(mocks.transaction).toHaveBeenCalledTimes(1);
@@ -107,7 +112,7 @@ describe("maintenance calendar rescheduling API", () => {
   it("requires work:manage before reading scoped planning data", async () => {
     mocks.authenticateRequest.mockResolvedValue(auth("TECHNICIAN"));
 
-    const response = await PATCH(request(), context);
+    const response = requireResponse(await PATCH(request(), context));
 
     expect(response.status).toBe(403);
     expect(mocks.siteFindFirst).not.toHaveBeenCalled();
@@ -117,7 +122,7 @@ describe("maintenance calendar rescheduling API", () => {
   it("rejects cross-site work orders without update or audit", async () => {
     mocks.workOrderFindFirst.mockResolvedValue(null);
 
-    const response = await PATCH(request(), context);
+    const response = requireResponse(await PATCH(request(), context));
 
     expect(response.status).toBe(404);
     expect(mocks.workOrderUpdate).not.toHaveBeenCalled();
@@ -134,7 +139,7 @@ describe("maintenance calendar rescheduling API", () => {
         dueAt: new Date("2026-10-30T16:00:00.000Z"),
       });
 
-      const response = await PATCH(request(), context);
+      const response = requireResponse(await PATCH(request(), context));
       expect(response.status).toBe(409);
     }
     expect(mocks.workOrderUpdate).not.toHaveBeenCalled();
@@ -150,7 +155,7 @@ describe("maintenance calendar rescheduling API", () => {
       dueAt: new Date("2026-10-25T12:00:00.000Z"),
     });
 
-    const response = await PATCH(request("2026-10-26"), context);
+    const response = requireResponse(await PATCH(request("2026-10-26"), context));
 
     expect(response.status).toBe(409);
     expect(mocks.workOrderUpdate).not.toHaveBeenCalled();
