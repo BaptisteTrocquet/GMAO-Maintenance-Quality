@@ -57,6 +57,24 @@ const rootCause = {
   confirmedAt: "2026-08-09T08:00:00.000Z",
 };
 
+const effectiveReview = {
+  organizationId: "org-a",
+  siteId: "site-a",
+  status: "VERIFIED" as const,
+  result: "EFFECTIVE" as const,
+  summary: "No recurrence during the synthetic follow-up window.",
+  verifiedAt: "2026-08-20T08:00:00.000Z",
+};
+
+const ineffectiveReview = {
+  organizationId: "org-a",
+  siteId: "site-a",
+  status: "VERIFIED" as const,
+  result: "INEFFECTIVE" as const,
+  summary: "Synthetic failure recurred.",
+  verifiedAt: "2026-08-20T08:00:00.000Z",
+};
+
 function baseEightD(discipline: EightDSnapshot["currentDiscipline"]): EightDSnapshot {
   return {
     eventId: "event-1",
@@ -100,10 +118,11 @@ function capa(status: CapaSnapshot["status"] = "ACTIVE"): CapaSnapshot {
     organizationId: "org-a",
     siteId: "site-a",
     status,
-    planSummary: "Synthetic permanent corrective and preventive plan.",
+    objective: "Synthetic permanent corrective and preventive plan.",
     actions: [
       {
         id: "ca-1",
+        actionKey: "corrective-1",
         type: "CORRECTIVE",
         title: "Replace the fixture retention mechanism",
         description: null,
@@ -111,11 +130,11 @@ function capa(status: CapaSnapshot["status"] = "ACTIVE"): CapaSnapshot {
         dueAt: "2026-08-15T08:00:00.000Z",
         status: "COMPLETED",
         completionNote: "Replacement and verification completed.",
-        completedById: "quality-1",
         completedAt: "2026-08-14T08:00:00.000Z",
       },
       {
         id: "pa-1",
+        actionKey: "preventive-1",
         type: "PREVENTIVE",
         title: "Add retention verification to periodic checks",
         description: null,
@@ -123,26 +142,17 @@ function capa(status: CapaSnapshot["status"] = "ACTIVE"): CapaSnapshot {
         dueAt: "2026-08-16T08:00:00.000Z",
         status: "COMPLETED",
         completionNote: "Checklist updated and briefed.",
-        completedById: "quality-1",
         completedAt: "2026-08-15T08:00:00.000Z",
       },
     ],
-    approvedById: "quality-1",
-    approvedAt: "2026-08-10T08:00:00.000Z",
-    effectivenessChecks:
-      status === "CLOSED"
-        ? [
-            {
-              result: "EFFECTIVE",
-              note: "No recurrence during the follow-up window.",
-              verifiedById: "quality-2",
-              verifiedAt: "2026-08-20T08:00:00.000Z",
-            },
-          ]
-        : [],
     createdAt: "2026-08-10T07:00:00.000Z",
     updatedAt: "2026-08-20T08:00:00.000Z",
-    closedAt: status === "CLOSED" ? "2026-08-20T08:00:00.000Z" : null,
+    activatedAt: "2026-08-10T08:00:00.000Z",
+    readyForEffectivenessAt:
+      status === "READY_FOR_EFFECTIVENESS" || status === "CLOSED"
+        ? "2026-08-16T08:00:00.000Z"
+        : null,
+    effectivenessChecks: [],
   };
 }
 
@@ -154,6 +164,15 @@ function mockEventAndEightD(snapshot: EightDSnapshot) {
   mocks.auditFindFirst
     .mockResolvedValueOnce(audit(event))
     .mockResolvedValueOnce(audit(snapshot));
+}
+
+function mockCapaWithEffectiveness(
+  snapshot: CapaSnapshot,
+  effectiveness: typeof effectiveReview | typeof ineffectiveReview | null = null,
+) {
+  mocks.auditFindFirst
+    .mockResolvedValueOnce(audit(snapshot))
+    .mockResolvedValueOnce(effectiveness ? audit(effectiveness) : null);
 }
 
 describe("integrated quality 8D workflow", () => {
@@ -229,7 +248,7 @@ describe("integrated quality 8D workflow", () => {
   it("requires an approved CAPA with corrective actions at D5 and freezes owner names", async () => {
     const d5 = baseEightD("D5");
     mockEventAndEightD(d5);
-    mocks.auditFindFirst.mockResolvedValueOnce(audit(capa("ACTIVE")));
+    mockCapaWithEffectiveness(capa("ACTIVE"));
 
     const result = await advanceEightD({
       organizationId: "org-a",
@@ -260,7 +279,7 @@ describe("integrated quality 8D workflow", () => {
       ],
     };
     mockEventAndEightD(d6);
-    mocks.auditFindFirst.mockResolvedValueOnce(audit(capa("ACTIVE")));
+    mockCapaWithEffectiveness(capa("ACTIVE"));
 
     const result = await advanceEightD({
       organizationId: "org-a",
@@ -280,8 +299,13 @@ describe("integrated quality 8D workflow", () => {
     const d7 = baseEightD("D7");
     mockEventAndEightD(d7);
     const incomplete = capa("ACTIVE");
-    incomplete.actions[1] = { ...incomplete.actions[1], status: "OPEN", completionNote: null, completedById: null, completedAt: null };
-    mocks.auditFindFirst.mockResolvedValueOnce(audit(incomplete));
+    incomplete.actions[1] = {
+      ...incomplete.actions[1],
+      status: "IN_PROGRESS",
+      completionNote: null,
+      completedAt: null,
+    };
+    mockCapaWithEffectiveness(incomplete);
 
     await expect(
       advanceEightD({
@@ -293,10 +317,10 @@ describe("integrated quality 8D workflow", () => {
     ).rejects.toMatchObject({ code: "PREVENTION_REQUIRED" });
   });
 
-  it("closes D8 only after CAPA effectiveness and closure evidence", async () => {
+  it("closes D8 only after separately verified effective CAPA and closure evidence", async () => {
     const d8 = baseEightD("D8");
     mockEventAndEightD(d8);
-    mocks.auditFindFirst.mockResolvedValueOnce(audit(capa("CLOSED")));
+    mockCapaWithEffectiveness(capa("READY_FOR_EFFECTIVENESS"), effectiveReview);
 
     const result = await advanceEightD({
       organizationId: "org-a",
@@ -312,7 +336,22 @@ describe("integrated quality 8D workflow", () => {
     });
   });
 
-  it("resets D5-D8 evidence after an ineffective CAPA so revised actions are reselected", async () => {
+  it("blocks D8 when effectiveness has not been verified effective", async () => {
+    const d8 = baseEightD("D8");
+    mockEventAndEightD(d8);
+    mockCapaWithEffectiveness(capa("READY_FOR_EFFECTIVENESS"));
+
+    await expect(
+      advanceEightD({
+        organizationId: "org-a",
+        siteId: "site-a",
+        eventId: "event-1",
+        actorId: "quality-1",
+      }),
+    ).rejects.toMatchObject({ code: "EFFECTIVE_CAPA_REQUIRED" });
+  });
+
+  it("resets D5-D8 evidence after a separately verified ineffective CAPA", async () => {
     const d8 = baseEightD("D8");
     d8.d5Actions = [
       {
@@ -329,20 +368,13 @@ describe("integrated quality 8D workflow", () => {
       validationNote: "Old validation",
       validatedAt: "2026-08-16T08:00:00.000Z",
     };
-    const ineffective = capa("DRAFT");
-    ineffective.approvedById = null;
-    ineffective.approvedAt = null;
-    ineffective.effectivenessChecks = [
-      {
-        result: "INEFFECTIVE",
-        note: "Failure recurred.",
-        verifiedById: "quality-2",
-        verifiedAt: "2026-08-20T08:00:00.000Z",
-      },
-    ];
+    const reopenedDraft = capa("DRAFT");
+    reopenedDraft.actions = [];
+    reopenedDraft.activatedAt = null;
+    reopenedDraft.readyForEffectivenessAt = null;
 
     mockEventAndEightD(d8);
-    mocks.auditFindFirst.mockResolvedValueOnce(audit(ineffective));
+    mockCapaWithEffectiveness(reopenedDraft, ineffectiveReview);
 
     const result = await resetEightDAfterIneffectiveCapa({
       organizationId: "org-a",
