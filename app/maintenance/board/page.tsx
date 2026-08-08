@@ -3,7 +3,8 @@ import { headers } from "next/headers";
 import { db } from "@/lib/db";
 import {
   buildWorkOrderBoard,
-  isWorkOrderOverdue,
+  buildWorkOrderBoardWhere,
+  WORK_ORDER_BOARD_LIMIT,
   type WorkOrderDueFilter,
 } from "@/lib/maintenance/board";
 
@@ -55,23 +56,42 @@ export default async function WorkOrderBoardPage({
     );
   }
 
-  const workOrders = await db.workOrder.findMany({
-    where: {
-      siteId,
-      site: { organizationId, active: true },
-    },
-    include: {
-      asset: { select: { code: true } },
-      assignee: { select: { displayName: true } },
-      team: { select: { name: true } },
-    },
-    orderBy: { requestedAt: "asc" },
-  });
   const now = new Date();
+  const [workOrders, overdueCount] = await Promise.all([
+    db.workOrder.findMany({
+      where: buildWorkOrderBoardWhere({ organizationId, siteId, dueFilter, now }),
+      select: {
+        id: true,
+        number: true,
+        title: true,
+        status: true,
+        priority: true,
+        dueAt: true,
+        plannedStart: true,
+        requestedAt: true,
+        asset: { select: { code: true } },
+        assignee: { select: { displayName: true } },
+        team: { select: { name: true } },
+      },
+      orderBy: { requestedAt: "asc" },
+      take: WORK_ORDER_BOARD_LIMIT + 1,
+    }),
+    db.workOrder.count({
+      where: buildWorkOrderBoardWhere({
+        organizationId,
+        siteId,
+        dueFilter: "OVERDUE",
+        now,
+      }),
+    }),
+  ]);
+
+  const truncated = workOrders.length > WORK_ORDER_BOARD_LIMIT;
+  const boundedWorkOrders = workOrders.slice(0, WORK_ORDER_BOARD_LIMIT);
   const board = buildWorkOrderBoard({
     dueFilter,
     now,
-    workOrders: workOrders.map((workOrder) => ({
+    workOrders: boundedWorkOrders.map((workOrder) => ({
       id: workOrder.id,
       number: workOrder.number,
       title: workOrder.title,
@@ -86,7 +106,6 @@ export default async function WorkOrderBoardPage({
     })),
   });
   const visibleCount = board.reduce((sum, column) => sum + column.items.length, 0);
-  const overdueCount = workOrders.filter((workOrder) => isWorkOrderOverdue(workOrder, now)).length;
 
   return (
     <>
@@ -99,6 +118,7 @@ export default async function WorkOrderBoardPage({
         <div className="asset-status">
           <span className="badge">{visibleCount} visible</span>
           <span className="badge">{overdueCount} overdue</span>
+          {truncated ? <span className="badge">First {WORK_ORDER_BOARD_LIMIT} shown</span> : null}
         </div>
       </div>
 
@@ -116,6 +136,11 @@ export default async function WorkOrderBoardPage({
             </Link>
           ))}
         </div>
+        {truncated ? (
+          <p className="muted" role="status" style={{ marginBottom: 0, marginTop: 10 }}>
+            This board is bounded to {WORK_ORDER_BOARD_LIMIT} matching work orders for predictable rendering. Narrow the due filter to focus the list.
+          </p>
+        ) : null}
       </section>
 
       <section className="section" aria-label="Work-order Kanban board">
@@ -129,36 +154,42 @@ export default async function WorkOrderBoardPage({
           }}
         >
           {board.map((column) => (
-            <section className="card" key={column.status} style={{ minWidth: 240, alignSelf: "start" }}>
+            <section
+              className="card"
+              key={column.status}
+              style={{ minWidth: 240, alignSelf: "start" }}
+              aria-labelledby={`board-column-${column.status}`}
+            >
               <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
-                <h2 style={{ margin: 0, fontSize: 16 }}>{statusLabel(column.status)}</h2>
+                <h2 id={`board-column-${column.status}`} style={{ margin: 0, fontSize: 16 }}>
+                  {statusLabel(column.status)}
+                </h2>
                 <span className="badge">{column.items.length}</span>
               </div>
               <div className="stack-list" style={{ marginTop: 12 }}>
-                {column.items.map((workOrder) => {
-                  const overdue = isWorkOrderOverdue(workOrder, now);
-                  return (
-                    <article
-                      key={workOrder.id}
-                      style={{ border: "1px solid #e5e7eb", borderRadius: 10, padding: 12 }}
-                    >
-                      <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
-                        <Link className="table-link" href={`/maintenance/${workOrder.id}`}>
-                          {workOrder.number}
-                        </Link>
-                        <span className="badge">{workOrder.priority}</span>
-                      </div>
-                      <div style={{ fontWeight: 650, marginTop: 6 }}>{workOrder.title}</div>
-                      <div className="muted" style={{ marginTop: 6 }}>
-                        {workOrder.assetCode ?? "No asset"} · {workOrder.assigneeName ?? workOrder.teamName ?? "Unassigned"}
-                      </div>
-                      <div style={{ marginTop: 8 }}>
-                        <span className="muted">Due {formatDate(workOrder.dueAt)}</span>
-                        {overdue ? <span className="badge" style={{ marginLeft: 6 }}>OVERDUE</span> : null}
-                      </div>
-                    </article>
-                  );
-                })}
+                {column.items.map((workOrder) => (
+                  <article
+                    key={workOrder.id}
+                    style={{ border: "1px solid #e5e7eb", borderRadius: 10, padding: 12 }}
+                  >
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                      <Link className="table-link" href={`/maintenance/${workOrder.id}`}>
+                        {workOrder.number}
+                      </Link>
+                      <span className="badge">{workOrder.priority}</span>
+                    </div>
+                    <div style={{ fontWeight: 650, marginTop: 6 }}>{workOrder.title}</div>
+                    <div className="muted" style={{ marginTop: 6 }}>
+                      {workOrder.assetCode ?? "No asset"} · {workOrder.assigneeName ?? workOrder.teamName ?? "Unassigned"}
+                    </div>
+                    <div style={{ marginTop: 8 }}>
+                      <span className="muted">Due {formatDate(workOrder.dueAt)}</span>
+                      {workOrder.dueAt && workOrder.dueAt < now && workOrder.status !== "COMPLETED" ? (
+                        <span className="badge" style={{ marginLeft: 6 }}>OVERDUE</span>
+                      ) : null}
+                    </div>
+                  </article>
+                ))}
                 {column.items.length === 0 ? <p className="muted">No work orders.</p> : null}
               </div>
             </section>
