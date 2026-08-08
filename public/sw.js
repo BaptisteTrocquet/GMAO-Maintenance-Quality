@@ -47,10 +47,18 @@ function technicianReadRequest(request) {
   }
   if (!url.searchParams.get("organizationId") || !url.searchParams.get("siteId")) return null;
 
-  const partition = request.headers.get(PARTITION_HEADER) ?? "";
-  if (!/^[a-f0-9]{32}$/.test(partition)) return null;
+  return { url };
+}
 
-  return { partition, url };
+async function bearerPartition(request) {
+  const authorization = request.headers.get("authorization") ?? "";
+  if (!authorization.startsWith("Bearer ")) return "";
+  const token = authorization.slice("Bearer ".length).trim();
+  if (!token) return "";
+
+  const bytes = new TextEncoder().encode(`opengmao-offline-read:${token}`);
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+  return Array.from(digest.slice(0, 16), (value) => value.toString(16).padStart(2, "0")).join("");
 }
 
 function cacheKey(url) {
@@ -109,7 +117,16 @@ function offlineMiss() {
 }
 
 async function technicianReadNetworkFirst(request, match) {
-  const cache = await caches.open(`${READ_CACHE_PREFIX}${match.partition}`);
+  const derivedPartition = await bearerPartition(request);
+  if (!derivedPartition) return fetch(request);
+
+  const suppliedPartition = request.headers.get(PARTITION_HEADER) ?? "";
+  if (suppliedPartition && suppliedPartition !== derivedPartition) {
+    // A client cannot select another session's cache namespace.
+    return fetch(request);
+  }
+
+  const cache = await caches.open(`${READ_CACHE_PREFIX}${derivedPartition}`);
   const key = cacheKey(match.url);
 
   try {
