@@ -105,6 +105,7 @@ export default function TechnicianWorkOrder({
   const [syncing, setSyncing] = useState(false);
   const syncingRef = useRef(false);
   const [queuedWrites, setQueuedWrites] = useState(0);
+  const [retryAt, setRetryAt] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [offlineRead, setOfflineRead] = useState(false);
@@ -185,17 +186,21 @@ export default function TechnicianWorkOrder({
     return queued.length;
   }, [cachePartition]);
 
-  const syncQueue = useCallback(async () => {
+  const syncQueue = useCallback(async (force = false) => {
     if (!online || !isTechnicianQueuePartition(cachePartition) || syncingRef.current) return;
     syncingRef.current = true;
     setSyncing(true);
     setError("");
     try {
-      const result = await flushTechnicianWrites(cachePartition);
+      const result = await flushTechnicianWrites(cachePartition, { force });
       setQueuedWrites(result.remaining);
+      setRetryAt(result.retryAt ?? "");
       if (result.blocked) {
         setError(`Queued change needs attention: ${result.message ?? "server rejected the change"}`);
         return;
+      }
+      if (result.retryAt) {
+        setMessage("Queued change will retry automatically after a temporary sync failure.");
       }
       if (result.synced > 0) {
         setMessage(`${result.synced} queued change${result.synced === 1 ? "" : "s"} synced.`);
@@ -216,6 +221,15 @@ export default function TechnicianWorkOrder({
       if (count > 0) void syncQueue();
     })();
   }, [cachePartition, online, refreshQueueCount, syncQueue]);
+
+  useEffect(() => {
+    if (!online || !retryAt || queuedWrites === 0) return;
+    const retryTime = Date.parse(retryAt);
+    if (!Number.isFinite(retryTime)) return;
+    const delay = Math.max(0, retryTime - Date.now()) + 25;
+    const timer = window.setTimeout(() => void syncQueue(), delay);
+    return () => window.clearTimeout(timer);
+  }, [online, queuedWrites, retryAt, syncQueue]);
 
   async function patchJson<T>(url: string, body: Record<string, unknown>) {
     const response = await fetch(url, {
@@ -260,6 +274,7 @@ export default function TechnicianWorkOrder({
       endpoint: `/api/work-orders/${encodeURIComponent(workOrder.id)}/execution`,
       body: executionPayload(),
     });
+    setRetryAt("");
     await refreshQueueCount();
     return true;
   }
@@ -302,6 +317,7 @@ export default function TechnicianWorkOrder({
           endpoint: `/api/work-orders/${encodeURIComponent(workOrder.id)}`,
           body: { organizationId, siteId, status },
         });
+        setRetryAt("");
         await refreshQueueCount();
         setWorkOrder((current) => current ? { ...current, status } : current);
         setMessage(
@@ -387,9 +403,11 @@ export default function TechnicianWorkOrder({
                 ? "Offline edits are stored on this device and sync automatically when the connection returns."
                 : writesDisabled
                   ? "Offline data is read-only until an authenticated queue partition is available."
-                  : queuedWrites > 0
-                    ? "Queued maintenance changes are waiting to sync."
-                    : "This work order supports cached reads and queued structured edits offline."}
+                  : retryAt && queuedWrites > 0
+                    ? "A temporary sync failure is being retried automatically."
+                    : queuedWrites > 0
+                      ? "Queued maintenance changes are waiting to sync."
+                      : "This work order supports cached reads and queued structured edits offline."}
             </div>
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
@@ -400,7 +418,7 @@ export default function TechnicianWorkOrder({
             ) : null}
             <button
               type="button"
-              onClick={() => void syncQueue()}
+              onClick={() => void syncQueue(true)}
               disabled={!online || syncing || queuedWrites === 0}
               style={buttonStyle}
             >
