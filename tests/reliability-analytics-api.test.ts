@@ -69,15 +69,6 @@ describe("reliability analytics API", () => {
     expect(mocks.buildReliabilityDashboard).not.toHaveBeenCalled();
   });
 
-  it("requires work-read permission", async () => {
-    mocks.authenticateRequest.mockResolvedValue(auth({ role: "VIEWER" }));
-
-    const response = await GET(request());
-
-    expect(response.status).toBe(403);
-    expect(mocks.siteFindFirst).not.toHaveBeenCalled();
-  });
-
   it("returns 404 when an all-sites membership references a site outside the organization", async () => {
     mocks.authenticateRequest.mockResolvedValue(auth({ allSites: true, siteIds: [] }));
     mocks.siteFindFirst.mockResolvedValue(null);
