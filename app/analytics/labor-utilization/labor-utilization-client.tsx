@@ -3,27 +3,32 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 
 type AssetOption = { id: string; code: string; name: string };
+type LaborPoint = {
+  id: string;
+  kind: "PERSON" | "TEAM";
+  label: string;
+  workOrderCount: number;
+  minutes: number;
+  hours: number;
+  sharePercent: number;
+};
 type LaborPayload = {
-  generatedAt: string;
   timezone: string;
   range: { from: string; toExclusive: string };
   assetId: string | null;
   empty: boolean;
   completedWorkOrders: number;
   recordedWorkOrders: number;
-  recordingCoveragePercent: number | null;
-  laborMinutes: number;
-  laborHours: number;
-  unassignedLaborMinutes: number;
-  unassignedSharePercent: number | null;
-  assignees: Array<{
-    assigneeId: string | null;
-    displayName: string;
-    workOrderCount: number;
-    laborMinutes: number;
-    laborHours: number;
-    recordedLaborSharePercent: number;
-  }>;
+  excludedMissingLabor: number;
+  captureCoveragePercent: number | null;
+  totalMinutes: number;
+  totalHours: number;
+  personMinutes: number;
+  teamMinutes: number;
+  unassignedMinutes: number;
+  attributedPercent: number | null;
+  people: LaborPoint[];
+  teams: LaborPoint[];
   definition: string;
 };
 type ApiResponse = { data?: LaborPayload; error?: { message?: string } };
@@ -65,12 +70,12 @@ export default function LaborUtilizationClient({
       });
       const body = (await response.json()) as ApiResponse;
       if (!response.ok || !body.data) {
-        throw new Error(body.error?.message ?? "Unable to load labor analytics");
+        throw new Error(body.error?.message ?? "Unable to load labor utilization analytics");
       }
       setData(body.data);
     } catch (cause) {
       setData(null);
-      setError(cause instanceof Error ? cause.message : "Unable to load labor analytics");
+      setError(cause instanceof Error ? cause.message : "Unable to load labor utilization analytics");
     } finally {
       setLoading(false);
     }
@@ -114,57 +119,46 @@ export default function LaborUtilizationClient({
 
       {data ? (
         <>
+          <section className="card section">
+            <p className="muted" style={{ margin: 0 }}>{data.definition}</p>
+          </section>
+
           <div className="grid grid-4 section">
-            <section className="card">
-              <div className="muted">Recorded labor</div>
-              <div className="title">{data.laborHours.toFixed(1)} h</div>
-            </section>
-            <section className="card">
-              <div className="muted">Completed work orders</div>
-              <div className="title">{data.completedWorkOrders}</div>
-            </section>
-            <section className="card">
-              <div className="muted">Labor recording coverage</div>
-              <div className="title">{percent(data.recordingCoveragePercent)}</div>
-              <div className="muted">{data.recordedWorkOrders} with positive laborMinutes</div>
-            </section>
-            <section className="card">
-              <div className="muted">Unassigned recorded labor</div>
-              <div className="title">{percent(data.unassignedSharePercent)}</div>
-              <div className="muted">{(data.unassignedLaborMinutes / 60).toFixed(1)} h</div>
-            </section>
+            <section className="card"><div className="muted">Recorded labor</div><div className="title">{data.totalHours.toFixed(1)} h</div></section>
+            <section className="card"><div className="muted">Capture coverage</div><div className="title">{percent(data.captureCoveragePercent)}</div><p className="muted">{data.recordedWorkOrders}/{data.completedWorkOrders} completed WOs</p></section>
+            <section className="card"><div className="muted">Attributed labor</div><div className="title">{percent(data.attributedPercent)}</div><p className="muted">Person or team</p></section>
+            <section className="card"><div className="muted">Unassigned labor</div><div className="title">{(data.unassignedMinutes / 60).toFixed(1)} h</div><p className="muted">{data.excludedMissingLabor} completed WOs missing positive labor</p></section>
           </div>
 
-          <section className="card section">
-            <h2>Definition</h2>
-            <p className="muted" style={{ marginBottom: 0 }}>{data.definition}</p>
-          </section>
+          <div className="grid grid-2 section">
+            <section className="card responsive-table">
+              <h2>People · recorded labor share</h2>
+              {data.people.length ? (
+                <table className="table">
+                  <thead><tr><th>Person</th><th>WO</th><th>Hours</th><th>Share</th></tr></thead>
+                  <tbody>
+                    {data.people.map((point) => (
+                      <tr key={point.id}><td>{point.label}</td><td>{point.workOrderCount}</td><td>{point.hours.toFixed(1)}</td><td>{point.sharePercent.toFixed(1)}%</td></tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : <p className="muted">No person-attributed labor in this range.</p>}
+            </section>
 
-          <section className="card responsive-table section">
-            <h2>Recorded labor distribution</h2>
-            {data.assignees.length ? (
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Assignee</th>
-                    <th>Completed work with labor</th>
-                    <th>Recorded labor</th>
-                    <th>Share of recorded labor</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.assignees.map((row) => (
-                    <tr key={row.assigneeId ?? "unassigned"}>
-                      <td>{row.displayName}</td>
-                      <td>{row.workOrderCount}</td>
-                      <td>{row.laborHours.toFixed(1)} h</td>
-                      <td>{row.recordedLaborSharePercent.toFixed(1)}%</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            ) : <p className="muted">No positive laborMinutes recorded for completed work in this window.</p>}
-          </section>
+            <section className="card responsive-table">
+              <h2>Teams · recorded labor share</h2>
+              {data.teams.length ? (
+                <table className="table">
+                  <thead><tr><th>Team</th><th>WO</th><th>Hours</th><th>Share</th></tr></thead>
+                  <tbody>
+                    {data.teams.map((point) => (
+                      <tr key={point.id}><td>{point.label}</td><td>{point.workOrderCount}</td><td>{point.hours.toFixed(1)}</td><td>{point.sharePercent.toFixed(1)}%</td></tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : <p className="muted">No team-only labor in this range.</p>}
+            </section>
+          </div>
         </>
       ) : null}
     </>
