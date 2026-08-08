@@ -1,10 +1,16 @@
 import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import {
+  localCalendarDate,
   localDateStartUtc,
   resolveAnalyticsDateRange,
   shiftCalendarDate,
 } from "@/lib/analytics/date-range";
+import {
+  baselineCapacityMinutes,
+  countWeekdaysInclusive,
+  listLaborCapacityProfiles,
+} from "@/lib/analytics/labor-capacity";
 
 export const LABOR_UTILIZATION_TOP_LIMIT = 25;
 export const LABOR_UTILIZATION_MAX_RANGE_DAYS = 731;
@@ -36,6 +42,9 @@ export type LaborUtilizationPoint = {
   minutes: number;
   hours: number;
   sharePercent: number;
+  weeklyCapacityMinutes?: number | null;
+  capacityMinutes?: number | null;
+  utilizationPercent?: number | null;
 };
 
 export class LaborUtilizationError extends Error {
@@ -105,8 +114,8 @@ export async function buildLaborUtilization(input: {
   }
 
   const toExclusive = minDate(range.toExclusive, now);
-  const definition =
-    "Recorded-labor utilization proxy: distribution of positive laborMinutes on completed work orders by assignee, then team, then unassigned. This is not capacity utilization because contractual or scheduled working-hour capacity is not modeled.";
+  const noCapacityDefinition =
+    "Recorded-labor distribution only. Configure a weekly capacity baseline for maintenance users to calculate utilization; no workforce capacity is inferred automatically.";
 
   if (range.from.getTime() >= toExclusive.getTime()) {
     return {
@@ -127,7 +136,15 @@ export async function buildLaborUtilization(input: {
       attributedPercent: null,
       people: [] as LaborUtilizationPoint[],
       teams: [] as LaborUtilizationPoint[],
-      definition,
+      capacityMode: "RECORDED_ONLY" as const,
+      businessDays: 0,
+      configuredCapacityUsers: 0,
+      capacityMinutes: 0,
+      capacityHours: 0,
+      capacityCoveredLaborMinutes: 0,
+      capacityCoveragePercent: null,
+      utilizationPercent: null,
+      definition: noCapacityDefinition,
     };
   }
 
@@ -135,7 +152,7 @@ export async function buildLaborUtilization(input: {
     ? Prisma.sql`AND wo."assetId" = ${input.assetId}`
     : Prisma.empty;
 
-  const [summaryRows, personRows, teamRows] = await Promise.all([
+  const [summaryRows, personRows, teamRows, capacityProfiles] = await Promise.all([
     db.$queryRaw<SummaryRow[]>(Prisma.sql`
       SELECT
         COUNT(*)::int AS "completedCount",
@@ -205,6 +222,10 @@ export async function buildLaborUtilization(input: {
       ORDER BY minutes DESC, label ASC
       LIMIT ${LABOR_UTILIZATION_TOP_LIMIT}
     `),
+    listLaborCapacityProfiles({
+      organizationId: input.organizationId,
+      siteId: input.siteId,
+    }),
   ]);
 
   const summary = summaryRows[0] ?? {
@@ -221,20 +242,75 @@ export async function buildLaborUtilization(input: {
   const teamMinutes = numeric(summary.teamMinutes);
   const unassignedMinutes = numeric(summary.unassignedMinutes);
 
-  function points(rows: PersonRow[] | TeamRow[], kind: "PERSON" | "TEAM") {
-    return rows.map((row) => {
-      const minutes = numeric(row.minutes);
+  const lastIncludedInstant = new Date(Math.max(range.from.getTime(), toExclusive.getTime() - 1));
+  const lastCapacityDay = localCalendarDate(lastIncludedInstant, input.timeZone);
+  const businessDays = countWeekdaysInclusive(input.from, lastCapacityDay);
+  const capacityByUser = new Map(
+    capacityProfiles.map((profile) => [
+      profile.userId,
+      {
+        ...profile,
+        capacityMinutes: baselineCapacityMinutes(profile.weeklyCapacityMinutes, businessDays),
+      },
+    ]),
+  );
+  const laborByUser = new Map(personRows.map((row) => [row.id, row]));
+
+  const peopleIds = new Set([...laborByUser.keys(), ...capacityByUser.keys()]);
+  const people = [...peopleIds]
+    .map((userId): LaborUtilizationPoint => {
+      const labor = laborByUser.get(userId);
+      const capacity = capacityByUser.get(userId);
+      const minutes = numeric(labor?.minutes);
+      const capacityMinutes = capacity?.capacityMinutes ?? null;
       return {
-        id: row.id,
-        kind,
-        label: row.label,
-        workOrderCount: row.workOrderCount,
+        id: userId,
+        kind: "PERSON",
+        label: labor?.label ?? capacity?.displayName ?? "Unknown",
+        workOrderCount: numeric(labor?.workOrderCount),
         minutes,
         hours: minutes / 60,
         sharePercent: totalMinutes ? (minutes / totalMinutes) * 100 : 0,
-      } satisfies LaborUtilizationPoint;
-    });
-  }
+        weeklyCapacityMinutes: capacity?.weeklyCapacityMinutes ?? null,
+        capacityMinutes,
+        utilizationPercent:
+          capacityMinutes !== null && capacityMinutes > 0 ? (minutes / capacityMinutes) * 100 : null,
+      };
+    })
+    .sort((left, right) => right.minutes - left.minutes || left.label.localeCompare(right.label))
+    .slice(0, LABOR_UTILIZATION_TOP_LIMIT);
+
+  const teams = teamRows.map((row): LaborUtilizationPoint => {
+    const minutes = numeric(row.minutes);
+    return {
+      id: row.id,
+      kind: "TEAM",
+      label: row.label,
+      workOrderCount: row.workOrderCount,
+      minutes,
+      hours: minutes / 60,
+      sharePercent: totalMinutes ? (minutes / totalMinutes) * 100 : 0,
+      weeklyCapacityMinutes: null,
+      capacityMinutes: null,
+      utilizationPercent: null,
+    };
+  });
+
+  const capacityMinutes = capacityProfiles.reduce(
+    (sum, profile) => sum + baselineCapacityMinutes(profile.weeklyCapacityMinutes, businessDays),
+    0,
+  );
+  const capacityCoveredLaborMinutes = capacityProfiles.reduce(
+    (sum, profile) => sum + numeric(laborByUser.get(profile.userId)?.minutes),
+    0,
+  );
+  const capacityCoveragePercent =
+    personMinutes > 0 ? (capacityCoveredLaborMinutes / personMinutes) * 100 : null;
+  const utilizationPercent =
+    capacityMinutes > 0 ? (capacityCoveredLaborMinutes / capacityMinutes) * 100 : null;
+  const definition = capacityProfiles.length
+    ? "Configured baseline labor utilization = recorded person-attributed labor for users with a capacity profile divided by their weekly capacity prorated across Monday-Friday days in the reporting window. Team-only and unassigned labor remain visible but are not assigned to an individual capacity denominator. This is a planning baseline: holidays, leave and shift timing are not inferred."
+    : noCapacityDefinition;
 
   return {
     generatedAt: now.toISOString(),
@@ -254,8 +330,16 @@ export async function buildLaborUtilization(input: {
     unassignedMinutes,
     attributedPercent:
       totalMinutes === 0 ? null : ((personMinutes + teamMinutes) / totalMinutes) * 100,
-    people: points(personRows, "PERSON"),
-    teams: points(teamRows, "TEAM"),
+    people,
+    teams,
+    capacityMode: capacityProfiles.length ? ("CONFIGURED_BASELINE" as const) : ("RECORDED_ONLY" as const),
+    businessDays,
+    configuredCapacityUsers: capacityProfiles.length,
+    capacityMinutes,
+    capacityHours: capacityMinutes / 60,
+    capacityCoveredLaborMinutes,
+    capacityCoveragePercent,
+    utilizationPercent,
     definition,
   };
 }

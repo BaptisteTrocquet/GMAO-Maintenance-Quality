@@ -11,6 +11,9 @@ type LaborPoint = {
   minutes: number;
   hours: number;
   sharePercent: number;
+  weeklyCapacityMinutes?: number | null;
+  capacityMinutes?: number | null;
+  utilizationPercent?: number | null;
 };
 type LaborPayload = {
   timezone: string;
@@ -29,12 +32,20 @@ type LaborPayload = {
   attributedPercent: number | null;
   people: LaborPoint[];
   teams: LaborPoint[];
+  capacityMode: "CONFIGURED_BASELINE" | "RECORDED_ONLY";
+  businessDays: number;
+  configuredCapacityUsers: number;
+  capacityMinutes: number;
+  capacityHours: number;
+  capacityCoveredLaborMinutes: number;
+  capacityCoveragePercent: number | null;
+  utilizationPercent: number | null;
   definition: string;
 };
 type ApiResponse = { data?: LaborPayload; error?: { message?: string } };
 
-function percent(value: number | null) {
-  return value === null ? "—" : `${value.toFixed(1)}%`;
+function percent(value: number | null | undefined) {
+  return value === null || value === undefined ? "—" : `${value.toFixed(1)}%`;
 }
 
 export default function LaborUtilizationClient({
@@ -124,7 +135,13 @@ export default function LaborUtilizationClient({
           </section>
 
           <div className="grid grid-4 section">
+            <section className="card"><div className="muted">Baseline utilization</div><div className="title">{percent(data.utilizationPercent)}</div><p className="muted">{data.capacityMode === "CONFIGURED_BASELINE" ? `${data.configuredCapacityUsers} configured user${data.configuredCapacityUsers === 1 ? "" : "s"}` : "Capacity not configured"}</p></section>
+            <section className="card"><div className="muted">Baseline capacity</div><div className="title">{data.capacityMode === "CONFIGURED_BASELINE" ? `${data.capacityHours.toFixed(1)} h` : "—"}</div><p className="muted">{data.businessDays} weekday{data.businessDays === 1 ? "" : "s"}</p></section>
+            <section className="card"><div className="muted">Person-labor capacity coverage</div><div className="title">{percent(data.capacityCoveragePercent)}</div><p className="muted">Assigned labor covered by a capacity profile</p></section>
             <section className="card"><div className="muted">Recorded labor</div><div className="title">{data.totalHours.toFixed(1)} h</div></section>
+          </div>
+
+          <div className="grid grid-3 section">
             <section className="card"><div className="muted">Capture coverage</div><div className="title">{percent(data.captureCoveragePercent)}</div><p className="muted">{data.recordedWorkOrders}/{data.completedWorkOrders} completed WOs</p></section>
             <section className="card"><div className="muted">Attributed labor</div><div className="title">{percent(data.attributedPercent)}</div><p className="muted">Person or team</p></section>
             <section className="card"><div className="muted">Unassigned labor</div><div className="title">{(data.unassignedMinutes / 60).toFixed(1)} h</div><p className="muted">{data.excludedMissingLabor} completed WOs missing positive labor</p></section>
@@ -132,17 +149,22 @@ export default function LaborUtilizationClient({
 
           <div className="grid grid-2 section">
             <section className="card responsive-table">
-              <h2>People · recorded labor share</h2>
+              <h2>People · labor and capacity</h2>
               {data.people.length ? (
                 <table className="table">
-                  <thead><tr><th>Person</th><th>WO</th><th>Hours</th><th>Share</th></tr></thead>
+                  <thead><tr><th>Person</th><th>WO</th><th>Hours</th><th>Share</th><th>Weekly baseline</th><th>Window capacity</th><th>Utilization</th></tr></thead>
                   <tbody>
                     {data.people.map((point) => (
-                      <tr key={point.id}><td>{point.label}</td><td>{point.workOrderCount}</td><td>{point.hours.toFixed(1)}</td><td>{point.sharePercent.toFixed(1)}%</td></tr>
+                      <tr key={point.id}>
+                        <td>{point.label}</td><td>{point.workOrderCount}</td><td>{point.hours.toFixed(1)}</td><td>{point.sharePercent.toFixed(1)}%</td>
+                        <td>{point.weeklyCapacityMinutes == null ? "—" : `${(point.weeklyCapacityMinutes / 60).toFixed(1)} h`}</td>
+                        <td>{point.capacityMinutes == null ? "—" : `${(point.capacityMinutes / 60).toFixed(1)} h`}</td>
+                        <td>{percent(point.utilizationPercent)}</td>
+                      </tr>
                     ))}
                   </tbody>
                 </table>
-              ) : <p className="muted">No person-attributed labor in this range.</p>}
+              ) : <p className="muted">No person-attributed labor or configured capacity in this range.</p>}
             </section>
 
             <section className="card responsive-table">
