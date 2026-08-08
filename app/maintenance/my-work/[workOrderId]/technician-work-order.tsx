@@ -10,11 +10,14 @@ import {
   OFFLINE_SOURCE_HEADER,
 } from "@/lib/pwa/technician-read-cache-client";
 import {
+  discardTechnicianWrite,
   enqueueTechnicianWrite,
   flushTechnicianWrites,
   isTechnicianQueuePartition,
+  isTechnicianWriteConflict,
   listTechnicianWrites,
   projectTechnicianWrites,
+  type TechnicianQueuedWrite,
 } from "@/lib/pwa/technician-write-queue-client";
 
 type WorkOrderStatus =
@@ -84,6 +87,23 @@ function cacheLabel(cachedAt: string) {
   }).format(new Date(parsed))}`;
 }
 
+function queuedWriteSummary(write: TechnicianQueuedWrite) {
+  if (write.kind === "transition") {
+    return typeof write.body.status === "string"
+      ? `Status change → ${write.body.status}`
+      : "Queued status change";
+  }
+
+  const details: string[] = ["Progress update"];
+  if (typeof write.body.laborMinutes === "number") details.push(`labor ${write.body.laborMinutes} min`);
+  if (typeof write.body.downtimeMinutes === "number") details.push(`downtime ${write.body.downtimeMinutes} min`);
+  if (typeof write.body.completionNote === "string") details.push("completion note");
+  if (Array.isArray(write.body.checklistUpdates)) {
+    details.push(`${write.body.checklistUpdates.length} checklist item${write.body.checklistUpdates.length === 1 ? "" : "s"}`);
+  }
+  return details.join(" · ");
+}
+
 export default function TechnicianWorkOrder({
   organizationId,
   siteId,
@@ -103,6 +123,7 @@ export default function TechnicianWorkOrder({
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [resolvingConflict, setResolvingConflict] = useState(false);
   const syncingRef = useRef(false);
   const [queuedWrites, setQueuedWrites] = useState(0);
   const [retryAt, setRetryAt] = useState("");
@@ -112,6 +133,8 @@ export default function TechnicianWorkOrder({
   const [cachedAt, setCachedAt] = useState("");
   const [online, setOnline] = useState(true);
   const [cachePartition, setCachePartition] = useState(offlinePartition);
+  const [conflictWrite, setConflictWrite] = useState<TechnicianQueuedWrite | null>(null);
+  const [serverConflictWorkOrder, setServerConflictWorkOrder] = useState<TechnicianWorkOrderData | null>(null);
 
   useEffect(() => {
     const update = () => setOnline(navigator.onLine);
@@ -131,6 +154,34 @@ export default function TechnicianWorkOrder({
     setCompletionNote(next.completionNote ?? "");
     setCheckItems(next.checkItems);
   }, []);
+
+  const fetchLiveWorkOrder = useCallback(async () => {
+    const query = new URLSearchParams({ organizationId, siteId });
+    const response = await fetch(
+      `/api/work-orders/technician/${encodeURIComponent(workOrderId)}?${query.toString()}`,
+      { cache: "no-store" },
+    );
+    const body = (await response.json()) as ApiResponse<{ workOrder: TechnicianWorkOrderData }>;
+    if (!response.ok || !body.data) {
+      throw new Error(body.error?.message ?? "Unable to load the current server work order");
+    }
+    return body.data.workOrder;
+  }, [organizationId, siteId, workOrderId]);
+
+  const refreshConflictServerVersion = useCallback(async (write: TechnicianQueuedWrite | null) => {
+    setConflictWrite(write);
+    if (!write || !isTechnicianWriteConflict(write)) {
+      setServerConflictWorkOrder(null);
+      return;
+    }
+    if (typeof navigator !== "undefined" && !navigator.onLine) return;
+    try {
+      setServerConflictWorkOrder(await fetchLiveWorkOrder());
+    } catch (reason) {
+      setServerConflictWorkOrder(null);
+      setError(reason instanceof Error ? reason.message : "Unable to load the current server work order");
+    }
+  }, [fetchLiveWorkOrder]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -156,9 +207,15 @@ export default function TechnicianWorkOrder({
       if (isTechnicianQueuePartition(activePartition)) {
         const queued = await listTechnicianWrites(activePartition);
         setQueuedWrites(queued.length);
+        const persistedConflict = queued.find(
+          (write) => write.workOrderId === workOrderId && isTechnicianWriteConflict(write),
+        ) ?? null;
+        await refreshConflictServerVersion(persistedConflict);
         next = projectTechnicianWrites(next, queued) as TechnicianWorkOrderData;
       } else {
         setQueuedWrites(0);
+        setConflictWrite(null);
+        setServerConflictWorkOrder(null);
       }
       applyWorkOrder(next);
 
@@ -170,7 +227,7 @@ export default function TechnicianWorkOrder({
     } finally {
       setLoading(false);
     }
-  }, [applyWorkOrder, cachePartition, organizationId, siteId, workOrderId]);
+  }, [applyWorkOrder, cachePartition, organizationId, refreshConflictServerVersion, siteId, workOrderId]);
 
   useEffect(() => {
     void load();
@@ -196,9 +253,18 @@ export default function TechnicianWorkOrder({
       setQueuedWrites(result.remaining);
       setRetryAt(result.retryAt ?? "");
       if (result.blocked) {
-        setError(`Queued change needs attention: ${result.message ?? "server rejected the change"}`);
+        if (isTechnicianWriteConflict(result.blocked)) {
+          await refreshConflictServerVersion(result.blocked);
+          setMessage("A queued offline change conflicts with the current server version.");
+        } else {
+          setConflictWrite(null);
+          setServerConflictWorkOrder(null);
+          setError(`Queued change needs attention: ${result.message ?? "server rejected the change"}`);
+        }
         return;
       }
+      setConflictWrite(null);
+      setServerConflictWorkOrder(null);
       if (result.retryAt) {
         setMessage("Queued change will retry automatically after a temporary sync failure.");
       }
@@ -212,24 +278,32 @@ export default function TechnicianWorkOrder({
       syncingRef.current = false;
       setSyncing(false);
     }
-  }, [cachePartition, load, online]);
+  }, [cachePartition, load, online, refreshConflictServerVersion]);
 
   useEffect(() => {
     if (!online || !isTechnicianQueuePartition(cachePartition)) return;
     void (async () => {
-      const count = await refreshQueueCount();
-      if (count > 0) void syncQueue();
+      const queued = await listTechnicianWrites(cachePartition);
+      setQueuedWrites(queued.length);
+      const persistedConflict = queued.find(
+        (write) => write.workOrderId === workOrderId && isTechnicianWriteConflict(write),
+      ) ?? null;
+      if (persistedConflict) {
+        await refreshConflictServerVersion(persistedConflict);
+        return;
+      }
+      if (queued.length > 0) void syncQueue();
     })();
-  }, [cachePartition, online, refreshQueueCount, syncQueue]);
+  }, [cachePartition, online, refreshConflictServerVersion, syncQueue, workOrderId]);
 
   useEffect(() => {
-    if (!online || !retryAt || queuedWrites === 0) return;
+    if (!online || !retryAt || queuedWrites === 0 || conflictWrite) return;
     const retryTime = Date.parse(retryAt);
     if (!Number.isFinite(retryTime)) return;
     const delay = Math.max(0, retryTime - Date.now()) + 25;
     const timer = window.setTimeout(() => void syncQueue(), delay);
     return () => window.clearTimeout(timer);
-  }, [online, queuedWrites, retryAt, syncQueue]);
+  }, [conflictWrite, online, queuedWrites, retryAt, syncQueue]);
 
   async function patchJson<T>(url: string, body: Record<string, unknown>) {
     const response = await fetch(url, {
@@ -246,7 +320,7 @@ export default function TechnicianWorkOrder({
 
   const queueAvailable = isTechnicianQueuePartition(cachePartition);
   const queueMode = (!online || offlineRead) && queueAvailable;
-  const writesDisabled = (!online || offlineRead) && !queueAvailable;
+  const writesDisabled = ((!online || offlineRead) && !queueAvailable) || Boolean(conflictWrite);
 
   function executionPayload() {
     return {
@@ -367,6 +441,30 @@ export default function TechnicianWorkOrder({
     }
   }
 
+  async function discardConflict() {
+    if (!conflictWrite || resolvingConflict) return;
+    setResolvingConflict(true);
+    setError("");
+    try {
+      const discarded = await discardTechnicianWrite(cachePartition, conflictWrite.id);
+      if (!discarded) throw new Error("The queued change could not be discarded for this session.");
+      setConflictWrite(null);
+      setServerConflictWorkOrder(null);
+      setRetryAt("");
+      setMessage("Local queued change discarded. The current server version is now authoritative.");
+      await load();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to discard queued conflict");
+    } finally {
+      setResolvingConflict(false);
+    }
+  }
+
+  function keepConflict() {
+    if (!conflictWrite) return;
+    setMessage("Local queued change kept. It will remain paused until you retry or discard it.");
+  }
+
   function updateCheckItem(id: string, patch: Partial<Pick<CheckItem, "completed" | "note">>) {
     if (writesDisabled) return;
     setCheckItems((items) => items.map((item) => item.id === id ? { ...item, ...patch } : item));
@@ -399,15 +497,17 @@ export default function TechnicianWorkOrder({
           <div>
             <strong aria-live="polite">{offlineRead ? cacheLabel(cachedAt) : online ? "Live" : "Offline"}</strong>
             <div className="muted">
-              {queueMode
-                ? "Offline edits are stored on this device and sync automatically when the connection returns."
-                : writesDisabled
-                  ? "Offline data is read-only until an authenticated queue partition is available."
-                  : retryAt && queuedWrites > 0
-                    ? "A temporary sync failure is being retried automatically."
-                    : queuedWrites > 0
-                      ? "Queued maintenance changes are waiting to sync."
-                      : "This work order supports cached reads and queued structured edits offline."}
+              {conflictWrite
+                ? "A queued change is paused for conflict resolution before later changes can sync."
+                : queueMode
+                  ? "Offline edits are stored on this device and sync automatically when the connection returns."
+                  : writesDisabled
+                    ? "Offline data is read-only until an authenticated queue partition is available."
+                    : retryAt && queuedWrites > 0
+                      ? "A temporary sync failure is being retried automatically."
+                      : queuedWrites > 0
+                        ? "Queued maintenance changes are waiting to sync."
+                        : "This work order supports cached reads and queued structured edits offline."}
             </div>
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
@@ -419,7 +519,7 @@ export default function TechnicianWorkOrder({
             <button
               type="button"
               onClick={() => void syncQueue(true)}
-              disabled={!online || syncing || queuedWrites === 0}
+              disabled={!online || syncing || queuedWrites === 0 || Boolean(conflictWrite)}
               style={buttonStyle}
             >
               {syncing ? "Syncing…" : "Sync queued changes"}
@@ -427,7 +527,7 @@ export default function TechnicianWorkOrder({
             <button
               type="button"
               onClick={() => void load()}
-              disabled={loading || busy || syncing}
+              disabled={loading || busy || syncing || resolvingConflict}
               style={buttonStyle}
             >
               {loading ? "Refreshing…" : "Refresh work order"}
@@ -435,6 +535,69 @@ export default function TechnicianWorkOrder({
           </div>
         </div>
       </section>
+
+      {conflictWrite ? (
+        <section className="card" data-testid="sync-conflict" style={{ display: "grid", gap: 12 }}>
+          <div>
+            <h2 style={{ margin: 0 }}>Sync conflict</h2>
+            <p style={{ marginBottom: 0 }}>
+              The server rejected this offline change. Your local change is still stored on this device; later queued changes are paused until you resolve this one.
+            </p>
+          </div>
+          <div role="alert" style={{ display: "grid", gap: 4 }}>
+            <strong>{conflictWrite.lastErrorCode ?? "SERVER_CONFLICT"}</strong>
+            <span>{conflictWrite.lastError ?? "The server state changed before this queued update could be applied."}</span>
+          </div>
+          <div className="grid grid-2">
+            <div style={{ display: "grid", gap: 6 }}>
+              <h3 style={{ margin: 0 }}>Local queued change</h3>
+              <strong>{queuedWriteSummary(conflictWrite)}</strong>
+              <span className="muted">Queued {formatDate(conflictWrite.createdAt)}</span>
+              {conflictWrite.conflictAt ? <span className="muted">Conflict detected {formatDate(conflictWrite.conflictAt)}</span> : null}
+            </div>
+            <div style={{ display: "grid", gap: 6 }} data-testid="server-conflict-version">
+              <h3 style={{ margin: 0 }}>Current server version</h3>
+              {serverConflictWorkOrder ? (
+                <>
+                  <strong>Status: {serverConflictWorkOrder.status}</strong>
+                  <span>Labor: {serverConflictWorkOrder.laborMinutes ?? 0} min</span>
+                  <span>Downtime: {serverConflictWorkOrder.downtimeMinutes ?? 0} min</span>
+                  <span>Checklist: {serverConflictWorkOrder.checkItems.filter((item) => item.completed).length}/{serverConflictWorkOrder.checkItems.length} complete</span>
+                  <span>Completion note: {serverConflictWorkOrder.completionNote?.trim() || "—"}</span>
+                </>
+              ) : (
+                <span className="muted">Reconnect or refresh to load the current server version.</span>
+              )}
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button
+              type="button"
+              onClick={() => void syncQueue(true)}
+              disabled={!online || syncing || resolvingConflict}
+              style={buttonStyle}
+            >
+              {syncing ? "Retrying…" : "Retry local change"}
+            </button>
+            <button
+              type="button"
+              onClick={keepConflict}
+              disabled={resolvingConflict}
+              style={buttonStyle}
+            >
+              Keep local change
+            </button>
+            <button
+              type="button"
+              onClick={() => void discardConflict()}
+              disabled={resolvingConflict}
+              style={buttonStyle}
+            >
+              {resolvingConflict ? "Discarding…" : "Discard local change and use server"}
+            </button>
+          </div>
+        </section>
+      ) : null}
 
       <section className="card" style={{ display: "grid", gap: 12 }}>
         <div style={{ display: "flex", gap: 8, justifyContent: "space-between", alignItems: "center", flexWrap: "wrap" }}>
@@ -481,10 +644,11 @@ export default function TechnicianWorkOrder({
             </button>
           ) : null}
         </div>
+        {conflictWrite ? <p className="muted">Work controls are paused until the queued conflict above is resolved.</p> : null}
         {workOrder.status === "REQUESTED" ? <p className="muted">Waiting for approval before work can start.</p> : null}
         {workOrder.status === "COMPLETED" ? <p className="muted">This work order is completed or queued for completion.</p> : null}
         {workOrder.status === "CANCELLED" ? <p className="muted">This work order is cancelled.</p> : null}
-        {queueMode ? (
+        {queueMode && !conflictWrite ? (
           <p className="muted">Status changes are queued in order and replayed after reconnection.</p>
         ) : workOrder.status === "IN_PROGRESS" && !canComplete ? (
           <p className="muted">Complete every checklist item and add a completion note before closing.</p>

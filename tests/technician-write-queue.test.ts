@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   isRetryableTechnicianWriteStatus,
   isTechnicianQueuePartition,
+  isTechnicianWriteConflict,
   projectTechnicianWrites,
   technicianRetryDelayMs,
   type TechnicianQueuedWrite,
@@ -22,6 +23,9 @@ function queuedWrite(
     lastAttemptAt: null,
     nextAttemptAt: null,
     lastError: null,
+    lastErrorCode: null,
+    lastErrorStatus: null,
+    conflictAt: null,
     ...overrides,
   };
 }
@@ -49,6 +53,29 @@ describe("technician offline write queue", () => {
     for (const status of [400, 401, 403, 404, 409, 422]) {
       expect(isRetryableTechnicianWriteStatus(status)).toBe(false);
     }
+  });
+
+  it("classifies only persisted HTTP 409 failures as sync conflicts", () => {
+    expect(isTechnicianWriteConflict(queuedWrite({
+      id: "conflict",
+      kind: "execution",
+      body: {},
+      lastErrorStatus: 409,
+      lastErrorCode: "WORK_NOT_ACTIVE",
+      conflictAt: "2026-08-08T06:05:00.000Z",
+    }))).toBe(true);
+    expect(isTechnicianWriteConflict(queuedWrite({
+      id: "forbidden",
+      kind: "execution",
+      body: {},
+      lastErrorStatus: 403,
+      lastErrorCode: "ACCESS_DENIED",
+    }))).toBe(false);
+    expect(isTechnicianWriteConflict(queuedWrite({
+      id: "pending",
+      kind: "execution",
+      body: {},
+    }))).toBe(false);
   });
 
   it("projects queued execution and status writes by monotone sequence", () => {

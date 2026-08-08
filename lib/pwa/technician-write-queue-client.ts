@@ -15,6 +15,9 @@ export type TechnicianQueuedWrite = {
   lastAttemptAt: string | null;
   nextAttemptAt: string | null;
   lastError: string | null;
+  lastErrorCode: string | null;
+  lastErrorStatus: number | null;
+  conflictAt: string | null;
 };
 
 export type TechnicianQueueFlushResult = {
@@ -91,6 +94,10 @@ export function isRetryableTechnicianWriteStatus(status: number) {
   return RETRYABLE_STATUS.has(status);
 }
 
+export function isTechnicianWriteConflict(write: TechnicianQueuedWrite) {
+  return write.lastErrorStatus === 409;
+}
+
 function normalizeWrite(value: TechnicianQueuedWrite): TechnicianQueuedWrite {
   return {
     ...value,
@@ -98,6 +105,9 @@ function normalizeWrite(value: TechnicianQueuedWrite): TechnicianQueuedWrite {
     lastAttemptAt: typeof value.lastAttemptAt === "string" ? value.lastAttemptAt : null,
     nextAttemptAt: typeof value.nextAttemptAt === "string" ? value.nextAttemptAt : null,
     lastError: typeof value.lastError === "string" ? value.lastError : null,
+    lastErrorCode: typeof value.lastErrorCode === "string" ? value.lastErrorCode : null,
+    lastErrorStatus: Number.isFinite(value.lastErrorStatus) ? value.lastErrorStatus : null,
+    conflictAt: typeof value.conflictAt === "string" ? value.conflictAt : null,
   };
 }
 
@@ -126,6 +136,9 @@ export async function enqueueTechnicianWrite(input: {
     lastAttemptAt: null,
     nextAttemptAt: null,
     lastError: null,
+    lastErrorCode: null,
+    lastErrorStatus: null,
+    conflictAt: null,
   };
 
   await withStore<void>("readwrite", (store, done, fail) => {
@@ -175,6 +188,22 @@ async function removeTechnicianWrite(id: string) {
   });
 }
 
+export async function discardTechnicianWrite(partition: string, id: string) {
+  if (!isTechnicianQueuePartition(partition) || !queueSupported()) return false;
+  return withStore<boolean>("readwrite", (store, done, fail) => {
+    const getRequest = store.get(id);
+    getRequest.onerror = () => fail(getRequest.error ?? new Error("Unable to read queued write"));
+    getRequest.onsuccess = () => {
+      const raw = getRequest.result as TechnicianQueuedWrite | undefined;
+      if (!raw || raw.partition !== partition) return done(false);
+      const deleteRequest = store.delete(id);
+      deleteRequest.onsuccess = () => done(true);
+      deleteRequest.onerror = () =>
+        fail(deleteRequest.error ?? new Error("Unable to discard queued write"));
+    };
+  });
+}
+
 async function updateTechnicianWrite(
   id: string,
   update: (current: TechnicianQueuedWrite) => TechnicianQueuedWrite,
@@ -193,10 +222,17 @@ async function updateTechnicianWrite(
   });
 }
 
-async function markTechnicianWriteError(id: string, message: string) {
+async function markTechnicianWriteError(
+  id: string,
+  input: { message: string; code: string | null; status: number; now: Date },
+) {
   return updateTechnicianWrite(id, (current) => ({
     ...current,
-    lastError: message,
+    lastAttemptAt: input.now.toISOString(),
+    lastError: input.message,
+    lastErrorCode: input.code,
+    lastErrorStatus: input.status,
+    conflictAt: input.status === 409 ? input.now.toISOString() : null,
     nextAttemptAt: null,
   }));
 }
@@ -210,6 +246,9 @@ async function markTechnicianWriteRetry(id: string, message: string, now: Date) 
       lastAttemptAt: now.toISOString(),
       nextAttemptAt: new Date(now.getTime() + technicianRetryDelayMs(attempts)).toISOString(),
       lastError: message,
+      lastErrorCode: null,
+      lastErrorStatus: null,
+      conflictAt: null,
     };
   });
 }
@@ -253,19 +292,21 @@ export function projectTechnicianWrites<T extends {
   return projected;
 }
 
-function responseErrorMessage(body: unknown, fallback: string) {
+function responseError(body: unknown, fallback: string) {
   if (
     body &&
     typeof body === "object" &&
     "error" in body &&
     body.error &&
-    typeof body.error === "object" &&
-    "message" in body.error &&
-    typeof body.error.message === "string"
+    typeof body.error === "object"
   ) {
-    return body.error.message;
+    const error = body.error as { code?: unknown; message?: unknown };
+    return {
+      code: typeof error.code === "string" ? error.code : null,
+      message: typeof error.message === "string" ? error.message : fallback,
+    };
   }
-  return fallback;
+  return { code: null, message: fallback };
 }
 
 export async function flushTechnicianWrites(
@@ -345,26 +386,37 @@ export async function flushTechnicianWrites(
         continue;
       }
 
-      const message = responseErrorMessage(body, `Queued write failed with HTTP ${response.status}`);
+      const failure = responseError(body, `Queued write failed with HTTP ${response.status}`);
       if (isRetryableTechnicianWriteStatus(response.status)) {
-        const retried = await markTechnicianWriteRetry(write.id, message, now);
+        const retried = await markTechnicianWriteRetry(write.id, failure.message, now);
         const remaining = (await listTechnicianWrites(partition)).length;
         return {
           synced,
           remaining,
           blocked: null,
-          message,
+          message: failure.message,
           retryAt: retried?.nextAttemptAt ?? null,
         };
       }
 
-      const blocked = await markTechnicianWriteError(write.id, message);
+      const blocked = await markTechnicianWriteError(write.id, {
+        message: failure.message,
+        code: failure.code,
+        status: response.status,
+        now,
+      });
       const remaining = (await listTechnicianWrites(partition)).length;
       return {
         synced,
         remaining,
-        blocked: blocked ?? { ...write, lastError: message },
-        message,
+        blocked: blocked ?? {
+          ...write,
+          lastError: failure.message,
+          lastErrorCode: failure.code,
+          lastErrorStatus: response.status,
+          conflictAt: response.status === 409 ? now.toISOString() : null,
+        },
+        message: failure.message,
         retryAt: null,
       };
     } catch {

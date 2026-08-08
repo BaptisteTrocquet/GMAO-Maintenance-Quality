@@ -28,12 +28,16 @@ async function queuedWriteSnapshot(page: import("@playwright/test").Page) {
     }
     const transaction = database.transaction("writeQueue", "readonly");
     const getAll = transaction.objectStore("writeQueue").getAll();
-    const writes = await new Promise<Array<{ kind: string; endpoint: string }>>((resolve, reject) => {
-      getAll.onsuccess = () => resolve(getAll.result as Array<{ kind: string; endpoint: string }>);
+    const writes = await new Promise<Array<{ kind: string; endpoint: string; sequence: number }>>((resolve, reject) => {
+      getAll.onsuccess = () => resolve(
+        getAll.result as Array<{ kind: string; endpoint: string; sequence: number }>,
+      );
       getAll.onerror = () => reject(getAll.error);
     });
     database.close();
-    return writes.map(({ kind, endpoint }) => ({ kind, endpoint }));
+    return writes
+      .sort((left, right) => left.sequence - right.sequence)
+      .map(({ kind, endpoint }) => ({ kind, endpoint }));
   });
 }
 
