@@ -3,55 +3,55 @@ import { AccessDeniedError, assertSitePermission } from "@/lib/access-control";
 import { apiData, apiError } from "@/lib/api-response";
 import { authenticateRequest } from "@/lib/auth/request-auth";
 import {
-  approveCapa,
   CapaError,
-  completeCapaAction,
-  getCapaWorkspace,
+  getCapa,
   listCapaTimeline,
-  reopenCapa,
+  markCapaReadyForEffectiveness,
   saveCapaDraft,
-  verifyCapaEffectiveness,
+  transitionCapaAction,
 } from "@/lib/quality/capa";
+import { approveCapa, CapaApprovalError } from "@/lib/quality/capa-approval";
 
 const scopeSchema = z.object({
   organizationId: z.string().min(1),
   siteId: z.string().min(1),
 });
 
-const actionSchema = z.object({
-  id: z.string().uuid().optional(),
+const draftActionSchema = z.object({
+  actionKey: z.string().trim().min(1).max(120),
   type: z.enum(["CORRECTIVE", "PREVENTIVE"]),
   title: z.string().trim().min(1).max(500),
   description: z.string().trim().max(5000).nullable().optional(),
   ownerId: z.string().min(1),
-  dueAt: z.coerce.date(),
+  dueAt: z.string().datetime(),
 });
 
 const saveSchema = scopeSchema.extend({
   action: z.literal("SAVE"),
-  planSummary: z.string().trim().min(1).max(5000),
-  actions: z.array(actionSchema).max(100),
+  objective: z.string().trim().min(1).max(5000),
+  actions: z.array(draftActionSchema).min(1).max(100),
 });
-
-const approveSchema = scopeSchema.extend({ action: z.literal("APPROVE") });
-const completeActionSchema = scopeSchema.extend({
-  action: z.literal("COMPLETE_ACTION"),
-  actionId: z.string().uuid(),
-  completionNote: z.string().trim().min(1).max(5000),
+const approveSchema = scopeSchema.extend({
+  action: z.literal("APPROVE"),
+  approvalNote: z.string().trim().max(5000).nullable().optional(),
 });
-const verifySchema = scopeSchema.extend({
-  action: z.literal("VERIFY_EFFECTIVENESS"),
-  result: z.enum(["EFFECTIVE", "INEFFECTIVE"]),
-  note: z.string().trim().min(1).max(5000),
+const activateAliasSchema = scopeSchema.extend({
+  action: z.literal("ACTIVATE"),
+  approvalNote: z.string().trim().max(5000).nullable().optional(),
 });
-const reopenSchema = scopeSchema.extend({ action: z.literal("REOPEN") });
-
+const transitionSchema = scopeSchema.extend({
+  action: z.literal("TRANSITION_ACTION"),
+  actionId: z.string().min(1),
+  transition: z.enum(["START", "COMPLETE", "CANCEL"]),
+  completionNote: z.string().trim().max(5000).nullable().optional(),
+});
+const readySchema = scopeSchema.extend({ action: z.literal("READY_FOR_EFFECTIVENESS") });
 const patchSchema = z.discriminatedUnion("action", [
   saveSchema,
   approveSchema,
-  completeActionSchema,
-  verifySchema,
-  reopenSchema,
+  activateAliasSchema,
+  transitionSchema,
+  readySchema,
 ]);
 
 function authorize(
@@ -68,12 +68,12 @@ function authorize(
   }
 }
 
-function capaError(error: CapaError) {
+function capaError(error: CapaError | CapaApprovalError) {
   const status =
     error.code === "QUALITY_EVENT_NOT_FOUND" ||
     error.code === "CAPA_NOT_FOUND" ||
-    error.code === "ACTION_NOT_FOUND" ||
-    error.code === "ACTION_OWNER_NOT_FOUND"
+    (error instanceof CapaError &&
+      (error.code === "ACTION_NOT_FOUND" || error.code === "ACTION_OWNER_NOT_FOUND"))
       ? 404
       : 409;
   return apiError(status, error.code, error.message);
@@ -96,7 +96,7 @@ export async function GET(
   const denied = authorize(auth.tenant.scope, siteId, "quality:read");
   if (denied) return denied;
 
-  const workspace = await getCapaWorkspace({ organizationId, siteId, eventId });
+  const workspace = await getCapa({ organizationId, siteId, eventId });
   if (!workspace) {
     return apiError(404, "QUALITY_EVENT_NOT_FOUND", "Quality event not found in site scope");
   }
@@ -115,10 +115,9 @@ export async function PATCH(
   } catch {
     return apiError(400, "INVALID_JSON", "Request body must be valid JSON");
   }
-
   const parsed = patchSchema.safeParse(body);
   if (!parsed.success) {
-    return apiError(400, "INVALID_PAYLOAD", "Invalid CAPA payload", parsed.error.flatten());
+    return apiError(400, "INVALID_PAYLOAD", "Invalid CAPA workflow payload", parsed.error.flatten());
   }
 
   const auth = await authenticateRequest(request, parsed.data.organizationId);
@@ -133,52 +132,42 @@ export async function PATCH(
           organizationId: parsed.data.organizationId,
           siteId: parsed.data.siteId,
           eventId,
-          planSummary: parsed.data.planSummary,
-          actions: parsed.data.actions,
+          objective: parsed.data.objective,
+          actions: parsed.data.actions.map((action) => ({
+            ...action,
+            description: action.description ?? null,
+            dueAt: new Date(action.dueAt),
+          })),
           actorId: auth.session.user.id,
         }),
       );
     }
-
-    if (parsed.data.action === "APPROVE") {
+    if (parsed.data.action === "APPROVE" || parsed.data.action === "ACTIVATE") {
       return apiData(
         await approveCapa({
           organizationId: parsed.data.organizationId,
           siteId: parsed.data.siteId,
           eventId,
-          actorId: auth.session.user.id,
+          approverId: auth.session.user.id,
+          approvalNote: parsed.data.approvalNote,
         }),
       );
     }
-
-    if (parsed.data.action === "COMPLETE_ACTION") {
+    if (parsed.data.action === "TRANSITION_ACTION") {
       return apiData(
-        await completeCapaAction({
+        await transitionCapaAction({
           organizationId: parsed.data.organizationId,
           siteId: parsed.data.siteId,
           eventId,
           actionId: parsed.data.actionId,
+          transition: parsed.data.transition,
           completionNote: parsed.data.completionNote,
           actorId: auth.session.user.id,
         }),
       );
     }
-
-    if (parsed.data.action === "VERIFY_EFFECTIVENESS") {
-      return apiData(
-        await verifyCapaEffectiveness({
-          organizationId: parsed.data.organizationId,
-          siteId: parsed.data.siteId,
-          eventId,
-          result: parsed.data.result,
-          note: parsed.data.note,
-          actorId: auth.session.user.id,
-        }),
-      );
-    }
-
     return apiData(
-      await reopenCapa({
+      await markCapaReadyForEffectiveness({
         organizationId: parsed.data.organizationId,
         siteId: parsed.data.siteId,
         eventId,
@@ -186,7 +175,7 @@ export async function PATCH(
       }),
     );
   } catch (error) {
-    if (error instanceof CapaError) return capaError(error);
+    if (error instanceof CapaError || error instanceof CapaApprovalError) return capaError(error);
     throw error;
   }
 }

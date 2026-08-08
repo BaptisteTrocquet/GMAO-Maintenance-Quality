@@ -2,7 +2,7 @@ import { z } from "zod";
 import { AccessDeniedError, assertSitePermission } from "@/lib/access-control";
 import { apiData, apiError } from "@/lib/api-response";
 import { authenticateRequest } from "@/lib/auth/request-auth";
-import { getCapaWorkspace } from "@/lib/quality/capa";
+import { assertEffectiveCapaForEvent, CapaClosureError } from "@/lib/quality/capa-closure";
 import {
   getQualityEvent,
   listQualityEventTimeline,
@@ -144,18 +144,11 @@ export async function PATCH(
     }
 
     if (parsed.data.action === "CLOSE") {
-      const workspace = await getCapaWorkspace({
+      await assertEffectiveCapaForEvent({
         organizationId: parsed.data.organizationId,
         siteId: parsed.data.siteId,
         eventId,
       });
-      if (workspace?.capa && workspace.capa.status !== "CLOSED") {
-        return apiError(
-          409,
-          "CAPA_INCOMPLETE",
-          "Close or resolve the active CAPA before closing this quality event",
-        );
-      }
     }
 
     return apiData(
@@ -171,6 +164,7 @@ export async function PATCH(
     );
   } catch (error) {
     if (error instanceof QualityEventError) return qualityError(error);
+    if (error instanceof CapaClosureError) return apiError(409, error.code, error.message);
     throw error;
   }
 }

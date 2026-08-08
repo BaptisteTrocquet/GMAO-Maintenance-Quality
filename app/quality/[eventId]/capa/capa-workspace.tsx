@@ -2,46 +2,60 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import type { CapaActionType, CapaSnapshot } from "@/lib/quality/capa";
+import type {
+  CapaSnapshot,
+  QualityActionSnapshot,
+  QualityActionType,
+} from "@/lib/quality/capa";
 
-type MemberOption = { id: string; name: string; role: string };
+type MemberOption = { id: string; displayName: string };
 
 type Props = {
   organizationId: string;
   siteId: string;
   eventId: string;
   eventStatus: "OPEN" | "CONTAINED" | "INVESTIGATING" | "CLOSED";
-  rootCauseStatus: "DRAFT" | "CONFIRMED" | null;
   initialCapa: CapaSnapshot | null;
   members: MemberOption[];
 };
 
-type EditableAction = {
+type DraftAction = {
   key: string;
-  id?: string;
-  type: CapaActionType;
+  actionKey: string;
+  type: QualityActionType;
   title: string;
   description: string;
   ownerId: string;
-  dueAt: string;
+  dueDate: string;
 };
 
-function toLocalInput(value: string) {
-  const date = new Date(value);
-  const offsetMilliseconds = date.getTimezoneOffset() * 60_000;
-  return new Date(date.getTime() - offsetMilliseconds).toISOString().slice(0, 16);
+function dateInput(value: string | null | undefined) {
+  return value ? value.slice(0, 10) : "";
 }
 
-function editableActions(capa: CapaSnapshot | null): EditableAction[] {
-  return (capa?.actions ?? []).map((action) => ({
+function initialDraftActions(capa: CapaSnapshot | null): DraftAction[] {
+  if (!capa?.actions.length) return [];
+  return capa.actions.map((action) => ({
     key: action.id,
-    id: action.id,
+    actionKey: action.actionKey,
     type: action.type,
     title: action.title,
     description: action.description ?? "",
     ownerId: action.ownerId,
-    dueAt: toLocalInput(action.dueAt),
+    dueDate: dateInput(action.dueAt),
   }));
+}
+
+function blankAction(index: number): DraftAction {
+  return {
+    key: `draft-${Date.now()}-${index}`,
+    actionKey: `action-${index + 1}`,
+    type: "CORRECTIVE",
+    title: "",
+    description: "",
+    ownerId: "",
+    dueDate: "",
+  };
 }
 
 export default function CapaWorkspace({
@@ -49,29 +63,31 @@ export default function CapaWorkspace({
   siteId,
   eventId,
   eventStatus,
-  rootCauseStatus,
   initialCapa,
   members,
 }: Props) {
   const router = useRouter();
   const [capa, setCapa] = useState(initialCapa);
-  const [planSummary, setPlanSummary] = useState(initialCapa?.planSummary ?? "");
-  const [actions, setActions] = useState<EditableAction[]>(() => editableActions(initialCapa));
+  const [objective, setObjective] = useState(initialCapa?.objective ?? "");
+  const [draftActions, setDraftActions] = useState<DraftAction[]>(() => initialDraftActions(initialCapa));
   const [completionNotes, setCompletionNotes] = useState<Record<string, string>>({});
-  const [effectivenessNote, setEffectivenessNote] = useState("");
   const [busy, setBusy] = useState(false);
-  const [feedback, setFeedback] = useState<{ kind: "error" | "success"; message: string } | null>(null);
+  const [feedback, setFeedback] = useState<{ kind: "success" | "error"; message: string } | null>(null);
 
-  const canWork = eventStatus === "INVESTIGATING" && rootCauseStatus === "CONFIRMED";
-  const editable = canWork && (!capa || capa.status === "DRAFT");
-  const allCompleted = Boolean(capa?.actions.length) && capa!.actions.every((action) => action.status === "COMPLETED");
-
-  const memberNames = useMemo(
-    () => new Map(members.map((member) => [member.id, member.name])),
-    [members],
+  const canInvestigate = eventStatus === "INVESTIGATING";
+  const isDraft = !capa || capa.status === "DRAFT";
+  const isActive = capa?.status === "ACTIVE";
+  const readyForEffectiveness = capa?.status === "READY_FOR_EFFECTIVENESS";
+  const allActionsDispositioned = useMemo(
+    () =>
+      Boolean(capa?.actions.length) &&
+      (capa?.actions.every(
+        (action) => action.status === "COMPLETED" || action.status === "CANCELLED",
+      ) ?? false),
+    [capa],
   );
 
-  async function patch(payload: Record<string, unknown>) {
+  async function patch(payload: Record<string, unknown>): Promise<CapaSnapshot | null> {
     setBusy(true);
     setFeedback(null);
     try {
@@ -88,9 +104,7 @@ export default function CapaWorkspace({
         throw new Error(body.error?.message ?? "CAPA update failed");
       }
       setCapa(body.data);
-      setPlanSummary(body.data.planSummary);
-      setActions(editableActions(body.data));
-      setFeedback({ kind: "success", message: "CAPA updated." });
+      setFeedback({ kind: "success", message: "CAPA workspace updated." });
       router.refresh();
       return body.data;
     } catch (error) {
@@ -104,76 +118,56 @@ export default function CapaWorkspace({
     }
   }
 
-  function addAction() {
-    const defaultOwner = members[0]?.id ?? "";
-    setActions((current) => [
-      ...current,
-      {
-        key: crypto.randomUUID(),
-        type: "CORRECTIVE",
-        title: "",
-        description: "",
-        ownerId: defaultOwner,
-        dueAt: "",
-      },
-    ]);
+  async function saveDraft() {
+    return patch({
+      action: "SAVE",
+      objective,
+      actions: draftActions.map((action) => ({
+        actionKey: action.actionKey,
+        type: action.type,
+        title: action.title,
+        description: action.description.trim() || null,
+        ownerId: action.ownerId,
+        dueAt: action.dueDate ? `${action.dueDate}T23:59:59.000Z` : "",
+      })),
+    });
   }
 
-  function updateAction(key: string, field: keyof EditableAction, value: string) {
-    setActions((current) =>
+  function updateDraftAction(key: string, field: keyof Omit<DraftAction, "key">, value: string) {
+    setDraftActions((current) =>
       current.map((action) =>
         action.key === key
           ? {
               ...action,
-              [field]: field === "type" ? (value as CapaActionType) : value,
+              [field]: field === "type" ? (value as QualityActionType) : value,
             }
           : action,
       ),
     );
   }
 
-  function removeAction(key: string) {
-    setActions((current) => current.filter((action) => action.key !== key));
+  function memberName(ownerId: string) {
+    return members.find((member) => member.id === ownerId)?.displayName ?? ownerId;
   }
 
-  async function saveDraft() {
-    return patch({
-      action: "SAVE",
-      planSummary,
-      actions: actions.map((item) => ({
-        ...(item.id ? { id: item.id } : {}),
-        type: item.type,
-        title: item.title,
-        description: item.description.trim() || null,
-        ownerId: item.ownerId,
-        dueAt: item.dueAt ? new Date(item.dueAt).toISOString() : "",
-      })),
+  async function transitionAction(
+    action: QualityActionSnapshot,
+    transition: "START" | "COMPLETE" | "CANCEL",
+  ) {
+    await patch({
+      action: "TRANSITION_ACTION",
+      actionId: action.id,
+      transition,
+      completionNote: completionNotes[action.id]?.trim() || null,
     });
   }
 
-  async function completeAction(actionId: string) {
-    const note = completionNotes[actionId]?.trim() ?? "";
-    const updated = await patch({ action: "COMPLETE_ACTION", actionId, completionNote: note });
-    if (updated) {
-      setCompletionNotes((current) => ({ ...current, [actionId]: "" }));
-    }
-  }
-
-  async function verify(result: "EFFECTIVE" | "INEFFECTIVE") {
-    const updated = await patch({
-      action: "VERIFY_EFFECTIVENESS",
-      result,
-      note: effectivenessNote,
-    });
-    if (updated) setEffectivenessNote("");
-  }
-
-  const inputStyle = {
+  const controlStyle = {
     width: "100%",
-    padding: "10px 12px",
+    padding: "9px 11px",
     border: "1px solid #d1d5db",
     borderRadius: 8,
-    background: editable ? "white" : "#f9fafb",
+    background: "white",
   } as const;
   const buttonStyle = {
     border: "1px solid #d1d5db",
@@ -185,222 +179,255 @@ export default function CapaWorkspace({
 
   return (
     <div className="grid" style={{ gap: 18 }}>
-      {!canWork ? (
+      {!canInvestigate ? (
         <section className="card">
-          <strong>CAPA prerequisites not met</strong>
+          <strong>Investigation required</strong>
           <p className="muted" style={{ marginBottom: 0 }}>
-            The quality event must be investigating and its root-cause analysis must be confirmed before CAPA can be changed.
+            CAPA planning and execution are available while the quality event is investigating.
           </p>
         </section>
       ) : null}
 
       <section className="card">
-        <div className="header asset-header" style={{ marginBottom: 16 }}>
+        <div className="header asset-header" style={{ marginBottom: 14 }}>
           <div>
             <h2 style={{ margin: 0 }}>CAPA plan</h2>
             <div className="muted">Status: {capa?.status ?? "NOT STARTED"}</div>
           </div>
-          <div className="asset-status">
-            {capa?.approvedAt ? <span className="badge">APPROVED</span> : null}
-            {capa?.closedAt ? <span className="badge">EFFECTIVE</span> : null}
-          </div>
+          {capa?.activatedAt ? <span className="badge">Activated {dateInput(capa.activatedAt)}</span> : null}
         </div>
         <label>
-          <strong>Plan summary</strong>
+          <strong>Objective</strong>
           <textarea
-            value={planSummary}
-            onChange={(event) => setPlanSummary(event.target.value)}
-            disabled={!editable || busy}
-            rows={4}
-            style={{ ...inputStyle, marginTop: 8, resize: "vertical" }}
-            placeholder="Explain how the plan addresses the confirmed root cause and prevents recurrence."
+            value={objective}
+            onChange={(event) => setObjective(event.target.value)}
+            disabled={!canInvestigate || !isDraft || busy}
+            rows={3}
+            style={{ ...controlStyle, marginTop: 7, resize: "vertical" }}
+            placeholder="Describe what the CAPA plan must correct and prevent."
           />
         </label>
       </section>
 
-      <section className="card">
-        <div className="header asset-header" style={{ marginBottom: 12 }}>
-          <div>
-            <h2 style={{ margin: 0 }}>Corrective & preventive actions</h2>
-            <div className="muted">Every action requires an accountable owner and due date.</div>
+      {isDraft ? (
+        <section className="card">
+          <div className="header" style={{ marginBottom: 14 }}>
+            <div>
+              <h2 style={{ margin: 0 }}>Corrective / preventive actions</h2>
+              <div className="muted">Every action requires a responsible owner and due date.</div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setDraftActions((current) => [...current, blankAction(current.length)])}
+              disabled={!canInvestigate || busy}
+              style={buttonStyle}
+            >
+              Add action
+            </button>
           </div>
-          {editable ? (
-            <button type="button" onClick={addAction} disabled={busy} style={buttonStyle}>+ Add action</button>
-          ) : null}
-        </div>
 
-        {actions.length === 0 ? <p className="muted">No CAPA actions recorded yet.</p> : null}
-        <div className="grid" style={{ gap: 14 }}>
-          {actions.map((action) => {
-            const stored = capa?.actions.find((item) => item.id === action.id);
-            return (
-              <div className="card" key={action.key}>
-                <div className="grid grid-2" style={{ gap: 12 }}>
-                  <label>
-                    <strong>Type</strong>
-                    <select
-                      value={action.type}
-                      onChange={(event) => updateAction(action.key, "type", event.target.value)}
-                      disabled={!editable || busy}
-                      style={{ ...inputStyle, marginTop: 6 }}
-                    >
-                      <option value="CORRECTIVE">Corrective</option>
-                      <option value="PREVENTIVE">Preventive</option>
-                    </select>
-                  </label>
-                  <label>
-                    <strong>Owner</strong>
-                    <select
-                      value={action.ownerId}
-                      onChange={(event) => updateAction(action.key, "ownerId", event.target.value)}
-                      disabled={!editable || busy}
-                      style={{ ...inputStyle, marginTop: 6 }}
-                    >
-                      <option value="">Select owner</option>
-                      {members.map((member) => (
-                        <option key={member.id} value={member.id}>{member.name} · {member.role}</option>
-                      ))}
-                    </select>
-                  </label>
-                  <label>
-                    <strong>Action</strong>
-                    <input
-                      value={action.title}
-                      onChange={(event) => updateAction(action.key, "title", event.target.value)}
-                      disabled={!editable || busy}
-                      style={{ ...inputStyle, marginTop: 6 }}
-                    />
-                  </label>
-                  <label>
-                    <strong>Due date</strong>
-                    <input
-                      type="datetime-local"
-                      value={action.dueAt}
-                      onChange={(event) => updateAction(action.key, "dueAt", event.target.value)}
-                      disabled={!editable || busy}
-                      style={{ ...inputStyle, marginTop: 6 }}
-                    />
-                  </label>
-                </div>
-                <label style={{ display: "block", marginTop: 12 }}>
-                  <strong>Description</strong>
-                  <textarea
-                    value={action.description}
-                    onChange={(event) => updateAction(action.key, "description", event.target.value)}
-                    disabled={!editable || busy}
-                    rows={2}
-                    style={{ ...inputStyle, marginTop: 6, resize: "vertical" }}
-                  />
-                </label>
-
-                {stored ? (
-                  <div style={{ marginTop: 12 }}>
-                    <span className="badge">{stored.status}</span>
-                    <span className="muted" style={{ marginLeft: 8 }}>
-                      {memberNames.get(stored.ownerId) ?? stored.ownerId} · due {stored.dueAt.slice(0, 16).replace("T", " ")} UTC
-                    </span>
-                    {stored.completionNote ? <p>{stored.completionNote}</p> : null}
-                  </div>
-                ) : null}
-
-                {capa?.status === "ACTIVE" && stored?.status === "OPEN" ? (
-                  <div className="grid grid-2" style={{ gap: 12, marginTop: 12 }}>
-                    <input
-                      aria-label={`Completion note for ${stored.title}`}
-                      value={completionNotes[stored.id] ?? ""}
-                      onChange={(event) =>
-                        setCompletionNotes((current) => ({ ...current, [stored.id]: event.target.value }))
-                      }
-                      placeholder="Completion evidence / result"
-                      disabled={busy}
-                      style={{ ...inputStyle, background: "white" }}
-                    />
+          {draftActions.length ? (
+            <div className="grid" style={{ gap: 14 }}>
+              {draftActions.map((action, index) => (
+                <section className="card" key={action.key}>
+                  <div className="header" style={{ marginBottom: 10 }}>
+                    <strong>Action {index + 1}</strong>
                     <button
                       type="button"
-                      onClick={() => completeAction(stored.id)}
-                      disabled={busy || !(completionNotes[stored.id]?.trim())}
+                      onClick={() => setDraftActions((current) => current.filter((item) => item.key !== action.key))}
+                      disabled={!canInvestigate || busy}
                       style={buttonStyle}
                     >
-                      Complete action
+                      Remove
                     </button>
                   </div>
-                ) : null}
+                  <div className="grid grid-2">
+                    <label>
+                      <strong>Type</strong>
+                      <select
+                        value={action.type}
+                        onChange={(event) => updateDraftAction(action.key, "type", event.target.value)}
+                        disabled={!canInvestigate || busy}
+                        style={{ ...controlStyle, marginTop: 6 }}
+                      >
+                        <option value="CORRECTIVE">Corrective</option>
+                        <option value="PREVENTIVE">Preventive</option>
+                      </select>
+                    </label>
+                    <label>
+                      <strong>Action key</strong>
+                      <input
+                        value={action.actionKey}
+                        onChange={(event) => updateDraftAction(action.key, "actionKey", event.target.value)}
+                        disabled={!canInvestigate || busy}
+                        style={{ ...controlStyle, marginTop: 6 }}
+                      />
+                    </label>
+                    <label>
+                      <strong>Title</strong>
+                      <input
+                        value={action.title}
+                        onChange={(event) => updateDraftAction(action.key, "title", event.target.value)}
+                        disabled={!canInvestigate || busy}
+                        style={{ ...controlStyle, marginTop: 6 }}
+                      />
+                    </label>
+                    <label>
+                      <strong>Owner</strong>
+                      <select
+                        value={action.ownerId}
+                        onChange={(event) => updateDraftAction(action.key, "ownerId", event.target.value)}
+                        disabled={!canInvestigate || busy}
+                        style={{ ...controlStyle, marginTop: 6 }}
+                      >
+                        <option value="">Select owner</option>
+                        {members.map((member) => (
+                          <option key={member.id} value={member.id}>{member.displayName}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      <strong>Due date</strong>
+                      <input
+                        type="date"
+                        value={action.dueDate}
+                        onChange={(event) => updateDraftAction(action.key, "dueDate", event.target.value)}
+                        disabled={!canInvestigate || busy}
+                        style={{ ...controlStyle, marginTop: 6 }}
+                      />
+                    </label>
+                  </div>
+                  <label style={{ display: "block", marginTop: 10 }}>
+                    <strong>Description</strong>
+                    <textarea
+                      value={action.description}
+                      onChange={(event) => updateDraftAction(action.key, "description", event.target.value)}
+                      disabled={!canInvestigate || busy}
+                      rows={2}
+                      style={{ ...controlStyle, marginTop: 6, resize: "vertical" }}
+                    />
+                  </label>
+                </section>
+              ))}
+            </div>
+          ) : (
+            <p className="muted">Add at least one action before CAPA approval.</p>
+          )}
 
-                {editable ? (
-                  <button
-                    type="button"
-                    onClick={() => removeAction(action.key)}
-                    disabled={busy}
-                    style={{ ...buttonStyle, marginTop: 12 }}
-                  >
-                    Remove
-                  </button>
-                ) : null}
-              </div>
-            );
-          })}
-        </div>
-      </section>
-
-      {capa?.effectivenessChecks.length ? (
-        <section className="card">
-          <h2>Effectiveness history</h2>
-          <div className="stack-list">
-            {capa.effectivenessChecks.map((check, index) => (
-              <div key={`${check.verifiedAt}-${index}`}>
-                <strong>{check.result}</strong>
-                <span className="muted"> · {check.verifiedAt.slice(0, 16).replace("T", " ")} UTC · {check.note}</span>
-              </div>
-            ))}
-          </div>
-        </section>
-      ) : null}
-
-      {capa?.status === "ACTIVE" && allCompleted ? (
-        <section className="card">
-          <h2>Effectiveness verification</h2>
-          <p className="muted">All actions are complete. Record objective follow-up evidence before deciding effectiveness.</p>
-          <textarea
-            value={effectivenessNote}
-            onChange={(event) => setEffectivenessNote(event.target.value)}
-            disabled={busy}
-            rows={3}
-            style={{ ...inputStyle, background: "white", resize: "vertical" }}
-            placeholder="Follow-up inspection, trend, audit evidence, recurrence check..."
-          />
-          <div style={{ display: "flex", gap: 10, marginTop: 12, flexWrap: "wrap" }}>
-            <button type="button" onClick={() => verify("EFFECTIVE")} disabled={busy || !effectivenessNote.trim()} style={buttonStyle}>
-              Confirm effective
-            </button>
-            <button type="button" onClick={() => verify("INEFFECTIVE")} disabled={busy || !effectivenessNote.trim()} style={buttonStyle}>
-              Mark ineffective & revise
-            </button>
-          </div>
-        </section>
-      ) : null}
-
-      <section className="card">
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-          {editable ? (
-            <button type="button" onClick={saveDraft} disabled={busy || !planSummary.trim()} style={buttonStyle}>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 16 }}>
+            <button
+              type="button"
+              onClick={saveDraft}
+              disabled={!canInvestigate || busy || !objective.trim() || !draftActions.length}
+              style={buttonStyle}
+            >
               Save draft
             </button>
+            {capa?.status === "DRAFT" ? (
+              <button
+                type="button"
+                onClick={() => patch({ action: "APPROVE" })}
+                disabled={!canInvestigate || busy}
+                style={{ ...buttonStyle, background: "#111827", color: "white", borderColor: "#111827" }}
+              >
+                Approve & activate CAPA
+              </button>
+            ) : null}
+          </div>
+          <p className="muted" style={{ marginBottom: 0 }}>
+            Save changes first. Approval uses the last saved draft and requires an active Quality Manager, Admin or Owner. The last draft author/editor cannot approve their own plan.
+          </p>
+        </section>
+      ) : null}
+
+      {capa && !isDraft ? (
+        <section className="card responsive-table">
+          <h2>Action execution</h2>
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Type</th>
+                <th>Action</th>
+                <th>Owner</th>
+                <th>Due</th>
+                <th>Status</th>
+                <th>Completion evidence</th>
+                <th>Workflow</th>
+              </tr>
+            </thead>
+            <tbody>
+              {capa.actions.map((action) => (
+                <tr key={action.id}>
+                  <td>{action.type}</td>
+                  <td><strong>{action.title}</strong>{action.description ? <div className="muted">{action.description}</div> : null}</td>
+                  <td>{memberName(action.ownerId)}</td>
+                  <td>{dateInput(action.dueAt)}</td>
+                  <td><span className="badge">{action.status}</span></td>
+                  <td>
+                    {action.completionNote ?? (
+                      isActive ? (
+                        <input
+                          value={completionNotes[action.id] ?? ""}
+                          onChange={(event) => setCompletionNotes((current) => ({ ...current, [action.id]: event.target.value }))}
+                          placeholder="Required to complete"
+                          style={controlStyle}
+                        />
+                      ) : "—"
+                    )}
+                  </td>
+                  <td>
+                    {isActive && action.status === "PLANNED" ? (
+                      <button type="button" onClick={() => transitionAction(action, "START")} disabled={busy} style={buttonStyle}>Start</button>
+                    ) : null}
+                    {isActive && (action.status === "PLANNED" || action.status === "IN_PROGRESS") ? (
+                      <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
+                        <button
+                          type="button"
+                          onClick={() => transitionAction(action, "COMPLETE")}
+                          disabled={busy || !(completionNotes[action.id]?.trim())}
+                          style={buttonStyle}
+                        >
+                          Complete
+                        </button>
+                        <button type="button" onClick={() => transitionAction(action, "CANCEL")} disabled={busy} style={buttonStyle}>Cancel</button>
+                      </div>
+                    ) : null}
+                    {!isActive ? "—" : null}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          {isActive ? (
+            <div style={{ marginTop: 16 }}>
+              <button
+                type="button"
+                onClick={() => patch({ action: "READY_FOR_EFFECTIVENESS" })}
+                disabled={busy || !allActionsDispositioned}
+                style={{ ...buttonStyle, background: "#111827", color: "white", borderColor: "#111827" }}
+              >
+                Ready for effectiveness verification
+              </button>
+              {!allActionsDispositioned ? (
+                <span className="muted" style={{ marginLeft: 10 }}>Complete or cancel every action first.</span>
+              ) : null}
+            </div>
           ) : null}
-          {capa?.status === "DRAFT" && canWork ? (
-            <button type="button" onClick={() => patch({ action: "APPROVE" })} disabled={busy || capa.actions.length === 0} style={buttonStyle}>
-              Approve CAPA plan
-            </button>
+
+          {readyForEffectiveness ? (
+            <p className="muted" style={{ marginBottom: 0 }}>
+              All actions are dispositioned. Effectiveness verification is the next controlled step.
+            </p>
           ) : null}
-          {capa?.status === "CLOSED" && canWork ? (
-            <button type="button" onClick={() => patch({ action: "REOPEN" })} disabled={busy} style={buttonStyle}>
-              Reopen CAPA
-            </button>
-          ) : null}
-        </div>
-        {feedback ? (
-          <p role="status" style={{ marginBottom: 0 }}>{feedback.kind === "error" ? "Error: " : ""}{feedback.message}</p>
-        ) : null}
-      </section>
+        </section>
+      ) : null}
+
+      {feedback ? (
+        <p role="status" style={{ fontWeight: 600, color: feedback.kind === "error" ? "#991b1b" : "#166534" }}>
+          {feedback.message}
+        </p>
+      ) : null}
     </div>
   );
 }
