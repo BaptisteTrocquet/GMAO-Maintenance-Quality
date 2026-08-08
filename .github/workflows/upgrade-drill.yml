@@ -1,6 +1,7 @@
 name: Previous release upgrade drill
 
 on:
+  workflow_call:
   push:
     branches: [main]
     paths:
