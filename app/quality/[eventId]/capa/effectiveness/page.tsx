@@ -34,11 +34,10 @@ export default async function EffectivenessPage({
     );
   }
 
-  const [qualityEvent, scopedCapa, effectiveness, timeline, memberships] = await Promise.all([
+  const [qualityEvent, scopedCapa, effectiveness, memberships] = await Promise.all([
     getQualityEvent({ organizationId, siteId, eventId }),
     getCapa({ organizationId, siteId, eventId }),
     getCapaEffectiveness({ organizationId, siteId, eventId }),
-    listCapaEffectivenessTimeline({ organizationId, siteId, eventId }),
     db.organizationMembership.findMany({
       where: {
         organizationId,
@@ -54,6 +53,9 @@ export default async function EffectivenessPage({
     }),
   ]);
   if (!qualityEvent || !scopedCapa) notFound();
+  const timeline = effectiveness
+    ? await listCapaEffectivenessTimeline({ organizationId, siteId, eventId })
+    : [];
 
   return (
     <>
@@ -74,7 +76,6 @@ export default async function EffectivenessPage({
         organizationId={organizationId}
         siteId={siteId}
         eventId={eventId}
-        eventStatus={qualityEvent.status}
         capaStatus={scopedCapa.capa?.status ?? null}
         initialEffectiveness={effectiveness}
         members={memberships.map((membership) => ({
