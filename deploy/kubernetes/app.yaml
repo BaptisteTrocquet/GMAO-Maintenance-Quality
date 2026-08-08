@@ -1,0 +1,121 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: opengmao-documents
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opengmao
+spec:
+  replicas: 1
+  strategy:
+    # The local-storage example uses a ReadWriteOnce PVC. Use shared object storage
+    # before scaling replicas or changing this rollout strategy.
+    type: Recreate
+  selector:
+    matchLabels:
+      app: opengmao
+  template:
+    metadata:
+      labels:
+        app: opengmao
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: app
+          # Placeholder digest: replace with the digest produced for the reviewed release.
+          image: ghcr.io/example/gmao-maintenance-quality@sha256:0000000000000000000000000000000000000000000000000000000000000000
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 3000
+          env:
+            - name: NODE_ENV
+              value: production
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: opengmao-runtime
+                  key: DATABASE_URL
+            - name: STORAGE_PROVIDER
+              value: local
+            - name: STORAGE_LOCAL_DIR
+              value: /app/data/documents
+            - name: LOG_LEVEL
+              value: info
+            - name: RATE_LIMIT_ENABLED
+              value: "true"
+            - name: RATE_LIMIT_TRUST_PROXY_HOPS
+              value: "0"
+          volumeMounts:
+            - name: documents
+              mountPath: /app/data
+            - name: tmp
+              mountPath: /tmp
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /api/ready
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+      volumes:
+        - name: documents
+          persistentVolumeClaim:
+            claimName: opengmao-documents
+        - name: tmp
+          emptyDir:
+            sizeLimit: 128Mi
+      terminationGracePeriodSeconds: 30
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: opengmao
+spec:
+  type: ClusterIP
+  selector:
+    app: opengmao
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

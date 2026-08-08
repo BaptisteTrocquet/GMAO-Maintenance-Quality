@@ -1,0 +1,89 @@
+name: Deployment runtime
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - Dockerfile
+      - package.json
+      - package-lock.json
+      - prisma/**
+      - deploy/**
+      - .github/workflows/deployment-runtime.yml
+  pull_request:
+    paths:
+      - Dockerfile
+      - package.json
+      - package-lock.json
+      - prisma/**
+      - deploy/**
+      - .github/workflows/deployment-runtime.yml
+
+permissions:
+  contents: read
+
+jobs:
+  migration-image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: opengmao
+          POSTGRES_PASSWORD: opengmao
+          POSTGRES_DB: opengmao
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U opengmao"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build migration release image
+        run: docker build --pull --target migration --tag gmao-maintenance-quality:migrate-ci .
+
+      - name: Verify migration image runtime contract
+        run: >-
+          docker run --rm --entrypoint sh gmao-maintenance-quality:migrate-ci -c
+          'test "$(id -u)" = "1001" &&
+          test -x /app/node_modules/.bin/prisma &&
+          test -d /app/prisma/migrations &&
+          test ! -e /app/node_modules/vitest &&
+          test ! -e /app/node_modules/esbuild &&
+          test ! -e /app/node_modules/@esbuild/linux-x64 &&
+          test ! -e /usr/local/bin/npm &&
+          test ! -e /usr/local/lib/node_modules/npm &&
+          test "$HOME" = "/tmp"'
+
+      - name: Apply committed migrations twice with read-only root
+        shell: bash
+        run: |
+          set -euo pipefail
+          database_url='postgresql://opengmao:opengmao@127.0.0.1:5432/opengmao?schema=public'
+
+          for attempt in 1 2; do
+            docker run --rm --network host \
+              --read-only \
+              --tmpfs /tmp:rw,noexec,nosuid,size=64m \
+              --env DATABASE_URL="$database_url" \
+              gmao-maintenance-quality:migrate-ci
+          done
+
+      - name: Scan migration release image for critical vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          image-ref: gmao-maintenance-quality:migrate-ci
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: "os,library"
+          severity: "CRITICAL"
+          version: "v0.73.0"
+          cache: "false"

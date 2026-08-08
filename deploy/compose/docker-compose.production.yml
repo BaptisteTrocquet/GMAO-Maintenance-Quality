@@ -1,0 +1,83 @@
+name: opengmao
+
+services:
+  db:
+    image: ${POSTGRES_IMAGE:?set POSTGRES_IMAGE to a reviewed immutable tag or digest}
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-opengmao}
+      POSTGRES_USER: ${POSTGRES_USER:-opengmao}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in the external runtime environment}
+    volumes:
+      - opengmao_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+
+  migrate:
+    profiles: ["migrate"]
+    image: ${OPENGMAO_MIGRATION_IMAGE:?set OPENGMAO_MIGRATION_IMAGE to the immutable migration image for this release}
+    user: "1001:1001"
+    command: ["./node_modules/.bin/prisma", "migrate", "deploy"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in the external runtime environment}
+      HOME: /tmp
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  app:
+    image: ${OPENGMAO_IMAGE:?set OPENGMAO_IMAGE to an immutable release tag or digest}
+    restart: unless-stopped
+    init: true
+    user: "1001:1001"
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in the external runtime environment}
+      NODE_ENV: production
+      STORAGE_PROVIDER: ${STORAGE_PROVIDER:-local}
+      STORAGE_LOCAL_DIR: /app/data/documents
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
+      RATE_LIMIT_TRUST_PROXY_HOPS: ${RATE_LIMIT_TRUST_PROXY_HOPS:-0}
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "${OPENGMAO_BIND_ADDRESS:-127.0.0.1}:${OPENGMAO_PORT:-3000}:3000"
+    volumes:
+      - opengmao_documents:/app/data
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  opengmao_postgres:
+  opengmao_documents:
