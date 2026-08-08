@@ -71,6 +71,7 @@ export default async function CapaPage({
           <span className="badge">{qualityEvent.status}</span>
           <span className="badge">RCA {workspace.rootCause?.status ?? "NOT STARTED"}</span>
           <span className="badge">CAPA {workspace.capa?.status ?? "NOT STARTED"}</span>
+          <Link className="table-link" href={`/quality/${eventId}/eight-d`}>8D →</Link>
         </div>
       </div>
 
