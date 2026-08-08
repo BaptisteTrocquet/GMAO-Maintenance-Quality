@@ -176,13 +176,38 @@ Retries are allowed only when the caller explicitly marks the operation idempote
 
 The policy supports configurable attempt limits, delay schedules, maximum delay and bounded jitter. `Retry-After` is parsed as either delta-seconds or an HTTP date; a valid server delay is treated as a minimum wait and is capped by the policy maximum. Randomness is injectable for deterministic contract tests.
 
-Webhook delivery now consumes this generic policy. Its historical retry cadence remains 1 minute, 5 minutes, 30 minutes and 2 hours for attempts 2–5, with no jitter. `429`/transient server failures and network failures are retried; permanent client errors such as `400` are persisted as terminal failures with `nextAttemptAt=null`, ready for the following dead-letter story instead of being retried pointlessly.
+Webhook delivery consumes this generic policy. Its retry cadence is 1 minute, 5 minutes, 30 minutes and 2 hours for attempts 2–5, with no jitter. `429`/transient server failures and network failures are retried; permanent client errors and exhausted retry chains are sent to the durable dead-letter store described below.
 
-Webhook delivery failures no longer persist arbitrary transport exception messages. Network errors are reduced to a generic message; HTTP failures store only the status code and generic status text. This keeps retry state free of accidental upstream secret material.
+Webhook delivery failures do not persist arbitrary transport exception messages. Network errors are reduced to a generic message; HTTP failures store only the status code and generic status text. This keeps retry state free of accidental upstream secret material.
 
-`tests/retry-policy.test.ts` covers transient/permanent classification, idempotence gating, attempt exhaustion, backoff, bounded jitter, `Retry-After` seconds/date parsing, maximum-delay capping and invalid configuration. `tests/webhook-delivery.test.ts` verifies the webhook integration, including `503`, `429 Retry-After` and terminal `400` behavior.
+`tests/retry-policy.test.ts` covers transient/permanent classification, idempotence gating, attempt exhaustion, backoff, bounded jitter, `Retry-After` seconds/date parsing, maximum-delay capping and invalid configuration. `tests/webhook-delivery.test.ts` verifies the webhook integration, including `503`, `429 Retry-After`, permanent `400`, and retry-exhaustion behavior.
 
-Dead-letter persistence is intentionally the next E12 primitive. A terminal retry decision is already represented durably by a failed delivery with no next-attempt timestamp, so dead-letter handling can consume that state without inventing a second retry classifier.
+## Dead-letter handling
+
+`lib/integrations/dead-letter.ts` provides the durable dead-letter persistence primitive. Dead letters are stored in the committed `IntegrationDeadLetter` Prisma model and migration rather than hidden inside transient worker memory. Each source is unique by `(organizationId, channel, sourceId)`, so repeated terminal handling updates the same dead letter instead of creating duplicate queue records.
+
+The persistence contract is tenant-aware. A site-scoped dead letter is accepted only after confirming that the active site belongs to the active organization. List and replay lookups include organization, site and channel scope before a payload can be returned internally. Public list responses expose metadata only; replay payload JSON is never returned by the management API.
+
+Replay payloads are deliberately constrained. They must be JSON-safe, are limited to 256 KiB, and are rejected when keys look like credentials such as authorization headers, API keys, passwords, access/refresh tokens or secrets. Dead-letter audit events contain metadata only, never the replay payload.
+
+Webhook delivery integrates with the store as follows:
+
+- retryable failures remain normal `FAILED` delivery state with `nextAttemptAt`
+- permanent failures and exhausted retry chains create or reopen one `webhook` dead letter and write `WebhookDelivery/DEAD_LETTERED`
+- the retry worker includes terminal delivery state when deduplicating so an older `FAILED` row cannot resurrect a dead-lettered delivery
+- a successful delivery automatically resolves any open dead letter for that deterministic delivery ID
+- manual replay loads the original event, verifies the subscription still belongs to the same organization/site and is not revoked, increments replay metadata, then sends the same event ID with a fresh retry budget
+
+Site managers can inspect and replay webhook dead letters through:
+
+```text
+GET  /api/integrations/dead-letters/webhooks?organizationId=<org>&siteId=<site>
+POST /api/integrations/dead-letters/webhooks
+```
+
+The POST body contains `organizationId`, `siteId` and `deadLetterId`. Both operations require an authenticated tenant session plus `site:manage`. Replay is intentionally explicit operator action; the outbound webhook still carries the same deterministic `X-OpenGMAO-Event-Id`, so downstream consumers can apply their normal event-id deduplication.
+
+`tests/dead-letter.test.ts` covers tenant scoping, unique upsert semantics, safe audit metadata, secret-field rejection, scoped listing and idempotent resolution. `tests/webhook-dead-letter.test.ts` covers replay payload validation, subscription revalidation and same-event-id replay. `tests/webhook-dead-letter-api.test.ts` covers authorization and actor attribution, while `tests/webhook-delivery.test.ts` covers terminal/exhausted retry-to-dead-letter transitions.
 
 ## Existing webhook primitive
 
