@@ -1,11 +1,27 @@
 import "./globals.css";
+import type { Metadata, Viewport } from "next";
 import Link from "next/link";
 import { headers } from "next/headers";
 import CommandPalette from "./command-palette";
+import PwaRegister from "./pwa-register";
 
-export const metadata = {
+export const metadata: Metadata = {
   title: "OpenGMAO",
-  description: "Open-source maintenance and document management"
+  description: "Open-source maintenance and document management",
+  manifest: "/manifest.webmanifest",
+  applicationName: "OpenGMAO",
+  icons: {
+    icon: [
+      { url: "/icons/pwa-192.svg", type: "image/svg+xml", sizes: "192x192" },
+      { url: "/icons/pwa-512.svg", type: "image/svg+xml", sizes: "512x512" },
+    ],
+  },
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  themeColor: "#111827",
 };
 
 export default async function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
@@ -16,6 +32,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
   return (
     <html lang="en">
       <body>
+        <PwaRegister />
         <div className="shell">
           <aside className="sidebar">
             <div className="brand">OpenGMAO</div>
