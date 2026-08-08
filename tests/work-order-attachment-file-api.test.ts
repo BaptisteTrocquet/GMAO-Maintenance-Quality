@@ -52,6 +52,12 @@ function auth() {
   };
 }
 
+async function getAttachmentFile() {
+  const response = await GET(request(), params);
+  expect(response).toBeDefined();
+  return response!;
+}
+
 describe("work order attachment file API", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -74,7 +80,7 @@ describe("work order attachment file API", () => {
   });
 
   it("serves a scoped stored photo inline after work read permission", async () => {
-    const response = await GET(request(), params);
+    const response = await getAttachmentFile();
 
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toBe("image/jpeg");
@@ -85,7 +91,7 @@ describe("work order attachment file API", () => {
 
   it("does not read storage for an attachment outside the selected work order", async () => {
     mocks.attachmentFindFirst.mockResolvedValue(null);
-    const response = await GET(request(), params);
+    const response = await getAttachmentFile();
 
     expect(response.status).toBe(404);
     expect(mocks.storageGet).not.toHaveBeenCalled();
@@ -100,7 +106,7 @@ describe("work order attachment file API", () => {
       sizeBytes: 6,
       kind: "PHOTO",
     });
-    const response = await GET(request(), params);
+    const response = await getAttachmentFile();
 
     expect(response.status).toBe(404);
     expect(mocks.storageGet).not.toHaveBeenCalled();
@@ -108,7 +114,7 @@ describe("work order attachment file API", () => {
 
   it("keeps non-image stored bytes as a download instead of rendering them inline", async () => {
     mocks.storageGet.mockResolvedValue(new TextEncoder().encode("not an image"));
-    const response = await GET(request(), params);
+    const response = await getAttachmentFile();
 
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toBe("application/octet-stream");
