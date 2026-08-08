@@ -37,20 +37,6 @@ export type PlanningCalendarDay = {
   items: PlanningCalendarItem[];
 };
 
-export type CalendarSchedule = {
-  plannedStart: Date;
-  dueAt: Date | null;
-};
-
-type ZonedDateTimeParts = {
-  year: number;
-  month: number;
-  day: number;
-  hour: number;
-  minute: number;
-  second: number;
-};
-
 const PRIORITY_RANK: Record<Priority, number> = {
   URGENT: 0,
   HIGH: 1,
@@ -85,131 +71,13 @@ function localParts(date: Date, timeZone: string) {
     day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
-    second: "2-digit",
     hourCycle: "h23",
   }).formatToParts(date);
   const value = (type: Intl.DateTimeFormatPartTypes) =>
     parts.find((part) => part.type === type)?.value ?? "";
   return {
-    year: Number(value("year")),
-    month: Number(value("month")),
-    day: Number(value("day")),
-    hour: Number(value("hour")),
-    minute: Number(value("minute")),
-    second: Number(value("second")),
     dateKey: `${value("year")}-${value("month")}-${value("day")}`,
     time: `${value("hour")}:${value("minute")}`,
-  };
-}
-
-function parseDateKey(value: string) {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
-  if (!match) return null;
-  const year = Number(match[1]);
-  const month = Number(match[2]);
-  const day = Number(match[3]);
-  const check = new Date(Date.UTC(year, month - 1, day));
-  if (
-    check.getUTCFullYear() !== year ||
-    check.getUTCMonth() !== month - 1 ||
-    check.getUTCDate() !== day
-  ) return null;
-  return { year, month, day };
-}
-
-export function dateKeyInTimeZone(date: Date, timeZone: string) {
-  return localParts(date, timeZone).dateKey;
-}
-
-export function addDaysToDateKey(dateKey: string, days: number) {
-  const parsed = parseDateKey(dateKey);
-  if (!parsed) throw new Error(`Invalid date key: ${dateKey}`);
-  const shifted = new Date(Date.UTC(parsed.year, parsed.month - 1, parsed.day + days));
-  return `${shifted.getUTCFullYear()}-${pad(shifted.getUTCMonth() + 1)}-${pad(shifted.getUTCDate())}`;
-}
-
-export function dayDifference(fromDateKey: string, toDateKey: string) {
-  const from = parseDateKey(fromDateKey);
-  const to = parseDateKey(toDateKey);
-  if (!from || !to) throw new Error("Date keys must use YYYY-MM-DD");
-  return Math.round(
-    (Date.UTC(to.year, to.month - 1, to.day) - Date.UTC(from.year, from.month - 1, from.day)) /
-      86_400_000,
-  );
-}
-
-function zonedDateTimeToUtc(parts: ZonedDateTimeParts, timeZone: string) {
-  const desiredAsUtc = Date.UTC(
-    parts.year,
-    parts.month - 1,
-    parts.day,
-    parts.hour,
-    parts.minute,
-    parts.second,
-  );
-  let guess = desiredAsUtc;
-  for (let attempt = 0; attempt < 6; attempt += 1) {
-    const actual = localParts(new Date(guess), timeZone);
-    const actualAsUtc = Date.UTC(
-      actual.year,
-      actual.month - 1,
-      actual.day,
-      actual.hour,
-      actual.minute,
-      actual.second,
-    );
-    const correction = desiredAsUtc - actualAsUtc;
-    if (correction === 0) break;
-    guess += correction;
-  }
-  return new Date(guess);
-}
-
-export function shiftInstantByLocalDays(date: Date, days: number, timeZone: string) {
-  const original = localParts(date, timeZone);
-  const shiftedKey = addDaysToDateKey(original.dateKey, days);
-  const shiftedDate = parseDateKey(shiftedKey);
-  if (!shiftedDate) throw new Error("Unable to shift local date");
-  return zonedDateTimeToUtc(
-    {
-      ...shiftedDate,
-      hour: original.hour,
-      minute: original.minute,
-      second: original.second,
-    },
-    timeZone,
-  );
-}
-
-export function rescheduleWorkOrderForDate(input: {
-  plannedStart: Date | null;
-  dueAt: Date | null;
-  targetDateKey: string;
-  timeZone: string;
-  defaultHour?: number;
-}): CalendarSchedule {
-  const target = parseDateKey(input.targetDateKey);
-  if (!target) throw new Error(`Invalid target date: ${input.targetDateKey}`);
-
-  if (!input.plannedStart) {
-    const defaultHour = input.defaultHour ?? 8;
-    if (!Number.isInteger(defaultHour) || defaultHour < 0 || defaultHour > 23) {
-      throw new Error("Default planning hour must be between 0 and 23");
-    }
-    return {
-      plannedStart: zonedDateTimeToUtc(
-        { ...target, hour: defaultHour, minute: 0, second: 0 },
-        input.timeZone,
-      ),
-      dueAt: input.dueAt,
-    };
-  }
-
-  const currentDateKey = dateKeyInTimeZone(input.plannedStart, input.timeZone);
-  const deltaDays = dayDifference(currentDateKey, input.targetDateKey);
-  return {
-    plannedStart: shiftInstantByLocalDays(input.plannedStart, deltaDays, input.timeZone),
-    dueAt: input.dueAt ? shiftInstantByLocalDays(input.dueAt, deltaDays, input.timeZone) : null,
   };
 }
 
@@ -269,6 +137,7 @@ export function calendarSearchRange(days: PlanningCalendarDay[]) {
 
   const start = new Date(`${first.dateKey}T00:00:00.000Z`);
   const end = new Date(`${last.dateKey}T23:59:59.999Z`);
+  // The nominal grid is calendar-local. Widen by 18h to safely cover every IANA UTC offset.
   return {
     start: new Date(start.getTime() - 18 * 60 * 60 * 1000),
     end: new Date(end.getTime() + 18 * 60 * 60 * 1000),
