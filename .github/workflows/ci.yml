@@ -61,6 +61,34 @@ jobs:
       - name: Seed synthetic demo data
         run: npm run prisma:seed
 
+      - name: Verify production backup procedure
+        shell: bash
+        env:
+          STORAGE_PROVIDER: local
+          STORAGE_LOCAL_DIR: ${{ runner.temp }}/gmao-backup-documents
+          BACKUP_ROOT: ${{ runner.temp }}/gmao-backups
+          BACKUP_TIMESTAMP: ci
+          BACKUP_ACKNOWLEDGE_QUIESCED: "true"
+        run: |
+          set -euo pipefail
+          mkdir -p "$STORAGE_LOCAL_DIR"
+          printf 'synthetic controlled document\n' > "$STORAGE_LOCAL_DIR/ci-document.txt"
+
+          npm run backup:production
+
+          backup_dir="$BACKUP_ROOT/gmao-$BACKUP_TIMESTAMP"
+          test -s "$backup_dir/postgres.dump"
+          test -s "$backup_dir/documents.tar.gz"
+          test -s "$backup_dir/manifest.txt"
+          test -s "$backup_dir/SHA256SUMS"
+          test "$(stat -c '%a' "$backup_dir")" = "700"
+          (
+            cd "$backup_dir"
+            sha256sum -c SHA256SUMS
+            pg_restore --list postgres.dump >/dev/null
+            tar -tzf documents.tar.gz | grep -q 'ci-document.txt'
+          )
+
       - name: Database integration smoke check
         run: npm run test:db
 
