@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => {
   return {
     authenticateRequest: vi.fn(),
     getCapaWorkspace: vi.fn(),
+    getEightDWorkspace: vi.fn(),
     getQualityEvent: vi.fn(),
     listQualityEventTimeline: vi.fn(),
     setImmediateContainment: vi.fn(),
@@ -19,6 +20,7 @@ const mocks = vi.hoisted(() => {
 
 vi.mock("@/lib/auth/request-auth", () => ({ authenticateRequest: mocks.authenticateRequest }));
 vi.mock("@/lib/quality/capa", () => ({ getCapaWorkspace: mocks.getCapaWorkspace }));
+vi.mock("@/lib/quality/eight-d", () => ({ getEightDWorkspace: mocks.getEightDWorkspace }));
 vi.mock("@/lib/quality/events", () => ({
   getQualityEvent: mocks.getQualityEvent,
   listQualityEventTimeline: mocks.listQualityEventTimeline,
@@ -65,11 +67,16 @@ function closeRequest() {
   });
 }
 
-describe("quality event CAPA closure gate", () => {
+describe("quality event CAPA and 8D closure gates", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.authenticateRequest.mockResolvedValue(auth());
     mocks.transitionQualityEvent.mockResolvedValue({ id: "event-1", status: "CLOSED" });
+    mocks.getEightDWorkspace.mockResolvedValue({
+      event: { organizationId: "org-a", siteId: "site-a" },
+      eightD: null,
+      capa: null,
+    });
   });
 
   it("blocks quality-event closure while CAPA is still active", async () => {
@@ -82,16 +89,38 @@ describe("quality event CAPA closure gate", () => {
     const response = expectResponse(await PATCH(closeRequest(), context));
 
     expect(response.status).toBe(409);
-    await expect(response.json()).resolves.toMatchObject({
-      error: { code: "CAPA_INCOMPLETE" },
-    });
+    await expect(response.json()).resolves.toMatchObject({ error: { code: "CAPA_INCOMPLETE" } });
     expect(mocks.transitionQualityEvent).not.toHaveBeenCalled();
   });
 
-  it("allows closure after CAPA effectiveness is confirmed", async () => {
+  it("blocks quality-event closure while an existing 8D is incomplete", async () => {
     mocks.getCapaWorkspace.mockResolvedValue({
       event: { organizationId: "org-a", siteId: "site-a" },
       rootCause: { status: "CONFIRMED" },
+      capa: { status: "CLOSED" },
+    });
+    mocks.getEightDWorkspace.mockResolvedValue({
+      event: { organizationId: "org-a", siteId: "site-a" },
+      eightD: { status: "IN_PROGRESS", currentDiscipline: "D7" },
+      capa: { status: "CLOSED" },
+    });
+
+    const response = expectResponse(await PATCH(closeRequest(), context));
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({ error: { code: "EIGHT_D_INCOMPLETE" } });
+    expect(mocks.transitionQualityEvent).not.toHaveBeenCalled();
+  });
+
+  it("allows closure after CAPA effectiveness and 8D completion", async () => {
+    mocks.getCapaWorkspace.mockResolvedValue({
+      event: { organizationId: "org-a", siteId: "site-a" },
+      rootCause: { status: "CONFIRMED" },
+      capa: { status: "CLOSED" },
+    });
+    mocks.getEightDWorkspace.mockResolvedValue({
+      event: { organizationId: "org-a", siteId: "site-a" },
+      eightD: { status: "COMPLETED", currentDiscipline: "D8" },
       capa: { status: "CLOSED" },
     });
 
@@ -108,7 +137,7 @@ describe("quality event CAPA closure gate", () => {
     });
   });
 
-  it("preserves existing closure behavior when no CAPA exists", async () => {
+  it("preserves existing closure behavior when neither CAPA nor 8D exists", async () => {
     mocks.getCapaWorkspace.mockResolvedValue({
       event: { organizationId: "org-a", siteId: "site-a" },
       rootCause: null,
