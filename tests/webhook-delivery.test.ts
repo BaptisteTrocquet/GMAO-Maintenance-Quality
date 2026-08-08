@@ -5,12 +5,18 @@ const mocks = vi.hoisted(() => ({
   resolveTarget: vi.fn(),
   signPayload: vi.fn(),
   auditCreate: vi.fn(),
+  recordDeadLetter: vi.fn(),
+  resolveDeadLetter: vi.fn(),
 }));
 
 vi.mock("node:https", () => ({ request: mocks.httpsRequest }));
 vi.mock("@/lib/webhooks/security", () => ({
   resolvePublicWebhookTarget: mocks.resolveTarget,
   signWebhookPayload: mocks.signPayload,
+}));
+vi.mock("@/lib/integrations/dead-letter", () => ({
+  recordIntegrationDeadLetter: mocks.recordDeadLetter,
+  resolveIntegrationDeadLetter: mocks.resolveDeadLetter,
 }));
 vi.mock("@/lib/db", () => ({
   db: {
@@ -68,6 +74,8 @@ describe("webhook delivery", () => {
     });
     mocks.signPayload.mockReturnValue("a".repeat(64));
     mocks.auditCreate.mockResolvedValue({ id: "delivery-audit" });
+    mocks.recordDeadLetter.mockResolvedValue({ id: "dead-letter-1" });
+    mocks.resolveDeadLetter.mockResolvedValue(null);
   });
 
   it("posts to the validated IP while preserving TLS SNI and Host", async () => {
@@ -97,6 +105,12 @@ describe("webhook delivery", () => {
     expect(mocks.auditCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({ action: "DELIVERED" }),
     });
+    expect(mocks.resolveDeadLetter).toHaveBeenCalledWith({
+      organizationId: "org-a",
+      channel: "webhook",
+      sourceId: expect.any(String),
+      now,
+    });
   });
 
   it("persists a retryable failure for transient responses", async () => {
@@ -109,6 +123,7 @@ describe("webhook delivery", () => {
     expect(result.statusCode).toBe(503);
     expect(result.retryReason).toBe("http_status");
     expect(result.nextAttemptAt).toEqual(new Date("2026-08-07T20:06:00.000Z"));
+    expect(mocks.recordDeadLetter).not.toHaveBeenCalled();
     expect(mocks.auditCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({
         action: "FAILED",
@@ -128,7 +143,7 @@ describe("webhook delivery", () => {
     expect(result.nextAttemptAt).toEqual(new Date("2026-08-07T20:07:00.000Z"));
   });
 
-  it("does not schedule retries for permanent client errors", async () => {
+  it("dead-letters permanent client errors instead of retrying them", async () => {
     mockRequestWithStatus(400);
     const now = new Date("2026-08-07T20:05:00.000Z");
 
@@ -138,11 +153,37 @@ describe("webhook delivery", () => {
     expect(result.statusCode).toBe(400);
     expect(result.retryReason).toBe("http_not_retryable");
     expect(result.nextAttemptAt).toBeNull();
+    expect(result.deadLetterId).toBe("dead-letter-1");
+    expect(mocks.recordDeadLetter).toHaveBeenCalledWith(
+      expect.objectContaining({
+        organizationId: "org-a",
+        siteId: "site-a",
+        channel: "webhook",
+        reason: "http_not_retryable",
+        attempts: 1,
+        statusCode: 400,
+        payload: { subscriptionId: subscription.id, event },
+      }),
+    );
     expect(mocks.auditCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({
-        action: "FAILED",
-        afterJson: expect.stringContaining('"nextAttemptAt":null'),
+        action: "DEAD_LETTERED",
+        afterJson: expect.stringContaining('"deadLetterId":"dead-letter-1"'),
       }),
     });
+  });
+
+  it("dead-letters an exhausted transient retry chain", async () => {
+    mockRequestWithStatus(503);
+    const now = new Date("2026-08-07T20:05:00.000Z");
+
+    const result = await deliverWebhook({ subscription, event, now, attempt: 5 });
+
+    expect(result.delivered).toBe(false);
+    expect(result.retryReason).toBe("attempt_limit");
+    expect(result.nextAttemptAt).toBeNull();
+    expect(mocks.recordDeadLetter).toHaveBeenCalledWith(
+      expect.objectContaining({ reason: "attempt_limit", attempts: 5, statusCode: 503 }),
+    );
   });
 });
