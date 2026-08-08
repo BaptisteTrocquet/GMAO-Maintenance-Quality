@@ -40,7 +40,7 @@ await connector.execute({
 });
 ```
 
-The later credential-vault story will provide these runtime credentials. Callers must not persist credentials in connector definitions, default headers, request headers, audit payloads or logs.
+The connector credential vault described below can supply these runtime credentials. Callers must not persist credentials in connector definitions, default headers, request headers, audit payloads or logs.
 
 ## Contract guarantees
 
@@ -119,11 +119,11 @@ Both backends share the same key validation: absolute paths, traversal segments,
 
 `tests/storage.test.ts` is the common storage contract suite. It covers local traversal protection plus S3-compatible PUT/GET/DELETE signing, namespace prefixing, temporary credentials, redacted provider failures, unsafe endpoint rejection, object-size limits and provider factory selection.
 
-The credential-vault E12 story is intentionally separate. Object-storage deployment credentials remain infrastructure/server configuration rather than tenant-managed connector credentials.
+Object-storage deployment credentials remain infrastructure/server configuration rather than tenant-managed connector credentials.
 
 ## Identity-provider adapters
 
-`lib/auth/provider.ts` already defines the provider-neutral `AuthenticationProvider` contract consumed by `loginWithProvider()`. `lib/auth/oidc-provider.ts` now supplies the first production adapter: generic OpenID Connect ID-token verification suitable for standards-compliant providers such as Microsoft Entra ID, Okta, Auth0 and Keycloak when configured with their issuer/client/JWKS metadata.
+`lib/auth/provider.ts` already defines the provider-neutral `AuthenticationProvider` contract consumed by `loginWithProvider()`. `lib/auth/oidc-provider.ts` supplies the first production adapter: generic OpenID Connect ID-token verification suitable for standards-compliant providers such as Microsoft Entra ID, Okta, Auth0 and Keycloak when configured with their issuer/client/JWKS metadata.
 
 The OIDC adapter is explicitly organization-scoped. Every verification input carries `organizationId`, and a mismatched organization is rejected before any key lookup or network request. It does not provision users: after a token is cryptographically verified, existing login behavior still resolves a pre-existing active OpenGMAO user by normalized email and creates the normal application session. This prevents an external IdP from silently creating or granting local accounts.
 
@@ -144,6 +144,29 @@ JWKS retrieval reuses the platform public-IP DNS validation before connecting, p
 Provider/network/parser exceptions are converted to a failed verification (`null`) rather than exposing upstream diagnostics or token material. OIDC metadata in `.env.example` is public configuration; no OIDC client secret is required for ID-token verification in this primitive.
 
 `tests/oidc-provider.test.ts` covers signed-token verification, issuer/audience/time/algorithm/signature rejection, organization isolation before network access, claim mapping, optional verified-email enforcement, key rotation/cache refresh, fail-closed upstream errors and environment factory configuration.
+
+## Connector credential vault
+
+`lib/integrations/credential-vault.ts` separates encrypted secret handling from connector definitions and from the eventual persistence technology. The vault depends on a `ConnectorCredentialRecordStore` interface, so a database, managed secret service or another durable store can implement persistence without changing connector code or exposing plaintext credentials to that store.
+
+The vault currently supports the runtime credential shapes consumed by the generic REST connector:
+
+- bearer tokens
+- API keys with an explicit header name
+
+Plaintext is encrypted before the record store is called. Encryption uses AES-256-GCM with a fresh 96-bit IV and authenticated additional data binding the ciphertext to `organizationId`, `connectorId`, credential ID, credential kind and key version. Moving an encrypted record to another tenant/connector or altering those fields makes decryption fail closed.
+
+The public metadata returned by `put()` and `list()` includes only ID, tenant/connector scope, label, kind, key version and timestamps. It never includes plaintext, ciphertext, IV or authentication tags. `resolve()` is the only operation that returns secret material, and it produces the existing `RestConnectorCredential` shape with the organization scope attached for the connector's own tenant check.
+
+Key material is supplied by a `CredentialEncryptionKeyProvider`. `createCredentialEncryptionKeyProviderFromEnv()` requires a 32-byte base64 master key and supports one previous key version during rotation. New or updated credentials are always encrypted with the current key; old records remain decryptable while the previous key is configured and can be re-saved to migrate them.
+
+Store exceptions are converted to a generic `STORE_ERROR`, and corruption/decryption failures use a generic `DECRYPTION_FAILED` message. Upstream/store error messages are never propagated, reducing the risk that a vendor SDK or persistence layer places a credential into application logs. The vault itself performs no logging.
+
+Tenant isolation is enforced twice: store operations always receive organization/connector scope, and returned records are independently checked before metadata is returned or ciphertext is decrypted. Cross-organization and cross-connector credential IDs therefore cannot resolve or delete another tenant's credentials.
+
+`tests/credential-vault.test.ts` verifies encryption at rest, safe metadata, runtime credential resolution, organization/connector isolation, authenticated-data tamper resistance, key rotation, previous-key reads, scoped deletion, unsafe credential rejection and redacted store/decryption failures.
+
+The vault is deliberately an abstraction rather than a hard-coded database table. A later durable store implementation can add operational persistence/audit policy without weakening the encryption and tenant-isolation contract.
 
 ## Existing webhook primitive
 
