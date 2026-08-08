@@ -73,6 +73,9 @@ jobs:
       - name: Unit tests
         run: npm run test
 
+      - name: Analytics volume benchmark
+        run: npm run benchmark:analytics
+
       - name: Browser E2E smoke test
         run: npm run test:e2e
 
