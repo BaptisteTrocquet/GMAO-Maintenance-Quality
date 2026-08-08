@@ -22,7 +22,7 @@ const createSchema = scopeSchema.extend({
 
 const deleteSchema = scopeSchema.extend({ viewId: z.string().min(1) });
 
-function domainError(error: unknown) {
+function domainError(error: unknown): Response {
   if (error instanceof SavedKanbanViewError) {
     const status = error.code === "NAME_CONFLICT" ? 409 : error.code === "VIEW_NOT_FOUND" ? 404 : 400;
     return apiError(status, error.code, error.message);
@@ -37,7 +37,10 @@ async function authorize(request: Request, organizationId: string, siteId: strin
   try {
     assertSitePermission(auth.tenant.scope, siteId, "work:read");
   } catch (error) {
-    return domainError(error);
+    if (error instanceof AccessDeniedError) {
+      return apiError(403, "ACCESS_DENIED", error.message);
+    }
+    throw error;
   }
 
   const site = await db.site.findFirst({
