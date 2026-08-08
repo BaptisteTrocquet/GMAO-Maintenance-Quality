@@ -3,10 +3,14 @@
 .next
 node_modules
 data
+backups
 coverage
 playwright-report
 test-results
 *.log
+*.key
+*.pem
+.npmrc
 .env
 .env.*
 Dockerfile*
