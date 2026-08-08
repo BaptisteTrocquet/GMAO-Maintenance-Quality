@@ -70,6 +70,7 @@ export default async function QualityPage() {
                 <th>Work order</th>
                 <th>Detected</th>
                 <th>Containment due</th>
+                <th>Evidence</th>
               </tr>
             </thead>
             <tbody>
@@ -84,6 +85,7 @@ export default async function QualityPage() {
                   <td>{event.workOrder?.number ?? "—"}</td>
                   <td>{formatDate(event.detectedAt)}</td>
                   <td>{formatDate(event.containment?.dueAt)}</td>
+                  <td><Link className="table-link" href={`/quality/${event.id}/evidence`}>Files →</Link></td>
                 </tr>
               ))}
             </tbody>
