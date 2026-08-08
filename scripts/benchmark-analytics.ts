@@ -15,6 +15,8 @@ import {
 
 const BATCH_SIZE = 1_000;
 const SAMPLE_COUNT = 3;
+const BENCHMARK_WORK_ORDER_PREFIX = "benchmark-e9-wo-";
+const BENCHMARK_PART_PREFIX = "benchmark-e9-part-";
 
 const budgetsMs = {
   backlog: 5_000,
@@ -43,15 +45,21 @@ function chunks<T>(items: T[]) {
 }
 
 async function resetFixture() {
-  // WorkOrderPartConsumption references both WorkOrder and Part without cascading from Part,
-  // so remove synthetic consumption lines before deleting the benchmark organization/parts.
+  // WorkOrderPartConsumption has restrictive FKs to WorkOrder and Part. Delete by both
+  // synthetic namespaces so cleanup stays safe even if a future fixture creates a
+  // consumption through a different synthetic work-order path while reusing benchmark Parts.
   await db.workOrderPartConsumption.deleteMany({
-    where: { workOrderId: { startsWith: "benchmark-e9-wo-" } },
+    where: {
+      OR: [
+        { workOrderId: { startsWith: BENCHMARK_WORK_ORDER_PREFIX } },
+        { partId: { startsWith: BENCHMARK_PART_PREFIX } },
+      ],
+    },
   });
   await db.auditLog.deleteMany({
     where: {
       entityType: "WorkOrder",
-      entityId: { startsWith: "benchmark-e9-wo-" },
+      entityId: { startsWith: BENCHMARK_WORK_ORDER_PREFIX },
     },
   });
   await db.organization.deleteMany({
@@ -203,7 +211,7 @@ async function main() {
     ]);
 
     const totalMedianMs = Number(
-      results.reduce((sum, result) => sum + result.medianMs, 0).toFixed(1),
+      results.reduce((sum, result) => sum + result.medianMs, 0).toFixed(1)),
     );
     if (totalMedianMs > 20_000) {
       throw new Error(`Analytics median suite exceeded 20000ms budget: ${totalMedianMs}ms`);
@@ -241,9 +249,17 @@ async function main() {
   }
 }
 
+function workflowEscape(value: string) {
+  return value.replaceAll("%", "%25").replaceAll("\r", "%0D").replaceAll("\n", "%0A");
+}
+
 main()
   .catch((error) => {
+    const message = error instanceof Error ? error.stack ?? error.message : String(error);
     console.error(error);
+    if (process.env.GITHUB_ACTIONS === "true") {
+      console.error(`::error title=Analytics benchmark failed::${workflowEscape(message)}`);
+    }
     process.exitCode = 1;
   })
   .finally(async () => {
