@@ -1,4 +1,7 @@
-import { createResilientWorkOrderSummarizer } from "@/lib/ai/fallback";
+import {
+  createResilientAssetContextAssistant,
+  createResilientWorkOrderSummarizer,
+} from "@/lib/ai/fallback";
 import { LlmProviderRegistry } from "@/lib/ai/llm-provider";
 import { createOpenAiResponsesLlmProviderFromEnv } from "@/lib/ai/openai-llm-provider";
 
@@ -19,6 +22,15 @@ export function createServerLlmRegistry(
   } catch (error) {
     throw new AiRuntimeConfigurationError("AI runtime configuration is invalid", error);
   }
+}
+
+export function createServerAssetContextAssistant(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+) {
+  return createResilientAssetContextAssistant({
+    llmRegistry: createServerLlmRegistry(env),
+    providerId: SERVER_LLM_PROVIDER_ID,
+  });
 }
 
 export function createServerWorkOrderSummarizer(

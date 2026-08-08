@@ -1,8 +1,32 @@
 # Asset-context assistant
 
-The asset-context assistant is an optional, provider-neutral server-side application service built on `LlmProviderRegistry`.
+The asset-context assistant is an optional, provider-neutral AI capability exposed through an authenticated server runtime while keeping core asset and work-order workflows independent from any LLM.
 
-It does not make the core asset or work-order workflows depend on an LLM and does not configure a vendor-specific model endpoint.
+The runtime composition uses the repository OpenAI Responses adapter when configured and preserves the existing provider-disabled / not-configured / temporarily-unavailable fallback states.
+
+## Runtime API
+
+The application exposes:
+
+```text
+POST /api/ai/assets/{assetId}/ask
+```
+
+Request body:
+
+```json
+{
+  "organizationId": "org-id",
+  "siteId": "site-id",
+  "question": "What recent maintenance history should I know about?"
+}
+```
+
+The payload is strict. Clients cannot provide a provider ID, model name or work-order context limit. Model selection stays operator-controlled through the server AI configuration (`OPENAI_LLM_MODEL`).
+
+Authentication is completed before the server AI runtime is composed. The route then delegates authorization, tenant revalidation, context construction, citations, audit and provider fallback to the existing feature layers instead of duplicating them.
+
+Generated answers and safe unavailable states are returned as normal API data. Access, tenant/context, audit and runtime-configuration failures fail closed with bounded error responses that do not expose provider, database or tenant diagnostics.
 
 ## Authorization boundary
 
@@ -18,7 +42,7 @@ Before any database retrieval or model invocation, the service requires both:
 - `asset:read` for the requested site;
 - `work:read` for the requested site.
 
-The repository query is then constrained by asset ID, site ID, active site, organization ID and non-archived asset state.
+The repository query is constrained by asset ID, site ID, active site, organization ID and non-archived asset state.
 
 Even when a custom repository implementation is injected, the service revalidates that:
 
@@ -34,7 +58,7 @@ Any mismatch fails closed before the LLM provider is called.
 
 Prisma/database objects are never serialized directly into a model prompt.
 
-The model receives only this structured allowlist:
+The model receives only this structured allowlist.
 
 ### Asset
 
@@ -62,16 +86,7 @@ The model receives only this structured allowlist:
 - downtime minutes
 - labor minutes
 
-The assistant deliberately does **not** send:
-
-- requester or assignee identities;
-- user IDs, names or email addresses from work-order relationships;
-- attachment metadata or storage keys;
-- audit-log payloads;
-- stock, supplier or credential data;
-- work-order descriptions or free-form completion notes.
-
-This is intentionally narrower than future troubleshooting context. The later E13 sensitive-field policy must be applied before richer historical free text is added.
+The assistant deliberately does **not** send requester or assignee identities, attachment storage details, audit-log payloads, stock/supplier credentials, work-order descriptions or free-form completion notes.
 
 ## Prompt-injection boundary
 
@@ -91,17 +106,20 @@ purpose        = asset-context-assistant
 correlationId  = asset ID
 ```
 
-The generic LLM abstraction remains responsible for provider registration, model selection, timeouts, response validation and provider-error redaction.
+The server runtime registers the OpenAI Responses provider under the fixed `openai` provider ID. Provider/model configuration is deployment-owned, not caller-owned.
 
-## Provenance
+## Citations and audit
 
-The service returns a deterministic provenance manifest containing:
+The cited assistant layer validates the returned provenance against authorized asset/work-order sources before the audited layer records the AI event.
 
-- the asset record/UI path;
-- each work-order record/UI path included in the model context.
+Successful calls persist an `AI_CONTEXT_ANSWERED` audit event for the asset, including safe provider/model/usage metadata and source/citation references. Auditable provider/citation failures produce `AI_CONTEXT_FAILED`. Audit persistence failures are never converted into an AI-unavailable fallback.
 
-This story does not yet claim that generated prose cites those records inline. Enforced answer citations remain the dedicated E13 `Source citations in AI answers` story.
+## Provider fallback
 
-## Current integration scope
+Only provider availability failures are converted into resilient states:
 
-This story exposes a server-side application service rather than a public route because the repository still has no production vendor-specific LLM provider configuration. A later composition layer can wire the service to an authenticated UI/API once provider configuration and provider-disabled fallback behavior are defined.
+- `AI_DISABLED`
+- `AI_NOT_CONFIGURED`
+- `AI_TEMPORARILY_UNAVAILABLE`
+
+Authorization, tenant-scope, context-integrity and audit failures remain errors and fail closed. This keeps the core product available without weakening the security boundary around AI retrieval.
