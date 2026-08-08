@@ -144,10 +144,15 @@ export async function buildReliabilityDashboard(input: {
         SELECT
           wo."assetId",
           wo."requestedAt",
-          wo."completedAt",
-          LAG(wo."completedAt") OVER (
-            PARTITION BY wo."assetId"
-            ORDER BY wo."requestedAt", wo.id
+          (
+            SELECT MAX(previous."completedAt")
+            FROM "WorkOrder" previous
+            WHERE previous."siteId" = wo."siteId"
+              AND previous."assetId" = wo."assetId"
+              AND previous.type = 'CORRECTIVE'
+              AND previous.status = 'COMPLETED'
+              AND previous."completedAt" IS NOT NULL
+              AND previous."completedAt" < wo."requestedAt"
           ) AS "previousCompletedAt"
         FROM "WorkOrder" wo
         INNER JOIN "Site" site ON site.id = wo."siteId"
@@ -166,7 +171,6 @@ export async function buildReliabilityDashboard(input: {
           EXTRACT(EPOCH FROM ("requestedAt" - "previousCompletedAt")) / 3600.0 AS hours
         FROM failures
         WHERE "previousCompletedAt" IS NOT NULL
-          AND "requestedAt" > "previousCompletedAt"
           ${mtbfFromFilter}
       )
       SELECT
@@ -202,7 +206,7 @@ export async function buildReliabilityDashboard(input: {
       mttr:
         "Average elapsed hours from startedAt to completedAt for completed corrective work orders whose completion falls inside the reporting window. Missing or chronologically invalid startedAt values are excluded and counted separately.",
       mtbf:
-        "Calendar-time MTBF: average elapsed hours from completion of the previous non-cancelled corrective repair to requestedAt of the next corrective event on the same asset. The next failure must fall inside the reporting window; the previous repair may precede it. This measures calendar uptime and is not operating-hours MTBF when assets are not continuously operated.",
+        "Calendar-time MTBF: average elapsed hours from the latest completed corrective repair before a failure to requestedAt of the next non-cancelled corrective event on the same asset. The next failure must fall inside the reporting window; the prior repair may precede it. This measures calendar uptime and is not operating-hours MTBF when assets are not continuously operated.",
     },
   };
 }
