@@ -195,7 +195,7 @@ export default async function MaintenanceCalendarPage({
           </Link>
         </div>
         <p className="muted" style={{ marginBottom: 0 }}>
-          Drag a START or DUE control onto another day to reschedule that marker. Activate the same control with the keyboard to enter a target date. Every move uses the existing permission-checked, audited work-order API.
+          Drag a START control onto another day to move the planned start while preserving its local clock time. Activate the same control with the keyboard to enter a target date. Due dates remain read-only here. Every move uses the existing permission-checked, audited work-order API.
         </p>
         {truncated ? (
           <p className="muted" role="status" style={{ marginBottom: 0 }}>
