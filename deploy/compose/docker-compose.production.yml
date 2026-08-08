@@ -2,7 +2,7 @@ name: opengmao
 
 services:
   db:
-    image: postgres:16
+    image: ${POSTGRES_IMAGE:?set POSTGRES_IMAGE to a reviewed immutable tag or digest}
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-opengmao}
@@ -16,13 +16,12 @@ services:
       timeout: 5s
       retries: 10
       start_period: 10s
+    security_opt:
+      - no-new-privileges:true
 
   migrate:
     profiles: ["migrate"]
-    build:
-      context: ../..
-      target: builder
-    image: ${OPENGMAO_MIGRATION_IMAGE:-gmao-maintenance-quality:migrate-local}
+    image: ${OPENGMAO_MIGRATION_IMAGE:?set OPENGMAO_MIGRATION_IMAGE to the immutable migration-tooling image for this release}
     user: "1001:1001"
     command: ["./node_modules/.bin/prisma", "migrate", "deploy"]
     environment:
@@ -41,12 +40,10 @@ services:
       - ALL
 
   app:
-    build:
-      context: ../..
-      target: runner
-    image: ${OPENGMAO_IMAGE:-gmao-maintenance-quality:local}
+    image: ${OPENGMAO_IMAGE:?set OPENGMAO_IMAGE to an immutable release tag or digest}
     restart: unless-stopped
     init: true
+    user: "1001:1001"
     environment:
       DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in the external runtime environment}
       NODE_ENV: production
@@ -68,6 +65,18 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
 
 volumes:
   opengmao_postgres:
