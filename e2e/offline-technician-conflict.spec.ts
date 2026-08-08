@@ -148,8 +148,8 @@ test("technician can keep or discard an offline write that conflicts with the se
       }),
     ]);
 
-    await expect(page.getByLabel("Labor minutes")).toBeDisabled();
-    await expect(page.getByRole("button", { name: "Save progress" })).toBeDisabled();
+    await expect(page.getByText(/Work controls are paused until the queued conflict above is resolved/)).toBeVisible();
+    await expect(page.getByRole("button", { name: "Sync queued changes" })).toBeDisabled();
 
     await conflict.getByRole("button", { name: "Keep local change" }).click();
     await expect(page.getByText(/Local queued change kept/)).toBeVisible();
