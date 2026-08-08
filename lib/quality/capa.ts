@@ -200,6 +200,7 @@ async function latestCapa(client: Pick<Prisma.TransactionClient, "auditLog">, ev
 async function validateOwners(
   tx: Prisma.TransactionClient,
   organizationId: string,
+  siteId: string,
   ownerIds: string[],
 ) {
   const uniqueOwnerIds = [...new Set(ownerIds)];
@@ -210,6 +211,7 @@ async function validateOwners(
       userId: { in: uniqueOwnerIds },
       active: true,
       user: { active: true },
+      OR: [{ allSites: true }, { siteMemberships: { some: { siteId } } }],
     },
     select: { userId: true },
   });
@@ -218,7 +220,7 @@ async function validateOwners(
   if (missing) {
     throw new CapaError(
       "ACTION_OWNER_NOT_FOUND",
-      "Each CAPA action owner must be an active organization member",
+      "Each CAPA action owner must be an active organization member with access to this site",
     );
   }
 }
@@ -301,7 +303,7 @@ export async function saveCapaDraft(input: {
       throw new CapaError("CAPA_NOT_DRAFT", "Only draft CAPA plans can change plan structure");
     }
     const actions = normalizeActions(input.eventId, input.actions, previous);
-    await validateOwners(tx, input.organizationId, actions.map((action) => action.ownerId));
+    await validateOwners(tx, input.organizationId, input.siteId, actions.map((action) => action.ownerId));
     const now = new Date().toISOString();
     const snapshot: CapaSnapshot = {
       eventId: input.eventId,
@@ -341,7 +343,7 @@ export async function activateCapa(input: {
     if (!previous.objective.trim() || previous.actions.length === 0) {
       throw new CapaError("ACTION_DATA_REQUIRED", "CAPA activation requires an objective and at least one action");
     }
-    await validateOwners(tx, input.organizationId, previous.actions.map((action) => action.ownerId));
+    await validateOwners(tx, input.organizationId, input.siteId, previous.actions.map((action) => action.ownerId));
     const now = new Date().toISOString();
     const snapshot: CapaSnapshot = {
       ...previous,
@@ -380,6 +382,12 @@ function transitionAction(
   throw new CapaError("INVALID_ACTION_TRANSITION", "Unsupported CAPA action status transition");
 }
 
+function actionAuditName(transition: "START" | "COMPLETE" | "CANCEL") {
+  if (transition === "START") return "CAPA_ACTION_STARTED";
+  if (transition === "COMPLETE") return "CAPA_ACTION_COMPLETED";
+  return "CAPA_ACTION_CANCELLED";
+}
+
 export async function transitionCapaAction(input: {
   organizationId: string;
   siteId: string;
@@ -403,7 +411,7 @@ export async function transitionCapaAction(input: {
     const snapshot: CapaSnapshot = { ...previous, actions, updatedAt: new Date().toISOString() };
     await appendSnapshot(tx, snapshot, {
       actorId: input.actorId,
-      action: `CAPA_ACTION_${input.transition}ED`,
+      action: actionAuditName(input.transition),
       previous,
     });
     return snapshot;
