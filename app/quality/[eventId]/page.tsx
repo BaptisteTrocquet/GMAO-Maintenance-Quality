@@ -262,6 +262,18 @@ export default async function QualityEventDetailPage({
       ) : null}
 
       <section className="card section">
+        <div className="header asset-header" style={{ marginBottom: 0 }}>
+          <div>
+            <h2 style={{ marginBottom: 6 }}>CAPA</h2>
+            <div className="muted">Corrective and preventive actions, ownership, due dates and effectiveness verification.</div>
+          </div>
+          <Link className="table-link" href={`/quality/${eventId}/capa`}>
+            Open CAPA workspace →
+          </Link>
+        </div>
+      </section>
+
+      <section className="card section">
         <h2>Quality event timeline</h2>
         {qualityTimeline.length ? (
           <ol className="timeline">
