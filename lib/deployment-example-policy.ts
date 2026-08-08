@@ -57,11 +57,41 @@ function assertNoCommittedSecrets(label: string, content: string) {
 }
 
 function assertDockerfile(dockerfile: string) {
-  const migration = dockerStage(dockerfile, /FROM\s+builder\s+AS\s+migration\s*\n/i);
+  const migrationDeps = dockerStage(dockerfile, /FROM\s+deps\s+AS\s+migration-deps\s*\n/i);
+  const migration = dockerStage(dockerfile, /FROM\s+base\s+AS\s+migration\s*\n/i);
+  if (!migrationDeps) {
+    throw new DeploymentExamplePolicyError("Dockerfile must define a pruned migration-deps target");
+  }
   if (!migration) throw new DeploymentExamplePolicyError("Dockerfile must define a migration target");
+
+  requirePattern(
+    migrationDeps,
+    /delete\s+p\.devDependencies\.prisma/,
+    "migration dependency stage must reclassify only the Prisma CLI before pruning development dependencies",
+  );
+  requirePattern(
+    migrationDeps,
+    /npm\s+prune\s+--omit=dev/,
+    "migration dependency stage must prune unrelated development dependencies",
+  );
+  requirePattern(
+    migrationDeps,
+    /test\s+-x\s+\.\/node_modules\/\.bin\/prisma/,
+    "migration dependency stage must verify the Prisma CLI remains executable after pruning",
+  );
 
   requirePattern(migration, /HOME=\/tmp/, "migration image must use writable /tmp as HOME");
   requirePattern(migration, /^\s*USER\s+nextjs\s*$/m, "migration image must run as non-root nextjs user");
+  requirePattern(
+    migration,
+    /COPY\s+--from=migration-deps[^\n]*\/app\/node_modules\s+\.\/node_modules/,
+    "migration runtime must copy dependencies only from the pruned migration-deps stage",
+  );
+  forbidPattern(
+    migration,
+    /COPY\s+--from=builder/i,
+    "migration runtime must not inherit application builder output or development tooling",
+  );
   requirePattern(
     migration,
     /CMD\s*\["\.\/node_modules\/\.bin\/prisma",\s*"migrate",\s*"deploy"\]/,
