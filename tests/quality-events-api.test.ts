@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => {
   }
   return {
     authenticateRequest: vi.fn(),
+    getCapaWorkspace: vi.fn(),
     listQualityEvents: vi.fn(),
     createQualityEvent: vi.fn(),
     getQualityEvent: vi.fn(),
@@ -19,6 +20,7 @@ const mocks = vi.hoisted(() => {
 });
 
 vi.mock("@/lib/auth/request-auth", () => ({ authenticateRequest: mocks.authenticateRequest }));
+vi.mock("@/lib/quality/capa", () => ({ getCapaWorkspace: mocks.getCapaWorkspace }));
 vi.mock("@/lib/quality/events", () => ({
   listQualityEvents: mocks.listQualityEvents,
   createQualityEvent: mocks.createQualityEvent,
@@ -67,6 +69,11 @@ const eventContext = { params: Promise.resolve({ eventId: "event-1" }) };
 describe("quality event APIs", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getCapaWorkspace.mockResolvedValue({
+      event: { organizationId: "org-a", siteId: "site-a" },
+      rootCause: null,
+      capa: null,
+    });
     mocks.listQualityEvents.mockResolvedValue([]);
     mocks.createQualityEvent.mockResolvedValue({
       idempotent: false,
@@ -229,6 +236,11 @@ describe("quality event APIs", () => {
       eventContext,
     );
     expectStatus(close, 200);
+    expect(mocks.getCapaWorkspace).toHaveBeenCalledWith({
+      organizationId: "org-a",
+      siteId: "site-a",
+      eventId: "event-1",
+    });
     expect(mocks.transitionQualityEvent).toHaveBeenCalledWith({
       organizationId: "org-a",
       siteId: "site-a",

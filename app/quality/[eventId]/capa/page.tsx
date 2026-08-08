@@ -1,9 +1,10 @@
 import Link from "next/link";
 import { headers } from "next/headers";
 import { notFound } from "next/navigation";
+import { db } from "@/lib/db";
+import { getCapaWorkspace, listCapaTimeline } from "@/lib/quality/capa";
 import { getQualityEvent } from "@/lib/quality/events";
-import { getRootCauseWorkspace, listRootCauseTimeline } from "@/lib/quality/root-cause";
-import RootCauseWorkspace from "./root-cause-workspace";
+import CapaWorkspace from "./capa-workspace";
 
 function formatDate(value: string | Date | null | undefined) {
   if (!value) return "—";
@@ -11,7 +12,7 @@ function formatDate(value: string | Date | null | undefined) {
   return `${iso.replace("T", " ").slice(0, 16)} UTC`;
 }
 
-export default async function RootCausePage({
+export default async function CapaPage({
   params,
 }: {
   params: Promise<{ eventId: string }>;
@@ -24,44 +25,67 @@ export default async function RootCausePage({
   if (!organizationId || !siteId) {
     return (
       <section className="card">
-        <p>Select an organization and site to open root-cause analysis.</p>
+        <p>Select an organization and site to open CAPA.</p>
       </section>
     );
   }
 
-  const [qualityEvent, workspace, timeline] = await Promise.all([
+  const [qualityEvent, workspace, timeline, memberships] = await Promise.all([
     getQualityEvent({ organizationId, siteId, eventId }),
-    getRootCauseWorkspace({ organizationId, siteId, eventId }),
-    listRootCauseTimeline({ organizationId, siteId, eventId }),
+    getCapaWorkspace({ organizationId, siteId, eventId }),
+    listCapaTimeline({ organizationId, siteId, eventId }),
+    db.organizationMembership.findMany({
+      where: {
+        organizationId,
+        active: true,
+        user: { active: true },
+        OR: [
+          { allSites: true },
+          { siteMemberships: { some: { siteId } } },
+        ],
+      },
+      select: {
+        role: true,
+        user: { select: { id: true, displayName: true } },
+      },
+      orderBy: { user: { displayName: "asc" } },
+    }),
   ]);
   if (!qualityEvent || !workspace) notFound();
+
+  const members = memberships.map((membership) => ({
+    id: membership.user.id,
+    name: membership.user.displayName,
+    role: membership.role,
+  }));
 
   return (
     <>
       <div className="header asset-header">
         <div>
           <Link className="muted" href={`/quality/${eventId}`}>← Quality event</Link>
-          <div className="title">Root-cause analysis · {qualityEvent.eventNumber}</div>
+          <div className="title">CAPA · {qualityEvent.eventNumber}</div>
           <div className="muted">{qualityEvent.title}</div>
         </div>
         <div className="asset-status">
           <span className="badge">{qualityEvent.status}</span>
-          <span className="badge">{workspace.rootCause?.status ?? "NOT STARTED"}</span>
-          {workspace.rootCause ? <span className="badge">{workspace.rootCause.method}</span> : null}
-          <Link className="table-link" href={`/quality/${eventId}/capa`}>CAPA →</Link>
+          <span className="badge">RCA {workspace.rootCause?.status ?? "NOT STARTED"}</span>
+          <span className="badge">CAPA {workspace.capa?.status ?? "NOT STARTED"}</span>
         </div>
       </div>
 
-      <RootCauseWorkspace
+      <CapaWorkspace
         organizationId={organizationId}
         siteId={siteId}
         eventId={eventId}
         eventStatus={qualityEvent.status}
-        initialRootCause={workspace.rootCause}
+        rootCauseStatus={workspace.rootCause?.status ?? null}
+        initialCapa={workspace.capa}
+        members={members}
       />
 
       <section className="card section">
-        <h2>Root-cause revision timeline</h2>
+        <h2>CAPA audit trail</h2>
         {timeline?.length ? (
           <ol className="timeline">
             {timeline.map((entry) => (
@@ -70,13 +94,13 @@ export default async function RootCausePage({
                 <strong>{entry.action}</strong>
                 <span>
                   {entry.actorName}
-                  {entry.after?.rootCauseSummary ? ` · ${entry.after.rootCauseSummary}` : ""}
+                  {entry.after ? ` · ${entry.after.status} · ${entry.after.actions.length} action(s)` : ""}
                 </span>
               </li>
             ))}
           </ol>
         ) : (
-          <p className="muted">No root-cause revisions recorded yet.</p>
+          <p className="muted">No CAPA revisions recorded yet.</p>
         )}
       </section>
     </>
