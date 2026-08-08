@@ -311,7 +311,7 @@ export default function CapaWorkspace({
               ))}
             </div>
           ) : (
-            <p className="muted">Add at least one action before activating CAPA.</p>
+            <p className="muted">Add at least one action before CAPA approval.</p>
           )}
 
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 16 }}>
@@ -327,14 +327,17 @@ export default function CapaWorkspace({
               type="button"
               onClick={async () => {
                 const saved = await saveDraft();
-                if (saved) await patch({ action: "ACTIVATE" });
+                if (saved) await patch({ action: "APPROVE" });
               }}
               disabled={!canInvestigate || busy || !objective.trim() || !draftActions.length}
               style={{ ...buttonStyle, background: "#111827", color: "white", borderColor: "#111827" }}
             >
-              Activate CAPA
+              Approve & activate CAPA
             </button>
           </div>
+          <p className="muted" style={{ marginBottom: 0 }}>
+            Approval requires an active Quality Manager, Admin or Owner. The CAPA draft author cannot approve their own plan.
+          </p>
         </section>
       ) : null}
 
