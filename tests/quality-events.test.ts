@@ -7,15 +7,22 @@ const mocks = vi.hoisted(() => ({
   auditCreate: vi.fn(),
   siteFindFirst: vi.fn(),
   membershipFindFirst: vi.fn(),
+  assetFindFirst: vi.fn(),
+  workOrderFindFirst: vi.fn(),
+  documentFindMany: vi.fn(),
 }));
 
 const tx = {
   auditLog: {
     findFirst: mocks.auditFindFirst,
+    findMany: mocks.auditFindMany,
     create: mocks.auditCreate,
   },
   site: { findFirst: mocks.siteFindFirst },
   organizationMembership: { findFirst: mocks.membershipFindFirst },
+  asset: { findFirst: mocks.assetFindFirst },
+  workOrder: { findFirst: mocks.workOrderFindFirst },
+  document: { findMany: mocks.documentFindMany },
 };
 
 vi.mock("@/lib/db", () => ({
@@ -29,22 +36,25 @@ vi.mock("@/lib/db", () => ({
 }));
 
 import {
-  completeContainment,
   createQualityEvent,
-  startOrUpdateContainment,
-  updateQualityEvent,
+  getQualityEvent,
+  listQualityEvents,
+  setImmediateContainment,
+  transitionQualityEvent,
 } from "@/lib/quality/events";
-import { queryQualityEvents } from "@/lib/quality/queries";
 
 const createInput = {
   organizationId: "org-a",
   siteId: "site-a",
-  eventKey: "line-check-2026-08-08-001",
+  eventKey: "synthetic-qe-2026-08-08-001",
   type: "NONCONFORMITY" as const,
   severity: "HIGH" as const,
   title: "Synthetic dimensional nonconformity",
   description: "Synthetic quality event used for automated tests.",
   occurredAt: new Date("2026-08-08T00:00:00.000Z"),
+  assetId: "asset-1",
+  workOrderId: "wo-1",
+  documentIds: ["doc-1"],
   actorId: "quality-1",
 };
 
@@ -59,67 +69,71 @@ describe("quality event workflow", () => {
     mocks.auditCreate.mockResolvedValue({ id: "audit-1" });
     mocks.siteFindFirst.mockResolvedValue({ id: "site-a" });
     mocks.membershipFindFirst.mockResolvedValue({ id: "membership-1" });
+    mocks.assetFindFirst.mockResolvedValue({ id: "asset-1", code: "AST-001", name: "Synthetic asset" });
+    mocks.workOrderFindFirst.mockResolvedValue({ id: "wo-1", number: "WO-001", title: "Synthetic work order" });
+    mocks.documentFindMany.mockResolvedValue([{ id: "doc-1", code: "WI-001", title: "Synthetic work instruction" }]);
   });
 
-  it("creates an idempotent open quality event with an audit snapshot", async () => {
+  it("creates an idempotent quality event with frozen linked master-data labels", async () => {
     const first = await createQualityEvent(createInput);
 
     expect(first.idempotent).toBe(false);
     expect(first.qualityEvent).toMatchObject({
       organizationId: "org-a",
       siteId: "site-a",
-      type: "NONCONFORMITY",
-      severity: "HIGH",
       status: "OPEN",
-      detectedById: "quality-1",
-      containment: null,
-    });
-    expect(mocks.auditCreate).toHaveBeenCalledWith({
-      data: expect.objectContaining({
-        entityType: "QualityEvent",
-        action: "CREATED",
-        actorId: "quality-1",
-      }),
+      asset: { id: "asset-1", code: "AST-001", name: "Synthetic asset" },
+      workOrder: { id: "wo-1", number: "WO-001", title: "Synthetic work order" },
+      documents: [{ id: "doc-1", code: "WI-001", title: "Synthetic work instruction" }],
     });
 
     mocks.auditFindFirst.mockResolvedValue({ afterJson: JSON.stringify(first.qualityEvent) });
-    mocks.auditCreate.mockClear();
+    mocks.assetFindFirst.mockResolvedValue({ id: "asset-1", code: "RENAMED", name: "Renamed master asset" });
+    mocks.workOrderFindFirst.mockResolvedValue({ id: "wo-1", number: "WO-999", title: "Renamed master WO" });
+    mocks.documentFindMany.mockResolvedValue([{ id: "doc-1", code: "WI-999", title: "Renamed master document" }]);
+
+    const stored = await getQualityEvent({
+      organizationId: "org-a",
+      siteId: "site-a",
+      eventId: first.qualityEvent.id,
+    });
+    expect(stored?.asset?.code).toBe("AST-001");
+    expect(stored?.workOrder?.number).toBe("WO-001");
+    expect(stored?.documents[0]?.code).toBe("WI-001");
 
     const retry = await createQualityEvent(createInput);
     expect(retry.idempotent).toBe(true);
     expect(retry.qualityEvent.id).toBe(first.qualityEvent.id);
+  });
+
+  it("rejects linked assets outside the selected site", async () => {
+    mocks.assetFindFirst.mockResolvedValue(null);
+
+    await expect(createQualityEvent(createInput)).rejects.toMatchObject({
+      code: "ASSET_NOT_FOUND",
+    });
     expect(mocks.auditCreate).not.toHaveBeenCalled();
   });
 
-  it("rejects reuse of eventKey for a different payload", async () => {
-    const first = await createQualityEvent(createInput);
-    mocks.auditFindFirst.mockResolvedValue({ afterJson: JSON.stringify(first.qualityEvent) });
-
-    await expect(
-      createQualityEvent({ ...createInput, title: "Different synthetic event" }),
-    ).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
-  });
-
-  it("starts containment only with an active organization member as owner", async () => {
+  it("records immediate containment only with an active organization member", async () => {
     const created = await createQualityEvent(createInput);
     mocks.auditFindFirst.mockResolvedValue({ afterJson: JSON.stringify(created.qualityEvent) });
     mocks.auditCreate.mockClear();
 
-    const contained = await startOrUpdateContainment({
+    const contained = await setImmediateContainment({
       organizationId: "org-a",
       siteId: "site-a",
       eventId: created.qualityEvent.id,
-      summary: "Segregate synthetic affected material and hold release.",
+      summary: "Segregate synthetic affected material and block release.",
       ownerId: "quality-2",
       dueAt: new Date("2026-08-09T12:00:00.000Z"),
       actorId: "quality-1",
     });
 
-    expect(contained.status).toBe("CONTAINMENT");
+    expect(contained.status).toBe("CONTAINED");
     expect(contained.containment).toMatchObject({
       ownerId: "quality-2",
-      summary: "Segregate synthetic affected material and hold release.",
-      completedAt: null,
+      summary: "Segregate synthetic affected material and block release.",
     });
     expect(mocks.membershipFindFirst).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -127,17 +141,17 @@ describe("quality event workflow", () => {
       }),
     );
     expect(mocks.auditCreate).toHaveBeenCalledWith({
-      data: expect.objectContaining({ action: "CONTAINMENT_STARTED" }),
+      data: expect.objectContaining({ action: "CONTAINMENT_RECORDED" }),
     });
   });
 
-  it("rejects a containment owner outside the active organization membership", async () => {
+  it("rejects containment ownership outside active organization membership", async () => {
     const created = await createQualityEvent(createInput);
     mocks.auditFindFirst.mockResolvedValue({ afterJson: JSON.stringify(created.qualityEvent) });
     mocks.membershipFindFirst.mockResolvedValue(null);
 
     await expect(
-      startOrUpdateContainment({
+      setImmediateContainment({
         organizationId: "org-a",
         siteId: "site-a",
         eventId: created.qualityEvent.id,
@@ -148,66 +162,94 @@ describe("quality event workflow", () => {
     ).rejects.toMatchObject({ code: "CONTAINMENT_OWNER_NOT_FOUND" });
   });
 
-  it("requires containment to be started before completion", async () => {
+  it("requires containment and a resolution before closure", async () => {
     const created = await createQualityEvent(createInput);
     mocks.auditFindFirst.mockResolvedValue({ afterJson: JSON.stringify(created.qualityEvent) });
 
     await expect(
-      completeContainment({
+      transitionQualityEvent({
         organizationId: "org-a",
         siteId: "site-a",
         eventId: created.qualityEvent.id,
-        completionNote: "Synthetic completion",
+        action: "CLOSE",
+        resolutionSummary: "Synthetic resolution",
         actorId: "quality-1",
       }),
     ).rejects.toMatchObject({ code: "INVALID_STATUS_TRANSITION" });
-  });
 
-  it("completes containment and locks the event record", async () => {
-    const created = await createQualityEvent(createInput);
-    mocks.auditFindFirst.mockResolvedValue({ afterJson: JSON.stringify(created.qualityEvent) });
-    const inContainment = await startOrUpdateContainment({
+    const contained = await setImmediateContainment({
       organizationId: "org-a",
       siteId: "site-a",
       eventId: created.qualityEvent.id,
-      summary: "Segregate synthetic affected material.",
+      summary: "Synthetic containment",
       actorId: "quality-1",
     });
+    mocks.auditFindFirst.mockResolvedValue({ afterJson: JSON.stringify(contained) });
 
-    mocks.auditFindFirst.mockResolvedValue({ afterJson: JSON.stringify(inContainment) });
-    const completed = await completeContainment({
-      organizationId: "org-a",
-      siteId: "site-a",
-      eventId: created.qualityEvent.id,
-      completionNote: "Synthetic material was segregated and identified.",
-      actorId: "quality-1",
-    });
-
-    expect(completed.status).toBe("CONTAINED");
-    expect(completed.containment?.completedAt).toBeTruthy();
-    expect(completed.containment?.completionNote).toContain("segregated");
-
-    mocks.auditFindFirst.mockResolvedValue({ afterJson: JSON.stringify(completed) });
     await expect(
-      updateQualityEvent({
+      transitionQualityEvent({
         organizationId: "org-a",
         siteId: "site-a",
-        eventId: completed.id,
-        title: "Changed after containment",
+        eventId: contained.id,
+        action: "CLOSE",
+        resolutionSummary: " ",
         actorId: "quality-1",
       }),
-    ).rejects.toMatchObject({ code: "EVENT_LOCKED" });
+    ).rejects.toMatchObject({ code: "RESOLUTION_REQUIRED" });
   });
 
-  it("filters event IDs through exact tenant/site scope before returning results", async () => {
+  it("moves contained events through investigation to closure with full audit snapshots", async () => {
     const created = await createQualityEvent(createInput);
-    mocks.auditFindMany.mockResolvedValue([{ entityId: created.qualityEvent.id }]);
     mocks.auditFindFirst.mockResolvedValue({ afterJson: JSON.stringify(created.qualityEvent) });
+    const contained = await setImmediateContainment({
+      organizationId: "org-a",
+      siteId: "site-a",
+      eventId: created.qualityEvent.id,
+      summary: "Synthetic containment",
+      completedAt: new Date("2026-08-08T01:00:00.000Z"),
+      actorId: "quality-1",
+    });
 
-    const ownSite = await queryQualityEvents({ organizationId: "org-a", siteId: "site-a" });
-    const otherSite = await queryQualityEvents({ organizationId: "org-a", siteId: "site-b" });
+    mocks.auditFindFirst.mockResolvedValue({ afterJson: JSON.stringify(contained) });
+    const investigating = await transitionQualityEvent({
+      organizationId: "org-a",
+      siteId: "site-a",
+      eventId: contained.id,
+      action: "START_INVESTIGATION",
+      actorId: "quality-1",
+    });
+    expect(investigating.status).toBe("INVESTIGATING");
 
-    expect(ownSite).toHaveLength(1);
-    expect(otherSite).toHaveLength(0);
+    mocks.auditFindFirst.mockResolvedValue({ afterJson: JSON.stringify(investigating) });
+    const closed = await transitionQualityEvent({
+      organizationId: "org-a",
+      siteId: "site-a",
+      eventId: investigating.id,
+      action: "CLOSE",
+      resolutionSummary: "Synthetic root issue corrected and verified.",
+      actorId: "quality-1",
+    });
+    expect(closed.status).toBe("CLOSED");
+    expect(closed.closedAt).toBeTruthy();
+    expect(closed.resolutionSummary).toContain("corrected");
+  });
+
+  it("uses the exact JSON tenant/site marker when listing quality events", async () => {
+    const created = await createQualityEvent(createInput);
+    mocks.auditFindMany.mockResolvedValue([
+      { entityId: created.qualityEvent.id, afterJson: JSON.stringify(created.qualityEvent) },
+    ]);
+
+    const events = await listQualityEvents({ organizationId: "org-a", siteId: "site-a" });
+
+    expect(events).toHaveLength(1);
+    expect(mocks.auditFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          entityType: "QualityEvent",
+          afterJson: { contains: '"organizationId":"org-a","siteId":"site-a"' },
+        },
+      }),
+    );
   });
 });
