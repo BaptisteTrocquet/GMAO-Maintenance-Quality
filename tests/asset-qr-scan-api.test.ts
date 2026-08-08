@@ -53,6 +53,12 @@ function scanRequest(payload: string, overrides: Record<string, unknown> = {}) {
   });
 }
 
+async function post(request: Request) {
+  const response = await POST(request);
+  if (!response) throw new Error("Expected QR scan API response");
+  return response;
+}
+
 describe("asset QR scan API", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -62,7 +68,7 @@ describe("asset QR scan API", () => {
   });
 
   it("resolves a valid asset route only after asset read permission and site validation", async () => {
-    const response = await POST(scanRequest("/assets/asset-1"));
+    const response = await post(scanRequest("/assets/asset-1"));
     const body = await response.json();
 
     expect(response.status).toBe(200);
@@ -83,7 +89,7 @@ describe("asset QR scan API", () => {
   });
 
   it("accepts only same-origin absolute QR URLs", async () => {
-    const response = await POST(scanRequest("https://other.example/assets/asset-1"));
+    const response = await post(scanRequest("https://other.example/assets/asset-1"));
 
     expect(response.status).toBe(400);
     expect(mocks.assetFindFirst).not.toHaveBeenCalled();
@@ -94,7 +100,7 @@ describe("asset QR scan API", () => {
       throw new mocks.AccessDeniedError("Missing permission");
     });
 
-    const response = await POST(scanRequest("/assets/asset-1"));
+    const response = await post(scanRequest("/assets/asset-1"));
 
     expect(response.status).toBe(403);
     expect(mocks.siteFindFirst).not.toHaveBeenCalled();
@@ -104,13 +110,13 @@ describe("asset QR scan API", () => {
   it("returns not found when the QR asset is outside the selected site", async () => {
     mocks.assetFindFirst.mockResolvedValue(null);
 
-    const response = await POST(scanRequest("/assets/asset-1"));
+    const response = await post(scanRequest("/assets/asset-1"));
 
     expect(response.status).toBe(404);
   });
 
   it("rejects malformed input before authentication", async () => {
-    const response = await POST(scanRequest("", { organizationId: "" }));
+    const response = await post(scanRequest("", { organizationId: "" }));
 
     expect(response.status).toBe(400);
     expect(mocks.authenticateRequest).not.toHaveBeenCalled();
