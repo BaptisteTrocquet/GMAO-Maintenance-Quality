@@ -6,7 +6,7 @@ import {
   searchGlobal,
 } from "@/lib/search/global-search";
 
-export async function GET(request: Request) {
+export async function GET(request: Request): Promise<Response> {
   const url = new URL(request.url);
   const organizationId = url.searchParams.get("organizationId");
   const siteId = url.searchParams.get("siteId");
