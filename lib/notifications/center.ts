@@ -126,6 +126,7 @@ export async function buildNotificationCenter(input: {
             site: { organizationId: input.organizationId, active: true },
             status: "ACTIVE",
             remindAt: { lte: now },
+            dueAt: { gte: now },
             workOrder: { status: { notIn: ["COMPLETED", "CANCELLED"] } },
           },
           select: {
