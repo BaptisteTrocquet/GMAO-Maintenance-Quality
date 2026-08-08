@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   transaction: vi.fn(),
   auditCreate: vi.fn(),
   auditFindMany: vi.fn(),
+  auditFindFirst: vi.fn(),
   storagePut: vi.fn(),
   storageGet: vi.fn(),
   storageDelete: vi.fn(),
@@ -19,11 +20,18 @@ vi.mock("@/lib/quality/events", () => ({ getQualityEvent: mocks.getQualityEvent 
 vi.mock("@/lib/db", () => ({
   db: {
     $transaction: mocks.transaction,
-    auditLog: { findMany: mocks.auditFindMany },
+    auditLog: {
+      findMany: mocks.auditFindMany,
+      findFirst: mocks.auditFindFirst,
+    },
   },
 }));
 
-import { addQualityEvidence, listQualityEvidence } from "@/lib/quality/evidence";
+import {
+  addQualityEvidence,
+  listQualityEvidence,
+  readQualityEvidence,
+} from "@/lib/quality/evidence";
 
 const adapter: StorageAdapter = {
   put: mocks.storagePut,
@@ -62,6 +70,7 @@ describe("quality evidence attachments", () => {
     );
     mocks.auditCreate.mockResolvedValue({ id: "audit-1" });
     mocks.auditFindMany.mockResolvedValue([]);
+    mocks.auditFindFirst.mockResolvedValue(null);
     mocks.storagePut.mockResolvedValue("stored");
     mocks.storageGet.mockResolvedValue(fileData);
     mocks.storageDelete.mockResolvedValue(undefined);
@@ -100,6 +109,23 @@ describe("quality evidence attachments", () => {
         action: "EVIDENCE_ATTACHED",
       }),
     });
+  });
+
+  it("accepts and lists evidence captured specifically for the 8D workflow", async () => {
+    const eightDEvidence = await addQualityEvidence({ ...baseInput, phase: "EIGHT_D" });
+    const stored = { ...eightDEvidence, phase: "EIGHT_D" as const };
+    mocks.auditFindMany.mockResolvedValue([
+      { afterJson: JSON.stringify(stored), actor: { displayName: "Synthetic User" } },
+    ]);
+
+    const evidence = await listQualityEvidence({
+      organizationId: "org-a",
+      siteId: "site-a",
+      eventId: "event-1",
+      phase: "EIGHT_D",
+    });
+
+    expect(evidence).toEqual([{ ...stored, actorName: "Synthetic User" }]);
   });
 
   it("blocks new evidence after the quality event is closed before storing bytes", async () => {
@@ -159,6 +185,39 @@ describe("quality evidence attachments", () => {
       orderBy: { createdAt: "desc" },
     });
     expect(evidence).toEqual([{ ...visible, actorName: "Synthetic User" }]);
+  });
+
+  it("reads stored bytes only when their SHA-256 matches the immutable snapshot", async () => {
+    const stored = await addQualityEvidence(baseInput);
+    mocks.auditFindFirst.mockResolvedValue({ afterJson: JSON.stringify(stored) });
+    mocks.storageGet.mockResolvedValue(fileData);
+
+    const result = await readQualityEvidence({
+      organizationId: "org-a",
+      siteId: "site-a",
+      eventId: "event-1",
+      evidenceId: stored.id,
+      adapter,
+    });
+
+    expect(result.data).toEqual(fileData);
+    expect(mocks.storageGet).toHaveBeenCalledWith(stored.storageKey);
+  });
+
+  it("rejects tampered stored evidence when the checksum no longer matches", async () => {
+    const stored = await addQualityEvidence(baseInput);
+    mocks.auditFindFirst.mockResolvedValue({ afterJson: JSON.stringify(stored) });
+    mocks.storageGet.mockResolvedValue(new Uint8Array([9, 9, 9]));
+
+    await expect(
+      readQualityEvidence({
+        organizationId: "org-a",
+        siteId: "site-a",
+        eventId: "event-1",
+        evidenceId: stored.id,
+        adapter,
+      }),
+    ).rejects.toMatchObject({ code: "FILE_INTEGRITY_FAILED" });
   });
 
   it("returns null without querying evidence when the quality event is outside scope", async () => {
