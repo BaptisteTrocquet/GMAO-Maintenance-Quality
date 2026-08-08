@@ -1,24 +1,60 @@
 import Link from "next/link";
 import { headers } from "next/headers";
 import { notFound } from "next/navigation";
+import { resolveSession } from "@/lib/auth/session";
 import { db } from "@/lib/db";
 import {
   buildWorkOrderBoard,
   buildWorkOrderBoardWhere,
   WORK_ORDER_BOARD_LIMIT,
+  type WorkOrderAssignmentFilter,
   type WorkOrderDueFilter,
+  type WorkOrderPriorityFilter,
 } from "@/lib/maintenance/board";
+import SavedViewsControl from "./saved-views-control";
 import WorkOrderCard from "./work-order-card";
 
-const FILTERS: Array<{ value: WorkOrderDueFilter; label: string }> = [
-  { value: "ALL", label: "All" },
+const DUE_FILTERS: Array<{ value: WorkOrderDueFilter; label: string }> = [
+  { value: "ALL", label: "All dates" },
   { value: "OVERDUE", label: "Overdue" },
   { value: "DUE_7_DAYS", label: "Due ≤ 7 days" },
   { value: "NO_DUE_DATE", label: "No due date" },
 ];
 
+const PRIORITY_FILTERS: Array<{ value: WorkOrderPriorityFilter; label: string }> = [
+  { value: "ALL", label: "All priorities" },
+  { value: "URGENT", label: "Urgent" },
+  { value: "HIGH", label: "High" },
+  { value: "NORMAL", label: "Normal" },
+  { value: "LOW", label: "Low" },
+];
+
+const ASSIGNMENT_FILTERS: Array<{ value: WorkOrderAssignmentFilter; label: string }> = [
+  { value: "ALL", label: "All assignments" },
+  { value: "UNASSIGNED", label: "Unassigned" },
+  { value: "MY_WORK", label: "My work" },
+];
+
 function dueFilter(value: string | undefined): WorkOrderDueFilter {
-  return FILTERS.some((filter) => filter.value === value) ? (value as WorkOrderDueFilter) : "ALL";
+  return DUE_FILTERS.some((filter) => filter.value === value)
+    ? (value as WorkOrderDueFilter)
+    : "ALL";
+}
+
+function priorityFilter(value: string | undefined): WorkOrderPriorityFilter {
+  return PRIORITY_FILTERS.some((filter) => filter.value === value)
+    ? (value as WorkOrderPriorityFilter)
+    : "ALL";
+}
+
+function assignmentFilter(
+  value: string | undefined,
+  currentUserId: string | undefined,
+): WorkOrderAssignmentFilter {
+  const parsed = ASSIGNMENT_FILTERS.some((filter) => filter.value === value)
+    ? (value as WorkOrderAssignmentFilter)
+    : "ALL";
+  return parsed === "MY_WORK" && !currentUserId ? "ALL" : parsed;
 }
 
 function statusLabel(value: string) {
@@ -28,13 +64,20 @@ function statusLabel(value: string) {
 export default async function WorkOrderKanbanPage({
   searchParams,
 }: {
-  searchParams: Promise<{ due?: string }>;
+  searchParams: Promise<{ due?: string; priority?: string; assignment?: string }>;
 }) {
   const requestHeaders = await headers();
   const organizationId = requestHeaders.get("x-organization-id") ?? "";
   const siteId = requestHeaders.get("x-site-id") ?? "";
-  const { due } = await searchParams;
-  const selectedFilter = dueFilter(due);
+  const authorization = requestHeaders.get("authorization");
+  const session = authorization?.startsWith("Bearer ")
+    ? await resolveSession(authorization.slice("Bearer ".length).trim())
+    : null;
+  const currentUserId = session?.user.id;
+  const { due, priority, assignment } = await searchParams;
+  const selectedDue = dueFilter(due);
+  const selectedPriority = priorityFilter(priority);
+  const selectedAssignment = assignmentFilter(assignment, currentUserId);
 
   if (!organizationId || !siteId) {
     return (
@@ -62,7 +105,10 @@ export default async function WorkOrderKanbanPage({
       where: buildWorkOrderBoardWhere({
         organizationId,
         siteId,
-        dueFilter: selectedFilter,
+        dueFilter: selectedDue,
+        priorityFilter: selectedPriority,
+        assignmentFilter: selectedAssignment,
+        userId: currentUserId,
         now,
       }),
       select: {
@@ -107,7 +153,7 @@ export default async function WorkOrderKanbanPage({
     assigneeName: workOrder.assignee?.displayName ?? null,
     teamName: workOrder.team?.name ?? null,
   }));
-  const board = buildWorkOrderBoard({ workOrders: items, dueFilter: selectedFilter, now });
+  const board = buildWorkOrderBoard({ workOrders: items, dueFilter: selectedDue, now });
   const visibleCount = board.reduce((sum, column) => sum + column.items.length, 0);
 
   return (
@@ -126,34 +172,64 @@ export default async function WorkOrderKanbanPage({
       </div>
 
       <section className="card" aria-label="Work-order board filters">
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-          {FILTERS.map((filter) => {
-            const selected = filter.value === selectedFilter;
-            return (
-              <Link
-                key={filter.value}
-                href={filter.value === "ALL" ? "/maintenance/kanban" : `/maintenance/kanban?due=${filter.value}`}
-                aria-current={selected ? "page" : undefined}
-                className="badge"
-                style={{
-                  textDecoration: "none",
-                  outline: selected ? "2px solid currentColor" : undefined,
-                  outlineOffset: 2,
-                }}
-              >
-                {filter.label}
-              </Link>
-            );
-          })}
-        </div>
+        <form method="get" style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "end" }}>
+          <label style={{ display: "grid", gap: 4 }}>
+            <span className="muted">Due</span>
+            <select name="due" defaultValue={selectedDue}>
+              {DUE_FILTERS.map((filter) => (
+                <option key={filter.value} value={filter.value}>{filter.label}</option>
+              ))}
+            </select>
+          </label>
+          <label style={{ display: "grid", gap: 4 }}>
+            <span className="muted">Priority</span>
+            <select name="priority" defaultValue={selectedPriority}>
+              {PRIORITY_FILTERS.map((filter) => (
+                <option key={filter.value} value={filter.value}>{filter.label}</option>
+              ))}
+            </select>
+          </label>
+          <label style={{ display: "grid", gap: 4 }}>
+            <span className="muted">Assignment</span>
+            <select name="assignment" defaultValue={selectedAssignment}>
+              {ASSIGNMENT_FILTERS.map((filter) => (
+                <option
+                  key={filter.value}
+                  value={filter.value}
+                  disabled={filter.value === "MY_WORK" && !currentUserId}
+                >
+                  {filter.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button type="submit">Apply filters</button>
+          <Link className="table-link" href="/maintenance/kanban">Reset</Link>
+        </form>
+
         <div className="muted" style={{ marginTop: 10 }}>
           {overdueCount} overdue · {dueSoonCount} due within 7 days · {noDueCount} without due date
         </div>
-        {truncated ? (
-          <p className="muted" role="status" style={{ marginBottom: 0, marginTop: 10 }}>
-            This board is bounded to {WORK_ORDER_BOARD_LIMIT} matching work orders for predictable rendering. Narrow the due filter to focus the list.
+        {assignment === "MY_WORK" && !currentUserId ? (
+          <p className="muted" role="status" style={{ marginBottom: 0 }}>
+            My work requires an authenticated user session; the board is showing all assignments.
           </p>
         ) : null}
+        {truncated ? (
+          <p className="muted" role="status" style={{ marginBottom: 0, marginTop: 10 }}>
+            This board is bounded to {WORK_ORDER_BOARD_LIMIT} matching work orders for predictable rendering. Narrow the filters to focus the list.
+          </p>
+        ) : null}
+
+        <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid #e5e7eb" }}>
+          <SavedViewsControl
+            organizationId={organizationId}
+            siteId={siteId}
+            dueFilter={selectedDue}
+            priorityFilter={selectedPriority}
+            assignmentFilter={selectedAssignment}
+          />
+        </div>
       </section>
 
       <section className="section" aria-label="Work-order Kanban board">
