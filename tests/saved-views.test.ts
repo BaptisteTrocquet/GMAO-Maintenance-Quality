@@ -20,6 +20,7 @@ import {
   createSavedView,
   deleteSavedView,
   listSavedViews,
+  SAVED_VIEW_LIMIT,
   updateSavedView,
 } from "@/lib/saved-views";
 
@@ -86,6 +87,22 @@ describe("saved views", () => {
     await expect(
       createSavedView({ ...scope, name: "  overdue REVIEW ", filters: { due: "ALL" } }),
     ).rejects.toMatchObject({ code: "VIEW_NAME_CONFLICT" });
+    expect(mocks.create).not.toHaveBeenCalled();
+  });
+
+  it("caps active saved views per user, site and surface", async () => {
+    mocks.findMany.mockResolvedValue(
+      Array.from({ length: SAVED_VIEW_LIMIT }, (_, index) => ({
+        entityId: `view-${index}`,
+        afterJson: JSON.stringify(
+          snapshot({ id: `view-${index}`, name: `View ${index}` }),
+        ),
+      })),
+    );
+
+    await expect(
+      createSavedView({ ...scope, name: "One too many", filters: { due: "ALL" } }),
+    ).rejects.toMatchObject({ code: "VIEW_LIMIT_REACHED" });
     expect(mocks.create).not.toHaveBeenCalled();
   });
 
