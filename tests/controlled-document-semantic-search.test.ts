@@ -3,6 +3,7 @@ import type { MembershipRole } from "@prisma/client";
 import {
   EmbeddingProviderRegistry,
   type EmbeddingProvider,
+  type EmbeddingProviderEmbedInput,
 } from "@/lib/ai/embedding-provider";
 import {
   ScopedVectorStore,
@@ -73,7 +74,7 @@ function embeddingProvider() {
     enabled: true,
     defaultModel: "test-embedding-v1",
     dimensions: 3,
-    embed: vi.fn(async (input) => ({
+    embed: vi.fn(async (input: EmbeddingProviderEmbedInput) => ({
       model: input.model,
       dimensions: 3,
       embeddings: input.inputs.map((item) => ({ id: item.id, vector: [0.1, 0.2, 0.3] })),
