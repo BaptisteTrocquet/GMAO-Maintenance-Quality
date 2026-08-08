@@ -2,96 +2,92 @@
 
 This guide provides two reference deployments for self-hosting GMAO Maintenance Quality:
 
-- a single-host Docker Compose example for small installations;
-- a Kubernetes example for orchestrated environments.
+- `deploy/compose/docker-compose.production.yml` for a single-host Docker Compose installation;
+- `deploy/kubernetes/app.yaml` plus `deploy/kubernetes/migrate-job.yaml` for Kubernetes.
 
-They are examples, not a replacement for the target platform's security review. Read [`PRODUCTION_HARDENING.md`](PRODUCTION_HARDENING.md), [`UPGRADING.md`](UPGRADING.md), [`BACKUP.md`](BACKUP.md), [`RESTORE.md`](RESTORE.md), [`HEALTH_READINESS.md`](HEALTH_READINESS.md), [`APPLICATION_METRICS.md`](APPLICATION_METRICS.md), and [`RATE_LIMITING.md`](RATE_LIMITING.md) before production rollout.
+They are examples, not a replacement for the target platform's security review. They deliberately contain no production credentials or private organization/equipment data.
 
-## Release artifacts
+Read these runbooks before rollout:
 
-The Dockerfile intentionally separates the long-running application runtime from build/release tooling.
+- [`PRODUCTION_DOCKER.md`](PRODUCTION_DOCKER.md)
+- [`PRODUCTION_HARDENING.md`](PRODUCTION_HARDENING.md)
+- [`HEALTH_READINESS.md`](HEALTH_READINESS.md)
+- [`BACKUP.md`](BACKUP.md)
+- [`RESTORE.md`](RESTORE.md)
+- [`UPGRADING.md`](UPGRADING.md)
+- [`RATE_LIMITING.md`](RATE_LIMITING.md)
+- [`STRUCTURED_LOGGING.md`](STRUCTURED_LOGGING.md)
+- [`APPLICATION_METRICS.md`](APPLICATION_METRICS.md)
 
-Build the application image from the hardened `runner` target:
+## Shared release boundary
+
+Application and migration images must come from the **same reviewed release source**. The final application runtime intentionally contains only the standalone Node server; npm and Prisma CLI are removed from it. Migration tooling therefore uses a separate short-lived image built from Docker target `builder`.
 
 ```sh
-docker build --target runner -t registry.example/opengmao/app:RELEASE .
+docker build --target runner -t registry.example.invalid/opengmao:<release> .
+docker build --target builder -t registry.example.invalid/opengmao-migrations:<release> .
 ```
 
-A migration job needs Prisma CLI tooling, which is intentionally absent from the final application runtime. Build a separate, short-lived migration image from the `builder` target:
+Push those images through the production registry workflow, record their immutable digests, and deploy immutable release tags or digests rather than floating tags such as `latest`.
 
-```sh
-docker build --target builder -t registry.example/opengmao/migrations:RELEASE .
-```
+Secrets are injected at runtime. Do not commit production `.env` files, Kubernetes Secret objects, database URLs, API keys, connector-vault keys, OIDC credentials, object-storage credentials, webhook secrets, real employee information, real asset identifiers, or internal documents.
 
-The migration image is release tooling. Do not run it as the public application service and do not expose it to inbound traffic. Production registries should use immutable release tags or digests rather than `latest`.
-
-## Secrets
-
-Do not commit production `.env` files, Kubernetes `Secret` objects, database URLs, API keys, connector vault keys, OIDC credentials, object-storage credentials, or webhook secrets.
-
-Use the platform's secret manager where possible. If an external environment file is used for the Compose example, store it outside the repository with restrictive filesystem permissions. A minimal file needs at least:
-
-```text
-POSTGRES_PASSWORD=<generated database password>
-DATABASE_URL=<PostgreSQL URL using host db for the Compose example>
-```
-
-Optional runtime variables documented in `.env.example` can be added to the same external secret source.
+Prisma migrations are an explicit release step. Never make every application replica run migrations at startup, and never replace committed migrations with `prisma db push` or `prisma migrate reset`.
 
 # Docker Compose
 
-The reference file is [`../deploy/compose/docker-compose.production.yml`](../deploy/compose/docker-compose.production.yml).
+The Compose example keeps PostgreSQL private, binds the application to loopback by default, persists PostgreSQL and controlled documents separately, drops capabilities, and applies `no-new-privileges`.
 
-It deliberately:
+## Runtime configuration
 
-- does not publish the PostgreSQL port;
-- binds the application to `127.0.0.1` by default so a controlled HTTPS reverse proxy can front it;
-- stores PostgreSQL and local controlled documents on separate durable volumes;
-- drops Linux capabilities and enables `no-new-privileges` on the application and migration services;
-- keeps database migration as an explicit release step rather than application startup behavior;
-- preserves the image liveness healthcheck instead of turning a database outage into an application restart loop.
+The example has no mutable image fallback. Supply these values outside source control before running it:
 
-## 1. Prepare runtime configuration
-
-Create an external file, for example `/etc/opengmao/runtime.env`, owned by the deployment account and not by the repository checkout. Populate `POSTGRES_PASSWORD` and `DATABASE_URL` with production values. The database URL should address the Compose service name `db`, not `localhost`.
-
-## 2. Start PostgreSQL
-
-```sh
-docker compose \
-  --env-file /etc/opengmao/runtime.env \
-  -f deploy/compose/docker-compose.production.yml \
-  up -d db
+```text
+OPENGMAO_IMAGE=registry.example.invalid/opengmao@sha256:<digest>
+OPENGMAO_MIGRATION_IMAGE=registry.example.invalid/opengmao-migrations@sha256:<digest>
+POSTGRES_IMAGE=registry.example.invalid/postgres@sha256:<reviewed-digest>
+POSTGRES_PASSWORD=<runtime secret>
+DATABASE_URL=<runtime secret using host db>
 ```
 
-## 3. Apply committed migrations
+Use the platform's secret manager where possible. If a host environment file is required, keep it outside the repository with restrictive permissions.
 
-Run the migration profile before starting the new application revision:
+## Release sequence
 
-```sh
-docker compose \
-  --env-file /etc/opengmao/runtime.env \
-  -f deploy/compose/docker-compose.production.yml \
-  --profile migrate \
-  run --rm migrate
-```
-
-Only committed Prisma migrations are applied. Never substitute `prisma db push` or `prisma migrate reset`.
-
-## 4. Start or replace the application
+1. Take and verify the coordinated backup described in `BACKUP.md`.
+2. Run `npm run upgrade:check` against the reviewed source revision.
+3. Start or verify PostgreSQL.
+4. Run the one-shot migration profile and require success.
+5. Start/update the application image.
+6. Verify health, readiness, metrics, authentication and critical workflows.
 
 ```sh
-docker compose \
-  --env-file /etc/opengmao/runtime.env \
+docker compose --env-file /etc/opengmao/runtime.env \
+  -f deploy/compose/docker-compose.production.yml up -d db
+
+docker compose --env-file /etc/opengmao/runtime.env \
   -f deploy/compose/docker-compose.production.yml \
-  up -d app
+  --profile migrate run --rm migrate
+
+docker compose --env-file /etc/opengmao/runtime.env \
+  -f deploy/compose/docker-compose.production.yml up -d app
 ```
 
-The default bind address is loopback. Put an HTTPS reverse proxy or load balancer in front of port 3000. If the proxy forwards client addresses, set `RATE_LIMIT_TRUST_PROXY_HOPS` only after verifying the exact trusted topology and ensuring the proxy overwrites untrusted forwarding headers.
+The migration service is a release tool, not a sidecar. It executes `prisma migrate deploy` once and exits.
 
-## 5. Verify the deployment
+## TLS, proxies and rate limiting
 
-From the host:
+The application defaults to `127.0.0.1:3000`. Put a controlled HTTPS reverse proxy or load balancer in front of it. `RATE_LIMIT_TRUST_PROXY_HOPS` remains `0` by default; change it only after verifying the exact trusted proxy topology and ensuring the edge overwrites untrusted forwarding headers.
+
+PostgreSQL has no host `ports` mapping in the example.
+
+## Storage and recovery
+
+Local controlled documents are persisted in `opengmao_documents` mounted at `/app/data`; PostgreSQL uses `opengmao_postgres`. Treat both as one recovery boundary and follow `BACKUP.md` / `RESTORE.md`.
+
+For multi-host or multi-replica deployments, move controlled documents to the supported S3-compatible provider or another validated shared-storage design. Process-local rate limiting also needs an ingress/distributed layer when quotas must be consistent across replicas.
+
+## Verification
 
 ```sh
 curl --fail http://127.0.0.1:3000/api/health
@@ -99,30 +95,27 @@ curl --fail http://127.0.0.1:3000/api/ready
 curl --fail http://127.0.0.1:3000/api/metrics
 ```
 
-`/api/health` is liveness. `/api/ready` is the traffic-admission check and requires PostgreSQL. Restrict `/api/metrics` to the monitoring plane when exposing the application through a reverse proxy.
-
-## Compose scaling note
-
-The example uses local controlled-document storage. Treat the `opengmao_documents` volume as part of the recovery state together with PostgreSQL. Do not scale the application across hosts while relying on a node-local volume. Multi-host or multi-replica deployments should use a suitable shared storage design, such as the supported S3-compatible provider, and should add ingress-level distributed rate limiting when a global quota is required.
+`/api/health` is liveness; `/api/ready` verifies PostgreSQL. Restrict `/api/metrics` to the monitoring plane when the reverse proxy exposes the application publicly.
 
 # Kubernetes
 
-The reference manifests are:
+The Kubernetes application example intentionally provides only a `ClusterIP` Service. It omits Ingress because TLS termination, certificates, WAF/network policy, monitoring-path restrictions and trusted-proxy topology are platform-specific.
 
-- [`../deploy/kubernetes/app.yaml`](../deploy/kubernetes/app.yaml) for the application, persistent local document storage, and ClusterIP service;
-- [`../deploy/kubernetes/migrate-job.yaml`](../deploy/kubernetes/migrate-job.yaml) for the explicit Prisma migration job.
+The local-storage example uses one replica, a `ReadWriteOnce` PVC at `/app/data`, `Recreate` rollout strategy, non-root UID/GID `1001`, `RuntimeDefault` seccomp, no service-account token, `allowPrivilegeEscalation: false`, all capabilities dropped, and resource requests/limits.
 
-The example intentionally omits an Ingress because TLS termination, certificate management, trusted proxy topology, network policy, and monitoring-path restrictions are platform-specific.
+Startup/liveness probe `/api/health`; readiness probes `/api/ready`.
 
-## 1. Publish immutable images
+## Images
 
-Build and push the application and migration images for one release. Replace the example image references in both manifests with immutable release tags or digests before applying them.
+Both committed Kubernetes manifests use an all-zero SHA-256 digest placeholder. It cannot identify a real release. Replace each placeholder with the exact reviewed registry digest before applying the manifest.
 
-The migration image must correspond to the same source revision as the application image.
+The migration image must be built from Docker target `builder` for the same source revision as the application `runner` image. Do not reuse the stripped runtime image for migration tooling.
 
-## 2. Create runtime secrets outside Git
+## Runtime secret
 
-Create the `opengmao-runtime` secret from an operator-controlled file or external secret manager. For a simple kubectl bootstrap, the file should live outside the repository and contain at least `DATABASE_URL=...`:
+Create `opengmao-runtime` through your secret-management pipeline. The manifests use `secretKeyRef` and do not contain a plaintext `DATABASE_URL`.
+
+For a simple bootstrap from an operator-controlled file outside the repository:
 
 ```sh
 kubectl create secret generic opengmao-runtime \
@@ -130,73 +123,39 @@ kubectl create secret generic opengmao-runtime \
   --dry-run=client -o yaml | kubectl apply -f -
 ```
 
-Do not commit the generated YAML output. If S3-compatible storage or other secret-backed integrations are enabled, inject those variables through the platform's secret mechanism as well.
+Do not commit the generated Secret YAML.
 
-## 3. Run the migration job
+## Release sequence
 
-The migration job uses the release-tooling image and runs `prisma migrate deploy` as a non-root numeric user with no service-account token, no Linux capabilities, and a read-only root filesystem.
-
-A Kubernetes Job is immutable once created, so remove the completed prior job before applying the next release manifest:
+1. Back up the active environment.
+2. Publish application + migration images for one reviewed release and record their digests.
+3. Replace both digest placeholders.
+4. Ensure `opengmao-runtime` already exists.
+5. Run the migration Job and require completion.
+6. Apply the application Deployment/PVC/Service.
+7. Require readiness before promoting ingress traffic.
+8. Verify operational endpoints and critical workflows.
 
 ```sh
 kubectl delete job opengmao-migrate --ignore-not-found
 kubectl apply -f deploy/kubernetes/migrate-job.yaml
 kubectl wait --for=condition=complete job/opengmao-migrate --timeout=5m
-```
-
-Inspect the job logs and stop the release if migration fails. Follow `UPGRADING.md` for backup, compatibility, rollback, forward-fix, and destructive-migration decisions.
-
-## 4. Apply the application manifest
-
-```sh
 kubectl apply -f deploy/kubernetes/app.yaml
 kubectl rollout status deployment/opengmao --timeout=5m
 ```
 
-The example uses:
-
-- one replica;
-- `Recreate` deployment strategy;
-- a `ReadWriteOnce` PVC mounted at `/app/data`;
-- `runAsNonRoot` with UID/GID `1001`;
-- dropped Linux capabilities and `allowPrivilegeEscalation: false`;
-- startup/liveness probes on `/api/health`;
-- readiness on `/api/ready`;
-- a ClusterIP service only.
-
-This deliberately matches the default local-storage model. To scale beyond one replica, move controlled-document persistence to an appropriate shared backend, review deployment strategy and storage access modes, and add distributed/ingress rate limiting if global quotas are required.
-
-## 5. Verify before ingress promotion
-
-A temporary port-forward can verify the new replica without exposing it publicly:
+A temporary port-forward can verify the new Deployment without a public Service:
 
 ```sh
 kubectl port-forward service/opengmao 3000:80
 ```
 
-Then verify:
+Never put `prisma migrate deploy` into every application Pod's startup/init path. The separate Job is the controlled release boundary.
 
-```sh
-curl --fail http://127.0.0.1:3000/api/health
-curl --fail http://127.0.0.1:3000/api/ready
-curl --fail http://127.0.0.1:3000/api/metrics
-```
+## Scaling boundary
 
-Only after readiness and critical workflows are verified should the release receive production traffic.
+The committed example is deliberately single-replica because its PVC is `ReadWriteOnce`. Before horizontal scaling, use a validated shared document backend (for example S3-compatible storage), review storage access modes and deployment strategy, and add distributed/ingress rate limiting when required.
 
-## Ingress requirements
+# Operator-owned controls
 
-When adding a platform-specific Ingress or load balancer:
-
-- terminate TLS and redirect public HTTP to HTTPS;
-- do not expose PostgreSQL or storage administration endpoints;
-- restrict `/api/metrics` and preferably health/readiness paths to monitoring/internal networks;
-- configure the exact trusted proxy hop count only when forwarding-header replacement is controlled;
-- enforce distributed rate limiting at ingress when multiple replicas must share one quota;
-- keep application authorization, tenant isolation, and idempotency independent of ingress controls.
-
-# Backup and rollback boundary
-
-Deployment does not replace recovery planning. Before a material upgrade, take and verify the coordinated PostgreSQL + controlled-document backup described in `BACKUP.md`. Restore drills use isolated targets as described in `RESTORE.md`.
-
-If a new application fails after a backward-compatible migration, application rollback is permitted only when the previous image is explicitly compatible with the expanded schema. If an incompatible migration has landed, follow the documented forward-fix or isolated restore-and-switch procedure instead of inventing an automatic down migration.
+The examples intentionally do not provision real secrets, public DNS/certificates, cloud IAM, production PostgreSQL HA/replication, S3 retention, external-secret operators, ingress/WAF/network policies, alerting backends, or backup destinations. Apply the controls in `PRODUCTION_HARDENING.md` and validate the deployment against your environment's threat model and recovery requirements.
