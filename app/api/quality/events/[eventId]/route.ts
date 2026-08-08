@@ -3,55 +3,47 @@ import { AccessDeniedError, assertSitePermission } from "@/lib/access-control";
 import { apiData, apiError } from "@/lib/api-response";
 import { authenticateRequest } from "@/lib/auth/request-auth";
 import {
-  completeContainment,
   getQualityEvent,
   listQualityEventTimeline,
   QualityEventError,
-  startOrUpdateContainment,
-  updateQualityEvent,
+  setImmediateContainment,
+  transitionQualityEvent,
 } from "@/lib/quality/events";
-
-const eventTypes = [
-  "NONCONFORMITY",
-  "OBSERVATION",
-  "AUDIT_FINDING",
-  "COMPLAINT",
-  "DEVIATION",
-  "OTHER",
-] as const;
-const severities = ["LOW", "MEDIUM", "HIGH", "CRITICAL"] as const;
-
-const updateSchema = z.object({
-  organizationId: z.string().min(1),
-  siteId: z.string().min(1),
-  action: z.literal("UPDATE"),
-  type: z.enum(eventTypes).optional(),
-  severity: z.enum(severities).optional(),
-  title: z.string().trim().min(1).max(200).optional(),
-  description: z.string().trim().max(4000).nullable().optional(),
-  occurredAt: z.string().datetime().nullable().optional(),
-});
 
 const containmentSchema = z.object({
   organizationId: z.string().min(1),
   siteId: z.string().min(1),
-  action: z.literal("START_CONTAINMENT"),
-  summary: z.string().trim().min(1).max(4000),
+  action: z.literal("SET_CONTAINMENT"),
+  summary: z.string().trim().min(1).max(5000),
   ownerId: z.string().min(1).nullable().optional(),
   dueAt: z.string().datetime().nullable().optional(),
+  completedAt: z.string().datetime().nullable().optional(),
 });
 
-const completeSchema = z.object({
+const investigationSchema = z.object({
   organizationId: z.string().min(1),
   siteId: z.string().min(1),
-  action: z.literal("COMPLETE_CONTAINMENT"),
-  completionNote: z.string().trim().max(4000).nullable().optional(),
+  action: z.literal("START_INVESTIGATION"),
+});
+
+const closeSchema = z.object({
+  organizationId: z.string().min(1),
+  siteId: z.string().min(1),
+  action: z.literal("CLOSE"),
+  resolutionSummary: z.string().trim().min(1).max(5000),
+});
+
+const reopenSchema = z.object({
+  organizationId: z.string().min(1),
+  siteId: z.string().min(1),
+  action: z.literal("REOPEN"),
 });
 
 const patchSchema = z.discriminatedUnion("action", [
-  updateSchema,
   containmentSchema,
-  completeSchema,
+  investigationSchema,
+  closeSchema,
+  reopenSchema,
 ]);
 
 function authorize(
@@ -70,7 +62,6 @@ function authorize(
 
 function qualityError(error: QualityEventError) {
   const status =
-    error.code === "SITE_NOT_FOUND" ||
     error.code === "QUALITY_EVENT_NOT_FOUND" ||
     error.code === "CONTAINMENT_OWNER_NOT_FOUND"
       ? 404
@@ -96,7 +87,9 @@ export async function GET(
   if (denied) return denied;
 
   const qualityEvent = await getQualityEvent({ organizationId, siteId, eventId });
-  if (!qualityEvent) return apiError(404, "QUALITY_EVENT_NOT_FOUND", "Quality event not found in site scope");
+  if (!qualityEvent) {
+    return apiError(404, "QUALITY_EVENT_NOT_FOUND", "Quality event not found in site scope");
+  }
   const timeline = await listQualityEventTimeline({ organizationId, siteId, eventId });
   return apiData({ qualityEvent, timeline: timeline ?? [] });
 }
@@ -118,47 +111,15 @@ export async function PATCH(
     return apiError(400, "INVALID_PAYLOAD", "Invalid quality event workflow payload", parsed.error.flatten());
   }
 
-  if (
-    parsed.data.action === "UPDATE" &&
-    parsed.data.type === undefined &&
-    parsed.data.severity === undefined &&
-    parsed.data.title === undefined &&
-    parsed.data.description === undefined &&
-    parsed.data.occurredAt === undefined
-  ) {
-    return apiError(400, "NO_CHANGES", "At least one quality event field must be supplied");
-  }
-
   const auth = await authenticateRequest(request, parsed.data.organizationId);
   if ("error" in auth) return auth.error;
   const denied = authorize(auth.tenant.scope, parsed.data.siteId, "quality:manage");
   if (denied) return denied;
 
   try {
-    if (parsed.data.action === "UPDATE") {
+    if (parsed.data.action === "SET_CONTAINMENT") {
       return apiData(
-        await updateQualityEvent({
-          organizationId: parsed.data.organizationId,
-          siteId: parsed.data.siteId,
-          eventId,
-          type: parsed.data.type,
-          severity: parsed.data.severity,
-          title: parsed.data.title,
-          description: parsed.data.description,
-          occurredAt:
-            parsed.data.occurredAt === undefined
-              ? undefined
-              : parsed.data.occurredAt
-                ? new Date(parsed.data.occurredAt)
-                : null,
-          actorId: auth.session.user.id,
-        }),
-      );
-    }
-
-    if (parsed.data.action === "START_CONTAINMENT") {
-      return apiData(
-        await startOrUpdateContainment({
+        await setImmediateContainment({
           organizationId: parsed.data.organizationId,
           siteId: parsed.data.siteId,
           eventId,
@@ -170,17 +131,25 @@ export async function PATCH(
               : parsed.data.dueAt
                 ? new Date(parsed.data.dueAt)
                 : null,
+          completedAt:
+            parsed.data.completedAt === undefined
+              ? undefined
+              : parsed.data.completedAt
+                ? new Date(parsed.data.completedAt)
+                : null,
           actorId: auth.session.user.id,
         }),
       );
     }
 
     return apiData(
-      await completeContainment({
+      await transitionQualityEvent({
         organizationId: parsed.data.organizationId,
         siteId: parsed.data.siteId,
         eventId,
-        completionNote: parsed.data.completionNote,
+        action: parsed.data.action,
+        resolutionSummary:
+          parsed.data.action === "CLOSE" ? parsed.data.resolutionSummary : undefined,
         actorId: auth.session.user.id,
       }),
     );
