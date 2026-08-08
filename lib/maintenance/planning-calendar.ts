@@ -37,12 +37,28 @@ export type PlanningCalendarDay = {
   items: PlanningCalendarItem[];
 };
 
+export type CalendarSchedule = {
+  plannedStart: Date;
+  dueAt: Date | null;
+};
+
+type ZonedDateTimeParts = {
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+  second: number;
+};
+
 const PRIORITY_RANK: Record<Priority, number> = {
   URGENT: 0,
   HIGH: 1,
   NORMAL: 2,
   LOW: 3,
 };
+
+const zonedFormatterCache = new Map<string, Intl.DateTimeFormat>();
 
 function pad(value: number) {
   return String(value).padStart(2, "0");
@@ -78,6 +94,162 @@ function localParts(date: Date, timeZone: string) {
   return {
     dateKey: `${value("year")}-${value("month")}-${value("day")}`,
     time: `${value("hour")}:${value("minute")}`,
+  };
+}
+
+function zonedFormatter(timeZone: string) {
+  const existing = zonedFormatterCache.get(timeZone);
+  if (existing) return existing;
+  const created = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  });
+  zonedFormatterCache.set(timeZone, created);
+  return created;
+}
+
+function zonedParts(date: Date, timeZone: string): ZonedDateTimeParts {
+  const values = new Map(
+    zonedFormatter(timeZone)
+      .formatToParts(date)
+      .map((part) => [part.type, part.value]),
+  );
+  return {
+    year: Number(values.get("year")),
+    month: Number(values.get("month")),
+    day: Number(values.get("day")),
+    hour: Number(values.get("hour")),
+    minute: Number(values.get("minute")),
+    second: Number(values.get("second")),
+  };
+}
+
+function parseDateKey(value: string) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const check = new Date(Date.UTC(year, month - 1, day));
+  if (
+    check.getUTCFullYear() !== year ||
+    check.getUTCMonth() !== month - 1 ||
+    check.getUTCDate() !== day
+  ) {
+    return null;
+  }
+  return { year, month, day };
+}
+
+export function dateKeyInTimeZone(date: Date, timeZone: string) {
+  return localParts(date, timeZone).dateKey;
+}
+
+export function addDaysToDateKey(dateKey: string, days: number) {
+  const parsed = parseDateKey(dateKey);
+  if (!parsed) throw new Error(`Invalid date key: ${dateKey}`);
+  const shifted = new Date(Date.UTC(parsed.year, parsed.month - 1, parsed.day + days));
+  return `${shifted.getUTCFullYear()}-${pad(shifted.getUTCMonth() + 1)}-${pad(shifted.getUTCDate())}`;
+}
+
+function dayDifference(fromDateKey: string, toDateKey: string) {
+  const from = parseDateKey(fromDateKey);
+  const to = parseDateKey(toDateKey);
+  if (!from || !to) throw new Error("Date keys must use YYYY-MM-DD");
+  return Math.round(
+    (Date.UTC(to.year, to.month - 1, to.day) - Date.UTC(from.year, from.month - 1, from.day)) /
+      86_400_000,
+  );
+}
+
+function zonedDateTimeToUtc(parts: ZonedDateTimeParts, timeZone: string) {
+  const desiredAsUtc = Date.UTC(
+    parts.year,
+    parts.month - 1,
+    parts.day,
+    parts.hour,
+    parts.minute,
+    parts.second,
+  );
+  let guess = desiredAsUtc;
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    const actual = zonedParts(new Date(guess), timeZone);
+    const actualAsUtc = Date.UTC(
+      actual.year,
+      actual.month - 1,
+      actual.day,
+      actual.hour,
+      actual.minute,
+      actual.second,
+    );
+    const correction = desiredAsUtc - actualAsUtc;
+    if (correction === 0) return new Date(guess);
+    guess += correction;
+  }
+  const resolved = zonedParts(new Date(guess), timeZone);
+  if (
+    resolved.year !== parts.year ||
+    resolved.month !== parts.month ||
+    resolved.day !== parts.day ||
+    resolved.hour !== parts.hour ||
+    resolved.minute !== parts.minute
+  ) {
+    throw new Error("Unable to resolve calendar date in configured timezone");
+  }
+  return new Date(guess);
+}
+
+function shiftInstantByLocalDays(date: Date, days: number, timeZone: string) {
+  const original = zonedParts(date, timeZone);
+  const originalKey = `${original.year}-${pad(original.month)}-${pad(original.day)}`;
+  const shifted = parseDateKey(addDaysToDateKey(originalKey, days));
+  if (!shifted) throw new Error("Unable to shift calendar date");
+  return zonedDateTimeToUtc(
+    {
+      ...shifted,
+      hour: original.hour,
+      minute: original.minute,
+      second: original.second,
+    },
+    timeZone,
+  );
+}
+
+export function rescheduleWorkOrderForDate(input: {
+  plannedStart: Date | null;
+  dueAt: Date | null;
+  targetDateKey: string;
+  timeZone: string;
+  defaultHour?: number;
+}): CalendarSchedule {
+  const target = parseDateKey(input.targetDateKey);
+  if (!target) throw new Error(`Invalid target date: ${input.targetDateKey}`);
+
+  if (!input.plannedStart) {
+    const defaultHour = input.defaultHour ?? 8;
+    if (!Number.isInteger(defaultHour) || defaultHour < 0 || defaultHour > 23) {
+      throw new Error("Default planning hour must be between 0 and 23");
+    }
+    return {
+      plannedStart: zonedDateTimeToUtc(
+        { ...target, hour: defaultHour, minute: 0, second: 0 },
+        input.timeZone,
+      ),
+      dueAt: input.dueAt,
+    };
+  }
+
+  const currentDateKey = dateKeyInTimeZone(input.plannedStart, input.timeZone);
+  const deltaDays = dayDifference(currentDateKey, input.targetDateKey);
+  return {
+    plannedStart: shiftInstantByLocalDays(input.plannedStart, deltaDays, input.timeZone),
+    dueAt: input.dueAt ? shiftInstantByLocalDays(input.dueAt, deltaDays, input.timeZone) : null,
   };
 }
 
@@ -137,7 +309,6 @@ export function calendarSearchRange(days: PlanningCalendarDay[]) {
 
   const start = new Date(`${first.dateKey}T00:00:00.000Z`);
   const end = new Date(`${last.dateKey}T23:59:59.999Z`);
-  // The nominal grid is calendar-local. Widen by 18h to safely cover every IANA UTC offset.
   return {
     start: new Date(start.getTime() - 18 * 60 * 60 * 1000),
     end: new Date(end.getTime() + 18 * 60 * 60 * 1000),
