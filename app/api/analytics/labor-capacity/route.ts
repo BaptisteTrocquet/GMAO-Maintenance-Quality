@@ -57,12 +57,32 @@ export async function GET(request: Request): Promise<Response> {
     return apiError(404, "SITE_NOT_FOUND", "Active site not found in organization scope");
   }
 
-  return apiData(
-    await listLaborCapacityProfiles({
+  const [profiles, memberships] = await Promise.all([
+    listLaborCapacityProfiles({
       organizationId: parsed.data.organizationId,
       siteId: parsed.data.siteId,
     }),
-  );
+    db.organizationMembership.findMany({
+      where: {
+        organizationId: parsed.data.organizationId,
+        active: true,
+        role: { in: ["OWNER", "ADMIN", "MAINTENANCE_MANAGER", "TECHNICIAN"] },
+        user: { active: true },
+        OR: [
+          { allSites: true },
+          { siteMemberships: { some: { siteId: parsed.data.siteId } } },
+        ],
+      },
+      select: { user: { select: { id: true, displayName: true } } },
+      orderBy: { user: { displayName: "asc" } },
+      take: 250,
+    }),
+  ]);
+
+  return apiData({
+    profiles,
+    users: memberships.map((membership) => membership.user),
+  });
 }
 
 export async function PATCH(request: Request): Promise<Response> {
