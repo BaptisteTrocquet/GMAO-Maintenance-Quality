@@ -1,6 +1,7 @@
 import { hasSiteAccess } from "@/lib/access-control";
 import { apiData, apiError } from "@/lib/api-response";
 import { authenticateRequest } from "@/lib/auth/request-auth";
+import { db } from "@/lib/db";
 import {
   normalizeGlobalSearchQuery,
   searchGlobal,
@@ -24,6 +25,14 @@ export async function GET(request: Request): Promise<Response> {
 
   if (!hasSiteAccess(auth.tenant.scope, siteId)) {
     return apiError(403, "ACCESS_DENIED", "Site access denied");
+  }
+
+  const site = await db.site.findFirst({
+    where: { id: siteId, organizationId, active: true },
+    select: { id: true },
+  });
+  if (!site) {
+    return apiError(404, "SITE_NOT_FOUND", "Active site not found in organization scope");
   }
 
   const results = await searchGlobal({
