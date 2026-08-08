@@ -102,6 +102,25 @@ CSV processing is bounded to 1 MB and 1,000 data rows. The parser supports quote
 
 The CSV API never accepts IDs for cross-asset or location references. Human-stable `locationCode` and `parentAssetCode` values are resolved only inside the selected site, preventing cross-tenant reference injection.
 
+## Object-storage adapters
+
+`lib/storage.ts` exposes one `StorageAdapter` contract used by document files, quality evidence and work-order attachments. Existing callers continue to use the same `put`, `get` and `delete` methods regardless of backend.
+
+Two server-side providers are supported:
+
+- `local` — filesystem storage rooted at `STORAGE_LOCAL_DIR`; this remains the default for development and single-node deployments
+- `s3` / `s3-compatible` — path-style HTTPS object storage signed with AWS Signature Version 4, suitable for AWS S3 and compatible services that support SigV4
+
+The provider is selected with `STORAGE_PROVIDER`. S3-compatible deployments configure `STORAGE_S3_ENDPOINT`, `STORAGE_S3_BUCKET`, `STORAGE_S3_REGION`, `STORAGE_S3_ACCESS_KEY_ID` and `STORAGE_S3_SECRET_ACCESS_KEY`; temporary credentials may also supply `STORAGE_S3_SESSION_TOKEN`. `STORAGE_S3_PREFIX` can isolate one OpenGMAO deployment inside a shared bucket.
+
+Storage secrets are read only from the server environment. They are never encoded into persisted storage keys, returned from the adapter or included in provider error messages. The adapter ignores provider error bodies and converts transport failures to generic errors so credential-bearing upstream messages cannot be logged accidentally by callers.
+
+Both backends share the same key validation: absolute paths, traversal segments, null bytes, Windows separators and empty path segments are rejected. The S3 adapter additionally requires HTTPS, does not follow redirects, signs each request independently, applies a bounded timeout and caps downloaded object size before returning bytes to application code.
+
+`tests/storage.test.ts` is the common storage contract suite. It covers local traversal protection plus S3-compatible PUT/GET/DELETE signing, namespace prefixing, temporary credentials, redacted provider failures, unsafe endpoint rejection, object-size limits and provider factory selection.
+
+The credential-vault E12 story is intentionally separate. Object-storage deployment credentials remain infrastructure/server configuration rather than tenant-managed connector credentials.
+
 ## Existing webhook primitive
 
 Signed outbound webhooks are documented separately in `docs/WEBHOOKS.md`. Their existing DNS validation and IP-pinned HTTPS delivery are reused by the REST connector pattern so both outbound integration paths share the same public-network trust boundary.
