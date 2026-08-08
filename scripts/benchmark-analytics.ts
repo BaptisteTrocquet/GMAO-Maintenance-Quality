@@ -148,11 +148,14 @@ async function main() {
     now: ANALYTICS_BENCHMARK.now,
   };
 
-  const results = await Promise.all([
-    measure("backlog", () =>
-      buildBacklogDashboard({ ...common, ...localRange }),
-    ),
-    measure("pmCompliance", () =>
+  // Run metrics sequentially so each budget measures the query itself rather than
+  // artificial contention with the other analytics dashboards.
+  const results: BenchmarkResult[] = [];
+  results.push(
+    await measure("backlog", () => buildBacklogDashboard({ ...common, ...localRange })),
+  );
+  results.push(
+    await measure("pmCompliance", () =>
       buildPmCompliance({
         ...common,
         from: fromDate,
@@ -160,19 +163,21 @@ async function main() {
         now: ANALYTICS_BENCHMARK.now,
       }),
     ),
-    measure("reliability", () =>
+  );
+  results.push(
+    await measure("reliability", () =>
       buildReliabilityDashboard({ ...common, ...localRange }),
     ),
-    measure("downtime", () =>
-      buildDowntimeDashboard({ ...common, ...localRange }),
-    ),
-    measure("failurePareto", () =>
-      buildFailurePareto({ ...common, ...localRange }),
-    ),
-    measure("partsCost", () =>
-      buildPartsCostDashboard({ ...common, ...localRange }),
-    ),
-  ]);
+  );
+  results.push(
+    await measure("downtime", () => buildDowntimeDashboard({ ...common, ...localRange })),
+  );
+  results.push(
+    await measure("failurePareto", () => buildFailurePareto({ ...common, ...localRange })),
+  );
+  results.push(
+    await measure("partsCost", () => buildPartsCostDashboard({ ...common, ...localRange })),
+  );
 
   console.log(
     JSON.stringify(
