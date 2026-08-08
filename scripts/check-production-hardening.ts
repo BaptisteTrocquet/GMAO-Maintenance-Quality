@@ -9,6 +9,14 @@ async function read(relativePath: string) {
 }
 
 async function main() {
+  // Docker intentionally excludes Dockerfile, .dockerignore and .github from COPY.
+  // The checkout-level Next.js build runs this gate before docker build, so the
+  // explicitly marked builder stage may skip the impossible in-image re-validation.
+  if (process.env.GMAO_DOCKER_BUILDER === "1") {
+    process.stdout.write("Production hardening policy already validated before Docker build\n");
+    return;
+  }
+
   assertProductionHardening({
     dockerfile: await read("Dockerfile"),
     dockerignore: await read(".dockerignore"),
