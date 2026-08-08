@@ -27,9 +27,6 @@ describe("analytics benchmark fixture", () => {
     const statuses = new Set(fixture.workOrders.map((workOrder) => workOrder.status));
     const types = new Set(fixture.workOrders.map((workOrder) => workOrder.type));
 
-    expect(statuses).toEqual(
-      expect.objectContaining({})
-    );
     expect(statuses.has("COMPLETED")).toBe(true);
     expect(statuses.has("IN_PROGRESS")).toBe(true);
     expect(statuses.has("CANCELLED")).toBe(true);
