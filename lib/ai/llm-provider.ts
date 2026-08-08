@@ -1,3 +1,8 @@
+import {
+  AiContextPolicyError,
+  assertAiPromptMessagesSafe,
+} from "@/lib/ai/context-policy";
+
 const PROVIDER_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 const MODEL_ID_MAX_LENGTH = 200;
 const PURPOSE_MAX_LENGTH = 100;
@@ -182,6 +187,20 @@ function normalizeMessages(messages: readonly LlmMessage[]) {
   });
 }
 
+function assertMessagesPassSensitiveFieldPolicy(messages: readonly LlmMessage[]) {
+  try {
+    assertAiPromptMessagesSafe(messages);
+  } catch (error) {
+    if (error instanceof AiContextPolicyError) {
+      throw new LlmProviderError(
+        "INVALID_REQUEST",
+        "LLM request violates the AI sensitive-field policy",
+      );
+    }
+    throw error;
+  }
+}
+
 function normalizeMaxOutputTokens(value: number | undefined) {
   const tokens = value ?? DEFAULT_MAX_OUTPUT_TOKENS;
   if (!Number.isInteger(tokens) || tokens < 1 || tokens > MAX_OUTPUT_TOKENS) {
@@ -335,6 +354,7 @@ export class LlmProviderRegistry {
     const context = Object.freeze(normalizeContext(input.context));
     const model = normalizeModel(input.request.model ?? provider.defaultModel);
     const messages = Object.freeze(normalizeMessages(input.request.messages));
+    assertMessagesPassSensitiveFieldPolicy(messages);
     const maxOutputTokens = normalizeMaxOutputTokens(input.request.maxOutputTokens);
     const temperature = normalizeTemperature(input.request.temperature);
     const timeoutMs = normalizeTimeout(input.timeoutMs);
