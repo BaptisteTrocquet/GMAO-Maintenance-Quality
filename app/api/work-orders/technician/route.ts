@@ -2,6 +2,10 @@ import { apiData, apiError } from "@/lib/api-response";
 import { AccessDeniedError, assertSitePermission } from "@/lib/access-control";
 import { authenticateRequest } from "@/lib/auth/request-auth";
 import { db } from "@/lib/db";
+import {
+  OFFLINE_READ_PARTITION_HEADER,
+  offlineReadPartitionFromAuthorization,
+} from "@/lib/pwa/offline-read-cache";
 
 function denied(error: unknown) {
   if (error instanceof AccessDeniedError) {
@@ -67,5 +71,9 @@ export async function GET(request: Request) {
     orderBy: [{ dueAt: "asc" }, { priority: "desc" }, { updatedAt: "desc" }],
   });
 
-  return apiData({ workOrders });
+  const response = apiData({ workOrders });
+  const partition = offlineReadPartitionFromAuthorization(request.headers.get("authorization"));
+  if (partition) response.headers.set(OFFLINE_READ_PARTITION_HEADER, partition);
+  response.headers.set("cache-control", "private, no-store");
+  return response;
 }
