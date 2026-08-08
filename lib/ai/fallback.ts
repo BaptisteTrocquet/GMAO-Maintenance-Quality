@@ -3,6 +3,8 @@ import {
   createAuditedTroubleshootingAdvisor,
   createAuditedWorkOrderSummarizer,
 } from "@/lib/ai/audit";
+import { createControlledDocumentSemanticSearch } from "@/lib/ai/controlled-document-search";
+import { EmbeddingProviderError } from "@/lib/ai/embedding-provider";
 import { LlmProviderError } from "@/lib/ai/llm-provider";
 
 export type AiUnavailableReason =
@@ -25,7 +27,9 @@ export type AiGeneratedState<T> = {
 export type AiFeatureResult<T> = AiGeneratedState<T> | AiUnavailableState;
 
 function unavailableState(error: unknown): AiUnavailableState | null {
-  if (!(error instanceof LlmProviderError)) return null;
+  if (!(error instanceof LlmProviderError) && !(error instanceof EmbeddingProviderError)) {
+    return null;
+  }
 
   if (error.code === "PROVIDER_DISABLED") {
     return {
@@ -80,6 +84,19 @@ export function createResilientAssetContextAssistant(
       args: Parameters<typeof assistant.ask>[0],
     ): Promise<AiFeatureResult<Awaited<ReturnType<typeof assistant.ask>>>> {
       return runWithProviderFallback(() => assistant.ask(args));
+    },
+  };
+}
+
+export function createResilientControlledDocumentSemanticSearch(
+  input: Parameters<typeof createControlledDocumentSemanticSearch>[0],
+) {
+  const semanticSearch = createControlledDocumentSemanticSearch(input);
+  return {
+    async search(
+      args: Parameters<typeof semanticSearch.search>[0],
+    ): Promise<AiFeatureResult<Awaited<ReturnType<typeof semanticSearch.search>>>> {
+      return runWithProviderFallback(() => semanticSearch.search(args));
     },
   };
 }
