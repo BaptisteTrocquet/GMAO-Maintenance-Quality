@@ -57,11 +57,11 @@ describe("reliability analytics", () => {
     expect(sqlText(0)).toContain('AS "excludedIncomplete"');
     expect(sqlText(0)).toContain('wo."startedAt" >= wo."requestedAt"');
     expect(sqlText(0)).toContain("wo.type = 'CORRECTIVE'");
-    expect(sqlText(1)).toContain('LAG(wo."completedAt")');
+    expect(sqlText(1)).toContain('SELECT MAX(previous."completedAt")');
+    expect(sqlText(1)).toContain("previous.status = 'COMPLETED'");
+    expect(sqlText(1)).toContain('previous."completedAt" < wo."requestedAt"');
     expect(sqlText(1)).toContain('AS "previousCompletedAt"');
     expect(sqlText(1)).toContain('"requestedAt" - "previousCompletedAt"');
-    expect(sqlText(1)).toContain('"requestedAt" > "previousCompletedAt"');
-    expect(sqlText(1)).toContain('PARTITION BY wo."assetId"');
     expect(sqlText(1)).toContain("wo.status <> 'CANCELLED'");
   });
 
