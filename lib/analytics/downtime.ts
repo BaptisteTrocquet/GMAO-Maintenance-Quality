@@ -1,6 +1,10 @@
 import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
-import { resolveAnalyticsDateRange } from "@/lib/analytics/date-range";
+import {
+  localDateStartUtc,
+  resolveAnalyticsDateRange,
+  shiftCalendarDate,
+} from "@/lib/analytics/date-range";
 
 export const DOWNTIME_TOP_ASSET_LIMIT = 10;
 export const DOWNTIME_MAX_RANGE_DAYS = 731;
@@ -72,8 +76,13 @@ export async function buildDowntimeDashboard(input: {
     throw new Error("Downtime analytics requires a bounded reporting range");
   }
 
-  const rangeDuration = range.toExclusive.getTime() - range.from.getTime();
-  if (rangeDuration > (DOWNTIME_MAX_RANGE_DAYS + 1) * 24 * 60 * 60 * 1000) {
+  // Enforce the horizon in local calendar days rather than elapsed milliseconds so DST
+  // transitions do not make an otherwise valid range appear one hour too long or short.
+  const maxToExclusive = localDateStartUtc(
+    shiftCalendarDate(input.from, DOWNTIME_MAX_RANGE_DAYS),
+    input.timeZone,
+  );
+  if (range.toExclusive.getTime() > maxToExclusive.getTime()) {
     throw new DowntimeAnalyticsError(
       "RANGE_TOO_LARGE",
       `Downtime reporting is limited to ${DOWNTIME_MAX_RANGE_DAYS} local calendar days per request`,
