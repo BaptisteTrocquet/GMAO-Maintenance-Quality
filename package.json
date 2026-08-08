@@ -9,6 +9,7 @@
   },
   "scripts": {
     "dev": "next dev",
+    "prebuild": "npm run upgrade:check",
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
@@ -23,7 +24,7 @@
     "sdk:build": "tsc -p sdk/tsconfig.json",
     "examples:check": "vitest run tests/integration-examples.test.tsx tests/embed-static-example.test.ts tests/widget-loader-example.test.ts tests/erp-connector-example.test.ts tests/iot-connector-example.test.ts",
     "upgrade:check": "tsx scripts/check-upgrade-policy.ts",
-    "check": "npm run typecheck && npm run lint && npm run test && npm run sdk:build && npm run examples:check && npm run upgrade:check && npm run build",
+    "check": "npm run typecheck && npm run lint && npm run test && npm run sdk:build && npm run examples:check && npm run build",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
