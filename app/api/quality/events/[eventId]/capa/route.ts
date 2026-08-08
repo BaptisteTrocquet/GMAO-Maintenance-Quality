@@ -12,6 +12,7 @@ import {
   transitionCapaAction,
   verifyCapaEffectiveness,
 } from "@/lib/quality/capa";
+import { assertCapaOwnersInSite, CapaOwnerScopeError } from "@/lib/quality/capa-owner-scope";
 
 const scopeSchema = z.object({
   organizationId: z.string().min(1),
@@ -138,6 +139,11 @@ export async function PATCH(
 
   try {
     if (parsed.data.action === "SAVE") {
+      await assertCapaOwnersInSite({
+        organizationId: parsed.data.organizationId,
+        siteId: parsed.data.siteId,
+        ownerIds: parsed.data.actions.map((action) => action.ownerId),
+      });
       return apiData(
         await saveCapaWorkspace({
           organizationId: parsed.data.organizationId,
@@ -180,6 +186,11 @@ export async function PATCH(
     }
 
     if (parsed.data.action === "SUBMIT_EFFECTIVENESS") {
+      await assertCapaOwnersInSite({
+        organizationId: parsed.data.organizationId,
+        siteId: parsed.data.siteId,
+        ownerIds: [parsed.data.ownerId],
+      });
       return apiData(
         await submitEffectivenessReview({
           organizationId: parsed.data.organizationId,
@@ -205,6 +216,9 @@ export async function PATCH(
     );
   } catch (error) {
     if (error instanceof CapaError) return capaError(error);
+    if (error instanceof CapaOwnerScopeError) {
+      return apiError(404, "CAPA_OWNER_NOT_FOUND", error.message);
+    }
     throw error;
   }
 }
