@@ -168,6 +168,22 @@ Tenant isolation is enforced twice: store operations always receive organization
 
 The vault is deliberately an abstraction rather than a hard-coded database table. A later durable store implementation can add operational persistence/audit policy without weakening the encryption and tenant-isolation contract.
 
+## Retry policy
+
+`lib/integrations/retry-policy.ts` provides the common retry decision engine for asynchronous integration work. It does not execute requests or sleep inside request handlers; callers persist the returned `nextAttemptAt` and let their worker schedule the next attempt. This keeps retry state durable and makes the policy reusable by webhooks and future ERP/IoT connectors.
+
+Retries are allowed only when the caller explicitly marks the operation idempotent. The default transient HTTP set is `408`, `425`, `429`, `500`, `502`, `503` and `504`; network failures are transient, while permanent outcomes and other HTTP statuses stop immediately. Attempt limits are enforced before another retry is scheduled.
+
+The policy supports configurable attempt limits, delay schedules, maximum delay and bounded jitter. `Retry-After` is parsed as either delta-seconds or an HTTP date; a valid server delay is treated as a minimum wait and is capped by the policy maximum. Randomness is injectable for deterministic contract tests.
+
+Webhook delivery now consumes this generic policy. Its historical retry cadence remains 1 minute, 5 minutes, 30 minutes and 2 hours for attempts 2–5, with no jitter. `429`/transient server failures and network failures are retried; permanent client errors such as `400` are persisted as terminal failures with `nextAttemptAt=null`, ready for the following dead-letter story instead of being retried pointlessly.
+
+Webhook delivery failures no longer persist arbitrary transport exception messages. Network errors are reduced to a generic message; HTTP failures store only the status code and generic status text. This keeps retry state free of accidental upstream secret material.
+
+`tests/retry-policy.test.ts` covers transient/permanent classification, idempotence gating, attempt exhaustion, backoff, bounded jitter, `Retry-After` seconds/date parsing, maximum-delay capping and invalid configuration. `tests/webhook-delivery.test.ts` verifies the webhook integration, including `503`, `429 Retry-After` and terminal `400` behavior.
+
+Dead-letter persistence is intentionally the next E12 primitive. A terminal retry decision is already represented durably by a failed delivery with no next-attempt timestamp, so dead-letter handling can consume that state without inventing a second retry classifier.
+
 ## Existing webhook primitive
 
 Signed outbound webhooks are documented separately in `docs/WEBHOOKS.md`. Their existing DNS validation and IP-pinned HTTPS delivery are reused by the REST connector pattern so both outbound integration paths share the same public-network trust boundary.
