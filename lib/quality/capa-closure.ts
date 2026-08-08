@@ -30,9 +30,11 @@ export async function assertCapaClosedForEvent(input: {
     };
     if (
       snapshot.organizationId !== input.organizationId ||
-      snapshot.siteId !== input.siteId ||
-      snapshot.status !== "CLOSED"
+      snapshot.siteId !== input.siteId
     ) {
+      return;
+    }
+    if (snapshot.status !== "CLOSED") {
       throw new CapaClosureError(
         "CAPA_INCOMPLETE",
         "Quality event cannot close while its CAPA is incomplete",
