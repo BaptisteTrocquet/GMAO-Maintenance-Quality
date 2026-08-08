@@ -19,12 +19,12 @@ test("command palette opens from keyboard and navigates with Enter", async ({ pa
   );
 
   await page.keyboard.press("ArrowDown");
-  await expect(page.getByRole("option", { name: /Work-order Kanban/ })).toHaveAttribute(
+  await expect(page.getByRole("option", { name: /Notification center/ })).toHaveAttribute(
     "aria-selected",
     "true",
   );
   await page.keyboard.press("ArrowDown");
-  await expect(page.getByRole("option", { name: /Notification center/ })).toHaveAttribute(
+  await expect(page.getByRole("option", { name: /Work-order Kanban/ })).toHaveAttribute(
     "aria-selected",
     "true",
   );
