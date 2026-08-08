@@ -1,10 +1,16 @@
 import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import {
+  localCalendarDate,
   localDateStartUtc,
   resolveAnalyticsDateRange,
   shiftCalendarDate,
 } from "@/lib/analytics/date-range";
+import {
+  baselineCapacityMinutes,
+  countWeekdaysInclusive,
+  listLaborCapacityProfiles,
+} from "@/lib/analytics/labor-capacity";
 
 export const LABOR_UTILIZATION_LIMIT = 50;
 export const LABOR_UTILIZATION_MAX_RANGE_DAYS = 731;
@@ -104,6 +110,14 @@ export async function buildLaborUtilizationDashboard(input: {
       laborHours: 0,
       unassignedLaborMinutes: 0,
       unassignedSharePercent: null,
+      capacityMode: "RECORDED_ONLY" as const,
+      businessDays: 0,
+      configuredCapacityUsers: 0,
+      capacityMinutes: 0,
+      capacityHours: 0,
+      capacityCoveredLaborMinutes: 0,
+      capacityCoveragePercent: null,
+      utilizationPercent: null,
       assignees: [] as Array<{
         assigneeId: string | null;
         displayName: string;
@@ -111,9 +125,12 @@ export async function buildLaborUtilizationDashboard(input: {
         laborMinutes: number;
         laborHours: number;
         recordedLaborSharePercent: number;
+        weeklyCapacityMinutes: number | null;
+        capacityMinutes: number | null;
+        utilizationPercent: number | null;
       }>,
       definition:
-        "Recorded-labor utilization proxy: distribution of positive laborMinutes on completed work orders. It does not divide by workforce capacity because shift/capacity calendars are not yet modeled.",
+        "Recorded-labor distribution only. Configure a weekly capacity baseline for maintenance users to calculate utilization; no workforce capacity is inferred automatically.",
     };
   }
 
@@ -121,7 +138,7 @@ export async function buildLaborUtilizationDashboard(input: {
     ? Prisma.sql`AND wo."assetId" = ${input.assetId}`
     : Prisma.empty;
 
-  const [summaryRows, assigneeRows] = await Promise.all([
+  const [summaryRows, assigneeRows, capacityProfiles] = await Promise.all([
     db.$queryRaw<SummaryRow[]>(Prisma.sql`
       SELECT
         COUNT(*)::int AS "completedWorkOrders",
@@ -162,6 +179,10 @@ export async function buildLaborUtilizationDashboard(input: {
       ORDER BY "laborMinutes" DESC, "displayName" ASC
       LIMIT ${LABOR_UTILIZATION_LIMIT}
     `),
+    listLaborCapacityProfiles({
+      organizationId: input.organizationId,
+      siteId: input.siteId,
+    }),
   ]);
 
   const summary = summaryRows[0] ?? {
@@ -174,17 +195,83 @@ export async function buildLaborUtilizationDashboard(input: {
   const completedWorkOrders = numeric(summary.completedWorkOrders);
   const recordedWorkOrders = numeric(summary.recordedWorkOrders);
   const unassignedLaborMinutes = numeric(summary.unassignedLaborMinutes);
-  const assignees = assigneeRows.map((row) => {
-    const minutes = numeric(row.laborMinutes);
+
+  const lastIncludedInstant = new Date(Math.max(range.from.getTime(), toExclusive.getTime() - 1));
+  const lastCapacityDay = localCalendarDate(lastIncludedInstant, input.timeZone);
+  const businessDays = countWeekdaysInclusive(input.from, lastCapacityDay);
+  const capacityByUser = new Map(
+    capacityProfiles.map((profile) => [
+      profile.userId,
+      {
+        ...profile,
+        capacityMinutes: baselineCapacityMinutes(profile.weeklyCapacityMinutes, businessDays),
+      },
+    ]),
+  );
+  const laborByUser = new Map(
+    assigneeRows
+      .filter((row) => row.assigneeId)
+      .map((row) => [row.assigneeId as string, row]),
+  );
+
+  const userIds = new Set([...capacityByUser.keys(), ...laborByUser.keys()]);
+  const assignedRows = [...userIds].map((userId) => {
+    const labor = laborByUser.get(userId);
+    const capacity = capacityByUser.get(userId);
+    const minutes = numeric(labor?.laborMinutes);
+    const capacityMinutes = capacity?.capacityMinutes ?? null;
     return {
-      assigneeId: row.assigneeId,
-      displayName: row.displayName,
-      workOrderCount: numeric(row.workOrderCount),
+      assigneeId: userId,
+      displayName: labor?.displayName ?? capacity?.displayName ?? "Unknown",
+      workOrderCount: numeric(labor?.workOrderCount),
       laborMinutes: minutes,
       laborHours: minutes / 60,
       recordedLaborSharePercent: laborMinutes > 0 ? (minutes / laborMinutes) * 100 : 0,
+      weeklyCapacityMinutes: capacity?.weeklyCapacityMinutes ?? null,
+      capacityMinutes,
+      utilizationPercent:
+        capacityMinutes !== null && capacityMinutes > 0 ? (minutes / capacityMinutes) * 100 : null,
     };
   });
+
+  const unassigned = assigneeRows.find((row) => row.assigneeId === null);
+  const assignees = [
+    ...assignedRows,
+    ...(unassigned
+      ? [
+          {
+            assigneeId: null,
+            displayName: unassigned.displayName,
+            workOrderCount: numeric(unassigned.workOrderCount),
+            laborMinutes: numeric(unassigned.laborMinutes),
+            laborHours: numeric(unassigned.laborMinutes) / 60,
+            recordedLaborSharePercent:
+              laborMinutes > 0 ? (numeric(unassigned.laborMinutes) / laborMinutes) * 100 : 0,
+            weeklyCapacityMinutes: null,
+            capacityMinutes: null,
+            utilizationPercent: null,
+          },
+        ]
+      : []),
+  ].sort((left, right) => {
+    const leftUtilization = left.utilizationPercent ?? -1;
+    const rightUtilization = right.utilizationPercent ?? -1;
+    return rightUtilization - leftUtilization || right.laborMinutes - left.laborMinutes;
+  });
+
+  const capacityMinutes = capacityProfiles.reduce(
+    (sum, profile) => sum + baselineCapacityMinutes(profile.weeklyCapacityMinutes, businessDays),
+    0,
+  );
+  const capacityCoveredLaborMinutes = capacityProfiles.reduce(
+    (sum, profile) => sum + numeric(laborByUser.get(profile.userId)?.laborMinutes),
+    0,
+  );
+  const assignedLaborMinutes = Math.max(laborMinutes - unassignedLaborMinutes, 0);
+  const capacityCoveragePercent =
+    assignedLaborMinutes > 0 ? (capacityCoveredLaborMinutes / assignedLaborMinutes) * 100 : null;
+  const utilizationPercent =
+    capacityMinutes > 0 ? (capacityCoveredLaborMinutes / capacityMinutes) * 100 : null;
 
   return {
     generatedAt: now.toISOString(),
@@ -201,8 +288,17 @@ export async function buildLaborUtilizationDashboard(input: {
     unassignedLaborMinutes,
     unassignedSharePercent:
       laborMinutes > 0 ? (unassignedLaborMinutes / laborMinutes) * 100 : null,
+    capacityMode: capacityProfiles.length ? ("CONFIGURED_BASELINE" as const) : ("RECORDED_ONLY" as const),
+    businessDays,
+    configuredCapacityUsers: capacityProfiles.length,
+    capacityMinutes,
+    capacityHours: capacityMinutes / 60,
+    capacityCoveredLaborMinutes,
+    capacityCoveragePercent,
+    utilizationPercent,
     assignees,
-    definition:
-      "Recorded-labor utilization proxy: distribution of positive laborMinutes on completed work orders. It does not divide by workforce capacity because shift/capacity calendars are not yet modeled.",
+    definition: capacityProfiles.length
+      ? "Configured baseline labor utilization = recorded labor for users with a capacity profile divided by their weekly capacity prorated across Monday-Friday days in the reporting window. This is a planning baseline: holidays, leave and shift timing are not inferred."
+      : "Recorded-labor distribution only. Configure a weekly capacity baseline for maintenance users to calculate utilization; no workforce capacity is inferred automatically.",
   };
 }
