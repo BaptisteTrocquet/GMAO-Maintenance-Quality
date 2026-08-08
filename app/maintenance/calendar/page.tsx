@@ -12,6 +12,7 @@ import {
   shiftCalendarMonth,
   UNSCHEDULED_WORK_ORDER_LIMIT,
 } from "@/lib/maintenance/planning-calendar";
+import { ScheduleDropZone, ScheduleMarker } from "./schedule-interactions";
 
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
@@ -61,13 +62,11 @@ export default async function MaintenanceCalendarPage({
   });
   if (!site) notFound();
 
+  const timeZone = site.organization.timezone;
   const now = new Date();
   const { month: requestedMonth } = await searchParams;
-  const month = parseCalendarMonth(requestedMonth, {
-    now,
-    timeZone: site.organization.timezone,
-  });
-  const currentMonth = currentCalendarMonth(now, site.organization.timezone);
+  const month = parseCalendarMonth(requestedMonth, { now, timeZone });
+  const currentMonth = currentCalendarMonth(now, timeZone);
   const emptyGrid = buildCalendarGrid(month);
   const range = calendarSearchRange(emptyGrid);
   const previous = shiftCalendarMonth(month, -1);
@@ -127,7 +126,7 @@ export default async function MaintenanceCalendarPage({
   const visibleUnscheduled = unscheduled.slice(0, UNSCHEDULED_WORK_ORDER_LIMIT);
   const calendar = buildPlanningCalendar({
     month,
-    timeZone: site.organization.timezone,
+    timeZone,
     workOrders: workOrders.slice(0, PLANNING_CALENDAR_LIMIT).map((workOrder) => ({
       id: workOrder.id,
       number: workOrder.number,
@@ -157,7 +156,7 @@ export default async function MaintenanceCalendarPage({
           <Link className="muted" href="/maintenance">← Maintenance</Link>
           <div className="title">Maintenance calendar</div>
           <div className="muted">
-            {site.code} · {site.name} · {site.organization.timezone}
+            {site.code} · {site.name} · {timeZone}
           </div>
         </div>
         <div className="asset-status">
@@ -194,7 +193,7 @@ export default async function MaintenanceCalendarPage({
           </Link>
         </div>
         <p className="muted" style={{ marginBottom: 0 }}>
-          Planned starts and due dates are rendered in the organization timezone. Date changes continue to use the existing permission-checked work-order API; drag-and-drop rescheduling is intentionally a separate story.
+          Drag a START or DUE marker to another day. For keyboard planning, open Move under the marker and choose a target date. Every change still goes through the permission-checked and audited work-order API.
         </p>
         {truncated ? (
           <p className="muted" role="status" style={{ marginBottom: 0 }}>
@@ -233,10 +232,14 @@ export default async function MaintenanceCalendarPage({
             }}
           >
             {calendar.map((day) => (
-              <section
+              <ScheduleDropZone
                 key={day.dateKey}
+                organizationId={organizationId}
+                siteId={siteId}
+                timeZone={timeZone}
+                dateKey={day.dateKey}
+                label={day.dateKey}
                 className="card"
-                aria-label={day.dateKey}
                 style={{
                   minHeight: 180,
                   padding: 10,
@@ -285,15 +288,37 @@ export default async function MaintenanceCalendarPage({
                       <div className="muted" style={{ fontSize: 12 }}>
                         {item.assetCode ?? "No asset"} · {item.assigneeName ?? item.teamName ?? "Unassigned"}
                       </div>
-                      <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
-                        {item.planned ? <span className="badge">START {item.plannedTime}</span> : null}
-                        {item.due ? <span className="badge">DUE {item.dueTime}</span> : null}
+                      <div style={{ display: "flex", gap: 5, flexWrap: "wrap", alignItems: "start" }}>
+                        {item.planned ? (
+                          <ScheduleMarker
+                            organizationId={organizationId}
+                            siteId={siteId}
+                            timeZone={timeZone}
+                            workOrderId={item.id}
+                            field="plannedStart"
+                            instant={item.plannedStart?.toISOString() ?? null}
+                            sourceDateKey={day.dateKey}
+                            label={`START ${item.plannedTime ?? ""}`.trim()}
+                          />
+                        ) : null}
+                        {item.due ? (
+                          <ScheduleMarker
+                            organizationId={organizationId}
+                            siteId={siteId}
+                            timeZone={timeZone}
+                            workOrderId={item.id}
+                            field="dueAt"
+                            instant={item.dueAt?.toISOString() ?? null}
+                            sourceDateKey={day.dateKey}
+                            label={`DUE ${item.dueTime ?? ""}`.trim()}
+                          />
+                        ) : null}
                         <span className="badge">{statusLabel(item.status)}</span>
                       </div>
                     </article>
                   ))}
                 </div>
-              </section>
+              </ScheduleDropZone>
             ))}
           </div>
         </div>
@@ -303,7 +328,7 @@ export default async function MaintenanceCalendarPage({
         <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
           <div>
             <h2 id="unscheduled-title" style={{ marginTop: 0 }}>Unscheduled work</h2>
-            <div className="muted">Open work orders without a planned start date.</div>
+            <div className="muted">Drag PLAN onto a calendar day, or use its Move date fallback.</div>
           </div>
           {unscheduledTruncated ? (
             <span className="badge">First {UNSCHEDULED_WORK_ORDER_LIMIT} shown</span>
@@ -318,6 +343,7 @@ export default async function MaintenanceCalendarPage({
               <th>Asset</th>
               <th>Owner</th>
               <th>Due</th>
+              <th>Plan</th>
             </tr>
           </thead>
           <tbody>
@@ -333,10 +359,22 @@ export default async function MaintenanceCalendarPage({
                 <td>{workOrder.asset?.code ?? "—"}</td>
                 <td>{workOrder.assignee?.displayName ?? workOrder.team?.name ?? "Unassigned"}</td>
                 <td>{workOrder.dueAt ? workOrder.dueAt.toISOString().slice(0, 10) : "—"}</td>
+                <td>
+                  <ScheduleMarker
+                    organizationId={organizationId}
+                    siteId={siteId}
+                    timeZone={timeZone}
+                    workOrderId={workOrder.id}
+                    field="plannedStart"
+                    instant={null}
+                    sourceDateKey={null}
+                    label="PLAN"
+                  />
+                </td>
               </tr>
             ))}
             {visibleUnscheduled.length === 0 ? (
-              <tr><td colSpan={6}>No unscheduled open work orders.</td></tr>
+              <tr><td colSpan={7}>No unscheduled open work orders.</td></tr>
             ) : null}
           </tbody>
         </table>
