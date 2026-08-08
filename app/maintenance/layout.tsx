@@ -8,6 +8,7 @@ export default function MaintenanceLayout({ children }: { children: ReactNode })
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
           <Link className="table-link" href="/maintenance">Overview</Link>
           <Link className="table-link" href="/maintenance/kanban">Work-order Kanban</Link>
+          <Link className="table-link" href="/maintenance/calendar">Planning calendar</Link>
         </div>
       </nav>
       {children}
