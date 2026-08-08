@@ -18,6 +18,7 @@ vi.mock("@/lib/auth/request-auth", () => ({ authenticateRequest: mocks.authentic
 vi.mock("@/lib/quality/evidence", () => ({
   attachQualityEvidence: mocks.attachQualityEvidence,
   listQualityEvidence: mocks.listQualityEvidence,
+  MAX_QUALITY_EVIDENCE_BYTES: 20 * 1024 * 1024,
   QualityEvidenceError: mocks.QualityEvidenceError,
 }));
 
@@ -90,6 +91,25 @@ describe("quality evidence collection API", () => {
       const response = requireResponse(await POST(uploadRequest(), context));
       expect(response.status).toBe(403);
     }
+    expect(mocks.attachQualityEvidence).not.toHaveBeenCalled();
+  });
+
+  it("rejects an oversized multipart request before parsing its body", async () => {
+    mocks.authenticateRequest.mockResolvedValue(auth("QUALITY_MANAGER"));
+    const request = new Request(scopedUrl(), {
+      method: "POST",
+      headers: {
+        "content-type": "multipart/form-data; boundary=synthetic",
+        "content-length": String(22 * 1024 * 1024),
+      },
+      body: "not parsed because content-length is already too large",
+    });
+    const formDataSpy = vi.spyOn(request, "formData");
+
+    const response = requireResponse(await POST(request, context));
+
+    expect(response.status).toBe(413);
+    expect(formDataSpy).not.toHaveBeenCalled();
     expect(mocks.attachQualityEvidence).not.toHaveBeenCalled();
   });
 
