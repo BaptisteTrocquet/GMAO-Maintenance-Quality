@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   getQualityEvent: vi.fn(),
   transaction: vi.fn(),
   auditCreate: vi.fn(),
+  directAuditCreate: vi.fn(),
   auditFindMany: vi.fn(),
   storagePut: vi.fn(),
   storageGet: vi.fn(),
@@ -19,11 +20,19 @@ vi.mock("@/lib/quality/events", () => ({ getQualityEvent: mocks.getQualityEvent 
 vi.mock("@/lib/db", () => ({
   db: {
     $transaction: mocks.transaction,
-    auditLog: { findMany: mocks.auditFindMany },
+    auditLog: {
+      findMany: mocks.auditFindMany,
+      create: mocks.directAuditCreate,
+    },
   },
 }));
 
-import { addQualityEvidence, listQualityEvidence } from "@/lib/quality/evidence";
+import {
+  addQualityEvidence,
+  listQualityEvidence,
+  readQualityEvidence,
+  removeQualityEvidence,
+} from "@/lib/quality/evidence";
 
 const adapter: StorageAdapter = {
   put: mocks.storagePut,
@@ -53,6 +62,28 @@ const baseInput = {
   adapter,
 };
 
+function evidenceSnapshot(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "evidence-a",
+    eventId: "event-1",
+    organizationId: "org-a",
+    siteId: "site-a",
+    phase: "CAPA",
+    kind: "PHOTO",
+    fileName: "synthetic-photo.jpg",
+    storageKey: "quality-evidence/org-a/event-1/evidence-a/checksum-a",
+    mimeType: "image/jpeg",
+    sizeBytes: 512,
+    checksum: "a".repeat(64),
+    description: null,
+    createdById: "quality-2",
+    createdAt: "2026-08-08T00:00:00.000Z",
+    removedAt: null,
+    removedById: null,
+    ...overrides,
+  };
+}
+
 describe("quality evidence attachments", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -61,6 +92,7 @@ describe("quality evidence attachments", () => {
       async (callback: (transaction: typeof tx) => Promise<unknown>) => callback(tx),
     );
     mocks.auditCreate.mockResolvedValue({ id: "audit-1" });
+    mocks.directAuditCreate.mockResolvedValue({ id: "audit-direct" });
     mocks.auditFindMany.mockResolvedValue([]);
     mocks.storagePut.mockResolvedValue("stored");
     mocks.storageGet.mockResolvedValue(fileData);
@@ -79,6 +111,8 @@ describe("quality evidence attachments", () => {
       fileName: "synthetic-analysis.pdf",
       sizeBytes: fileData.byteLength,
       createdById: "quality-1",
+      removedAt: null,
+      removedById: null,
     });
     expect(evidence.checksum).toMatch(/^[a-f0-9]{64}$/);
     expect(evidence.storageKey).toContain(`quality-evidence/org-a/event-1/${evidence.id}/`);
@@ -119,26 +153,16 @@ describe("quality evidence attachments", () => {
     expect(mocks.storageDelete).toHaveBeenCalledWith(expect.stringContaining("quality-evidence/org-a/event-1/"));
   });
 
-  it("uses real JSON quote matching and filters parsed snapshots to the requested tenant/site", async () => {
-    const visible = {
-      id: "evidence-a",
-      eventId: "event-1",
-      organizationId: "org-a",
-      siteId: "site-a",
-      phase: "CAPA",
-      kind: "PHOTO",
-      fileName: "synthetic-photo.jpg",
-      storageKey: "quality-evidence/org-a/event-1/evidence-a/checksum-a",
-      mimeType: "image/jpeg",
-      sizeBytes: 512,
-      checksum: "a".repeat(64),
-      description: null,
-      createdById: "quality-2",
-      createdAt: "2026-08-08T00:00:00.000Z",
-    };
-    const wrongTenant = { ...visible, id: "evidence-b", organizationId: "org-b" };
+  it("uses real JSON quote matching and hides removed evidence by default", async () => {
+    const visible = evidenceSnapshot();
+    const removed = evidenceSnapshot({
+      removedAt: "2026-08-08T01:00:00.000Z",
+      removedById: "quality-1",
+    });
+    const wrongTenant = evidenceSnapshot({ id: "evidence-b", organizationId: "org-b" });
     mocks.auditFindMany.mockResolvedValue([
       { afterJson: JSON.stringify(visible), actor: { displayName: "Synthetic User" } },
+      { afterJson: JSON.stringify(removed), actor: { displayName: "Synthetic Remover" } },
       { afterJson: JSON.stringify(wrongTenant), actor: { displayName: "Other Tenant" } },
     ]);
 
@@ -156,9 +180,71 @@ describe("quality evidence attachments", () => {
         },
       },
       include: { actor: { select: { displayName: true } } },
-      orderBy: { createdAt: "desc" },
+      orderBy: { createdAt: "asc" },
     });
-    expect(evidence).toEqual([{ ...visible, actorName: "Synthetic User" }]);
+    expect(evidence).toEqual([]);
+  });
+
+  it("reads stored bytes only when their checksum matches the audited snapshot", async () => {
+    const stored = evidenceSnapshot({
+      checksum: "9f64a747e1b97f131fabb6b447296c9b6f0201e79fb3c5356e6c77e89b6a806a",
+      sizeBytes: fileData.byteLength,
+    });
+    mocks.auditFindMany.mockResolvedValue([{ afterJson: JSON.stringify(stored) }]);
+    mocks.storageGet.mockResolvedValue(fileData);
+
+    const result = await readQualityEvidence({
+      organizationId: "org-a",
+      siteId: "site-a",
+      eventId: "event-1",
+      evidenceId: "evidence-a",
+      adapter,
+    });
+
+    expect(result.data).toEqual(fileData);
+    expect(mocks.storageGet).toHaveBeenCalledWith(stored.storageKey);
+  });
+
+  it("rejects tampered stored bytes before download", async () => {
+    const stored = evidenceSnapshot({ checksum: "a".repeat(64), sizeBytes: fileData.byteLength });
+    mocks.auditFindMany.mockResolvedValue([{ afterJson: JSON.stringify(stored) }]);
+    mocks.storageGet.mockResolvedValue(fileData);
+
+    await expect(
+      readQualityEvidence({
+        organizationId: "org-a",
+        siteId: "site-a",
+        eventId: "event-1",
+        evidenceId: "evidence-a",
+        adapter,
+      }),
+    ).rejects.toMatchObject({ code: "FILE_INTEGRITY_FAILED" });
+  });
+
+  it("soft-removes evidence in the audit trail then deletes managed storage bytes", async () => {
+    const stored = evidenceSnapshot();
+    mocks.auditFindMany.mockResolvedValue([{ afterJson: JSON.stringify(stored) }]);
+
+    const result = await removeQualityEvidence({
+      organizationId: "org-a",
+      siteId: "site-a",
+      eventId: "event-1",
+      evidenceId: "evidence-a",
+      actorId: "quality-1",
+      adapter,
+    });
+
+    expect(result.storageDeleted).toBe(true);
+    expect(result.evidence.removedAt).toBeTruthy();
+    expect(result.evidence.removedById).toBe("quality-1");
+    expect(mocks.auditCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        entityType: "QualityEvidenceAttachment",
+        entityId: "evidence-a",
+        action: "EVIDENCE_REMOVED",
+      }),
+    });
+    expect(mocks.storageDelete).toHaveBeenCalledWith(stored.storageKey);
   });
 
   it("returns null without querying evidence when the quality event is outside scope", async () => {
