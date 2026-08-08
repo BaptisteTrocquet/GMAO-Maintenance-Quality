@@ -68,6 +68,12 @@ npm run upgrade:check
 
 See [`docs/UPGRADING.md`](docs/UPGRADING.md) for the production expand/contract, backup, migration, rollback and forward-fix procedure.
 
+## Production deployment
+
+The repository includes a hardened production Docker runtime plus reference Docker Compose and Kubernetes deployment patterns.
+
+Start with [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md), then review [`docs/PRODUCTION_HARDENING.md`](docs/PRODUCTION_HARDENING.md) before exposing a deployment to users. Production secrets remain runtime-only and database migrations are an explicit release step rather than application startup behavior.
+
 ## Roadmap
 
 - [x] Core data model
