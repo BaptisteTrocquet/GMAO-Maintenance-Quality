@@ -76,10 +76,11 @@ describe("quality evidence file API", () => {
     });
   });
 
-  it("allows another quality reader role to download scoped evidence", async () => {
+  it("blocks roles without quality read permission before reading storage", async () => {
     mocks.authenticateRequest.mockResolvedValue(auth("TECHNICIAN"));
     const response = await GET(request(), context);
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(403);
+    expect(mocks.readQualityEvidence).not.toHaveBeenCalled();
   });
 
   it("maps tampered evidence to a conflict instead of returning bytes", async () => {
