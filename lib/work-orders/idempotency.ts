@@ -202,8 +202,9 @@ export async function commitIdempotentWorkOrderMutation<T>(input: {
       return await db.$transaction(
         async (transaction) => {
           // The hash is only a lock key; the full SHA-256 keyHash is still checked in the receipt.
-          await transaction.$queryRaw`
-            SELECT pg_advisory_xact_lock(hashtextextended(${input.context.keyHash}, 0))
+          // Cast PostgreSQL's void lock result to text so Prisma can deserialize the query result.
+          await transaction.$queryRaw<Array<{ lock: string }>>`
+            SELECT pg_advisory_xact_lock(hashtextextended(${input.context.keyHash}, 0))::text AS "lock"
           `;
 
           const replay = await findReplay<T>(transaction, input.context);
