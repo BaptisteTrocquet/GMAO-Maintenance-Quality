@@ -4,6 +4,9 @@ test("command palette opens from keyboard and navigates with Enter", async ({ pa
   const response = await page.goto("/");
   expect(response?.ok()).toBe(true);
 
+  const trigger = page.getByRole("button", { name: /Commands/ });
+  await trigger.focus();
+  await expect(trigger).toBeFocused();
   await page.keyboard.press("Control+K");
   const dialog = page.getByRole("dialog", { name: "Command palette" });
   await expect(dialog).toBeVisible();
@@ -26,8 +29,12 @@ test("command palette opens from keyboard and navigates with Enter", async ({ pa
 });
 
 test("command palette closes with Escape and restores trigger focus", async ({ page }) => {
-  await page.goto("/");
+  const response = await page.goto("/");
+  expect(response?.ok()).toBe(true);
+
   const trigger = page.getByRole("button", { name: /Commands/ });
+  await trigger.focus();
+  await expect(trigger).toBeFocused();
 
   await page.keyboard.press("Control+K");
   await expect(page.getByRole("dialog", { name: "Command palette" })).toBeVisible();
