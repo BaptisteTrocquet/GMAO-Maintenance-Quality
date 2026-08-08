@@ -10,17 +10,18 @@ function formatDate(value: string | Date | null | undefined) {
   return `${iso.replace("T", " ").slice(0, 16)} UTC`;
 }
 
-function eventDetail(afterJson: string | null) {
-  if (!afterJson) return "";
-  try {
-    const value = JSON.parse(afterJson) as Record<string, unknown>;
-    const containment = value.containment as Record<string, unknown> | null | undefined;
-    if (containment && typeof containment.summary === "string") return containment.summary;
-    if (typeof value.title === "string") return value.title;
-  } catch {
-    return "";
+function timelineDetail(entry: Awaited<ReturnType<typeof listQualityEventTimeline>> extends infer Result
+  ? Result extends Array<infer Item>
+    ? Item
+    : never
+  : never) {
+  const after = entry.after;
+  if (!after) return "";
+  if (entry.action === "CONTAINMENT_RECORDED" || entry.action === "CONTAINMENT_UPDATED") {
+    return after.containment?.summary ?? "";
   }
-  return "";
+  if (entry.action === "CLOSED") return after.resolutionSummary ?? "";
+  return after.title;
 }
 
 export default async function QualityEventDetailPage({
@@ -87,6 +88,29 @@ export default async function QualityEventDetailPage({
         </section>
 
         <section className="card">
+          <h2>Linked context</h2>
+          <dl className="detail-list">
+            <div>
+              <dt>Asset</dt>
+              <dd>{qualityEvent.asset ? `${qualityEvent.asset.code} · ${qualityEvent.asset.name}` : "—"}</dd>
+            </div>
+            <div>
+              <dt>Work order</dt>
+              <dd>{qualityEvent.workOrder ? `${qualityEvent.workOrder.number} · ${qualityEvent.workOrder.title}` : "—"}</dd>
+            </div>
+            <div>
+              <dt>Documents</dt>
+              <dd>
+                {qualityEvent.documents.length
+                  ? qualityEvent.documents.map((document) => `${document.code} · ${document.title}`).join(", ")
+                  : "—"}
+              </dd>
+            </div>
+          </dl>
+          <p className="muted">These labels are frozen in the quality-event snapshot for historical stability.</p>
+        </section>
+
+        <section className="card">
           <h2>Immediate containment</h2>
           {qualityEvent.containment ? (
             <>
@@ -96,20 +120,21 @@ export default async function QualityEventDetailPage({
                   <dt>Owner</dt>
                   <dd>{userNames.get(qualityEvent.containment.ownerId) ?? qualityEvent.containment.ownerId}</dd>
                 </div>
-                <div><dt>Started</dt><dd>{formatDate(qualityEvent.containment.startedAt)}</dd></div>
                 <div><dt>Due</dt><dd>{formatDate(qualityEvent.containment.dueAt)}</dd></div>
                 <div><dt>Completed</dt><dd>{formatDate(qualityEvent.containment.completedAt)}</dd></div>
               </dl>
-              {qualityEvent.containment.completionNote ? (
-                <>
-                  <h3>Completion note</h3>
-                  <p>{qualityEvent.containment.completionNote}</p>
-                </>
-              ) : null}
             </>
           ) : (
-            <p className="muted">Containment has not been started.</p>
+            <p className="muted">Immediate containment has not been recorded.</p>
           )}
+        </section>
+
+        <section className="card">
+          <h2>Resolution</h2>
+          <p>{qualityEvent.resolutionSummary ?? "Investigation or resolution is not complete."}</p>
+          <dl className="detail-list">
+            <div><dt>Closed</dt><dd>{formatDate(qualityEvent.closedAt)}</dd></div>
+          </dl>
         </section>
       </div>
 
@@ -118,12 +143,12 @@ export default async function QualityEventDetailPage({
         {timeline.length ? (
           <ol className="timeline">
             {timeline.map((entry) => {
-              const detail = eventDetail(entry.afterJson);
+              const detail = timelineDetail(entry);
               return (
                 <li key={entry.id}>
                   <time>{formatDate(entry.createdAt)}</time>
                   <strong>{entry.action}</strong>
-                  <span>{entry.actor?.displayName ?? "System"}{detail ? ` · ${detail}` : ""}</span>
+                  <span>{entry.actorName}{detail ? ` · ${detail}` : ""}</span>
                 </li>
               );
             })}
