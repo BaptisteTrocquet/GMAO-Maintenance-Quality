@@ -3,7 +3,10 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { rescheduleWorkOrderForDate } from "@/lib/maintenance/rescheduling";
+import {
+  dateKeyInTimeZone,
+  rescheduleWorkOrderForDate,
+} from "@/lib/maintenance/rescheduling";
 
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
@@ -87,6 +90,12 @@ export default function CalendarPlanner({
   async function moveWorkOrder(workOrderId: string, targetDateKey: string) {
     const workOrder = movableById.get(workOrderId);
     if (!workOrder || !targetDateKey) return;
+    if (
+      workOrder.plannedStart &&
+      dateKeyInTimeZone(new Date(workOrder.plannedStart), timeZone) === targetDateKey
+    ) {
+      return;
+    }
 
     const schedule = rescheduleWorkOrderForDate({
       plannedStart: workOrder.plannedStart ? new Date(workOrder.plannedStart) : null,
