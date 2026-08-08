@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import {
   buildCalendarGrid,
   buildPlanningCalendar,
+  buildPlanningCalendarWhere,
   calendarSearchRange,
   parseCalendarMonth,
   PLANNING_CALENDAR_LIMIT,
@@ -90,15 +91,12 @@ export default async function PlanningCalendarPage({
   const range = calendarSearchRange(emptyGrid);
 
   const matches = await db.workOrder.findMany({
-    where: {
+    where: buildPlanningCalendarWhere({
+      organizationId,
       siteId,
-      site: { organizationId, active: true },
-      status: { not: "CANCELLED" },
-      OR: [
-        { plannedStart: { gte: range.start, lte: range.end } },
-        { dueAt: { gte: range.start, lte: range.end } },
-      ],
-    },
+      start: range.start,
+      end: range.end,
+    }),
     select: {
       id: true,
       number: true,
