@@ -216,6 +216,42 @@ async function main() {
     },
   });
 
+  const supplier = await prisma.supplier.upsert({
+    where: { organizationId_code: { organizationId: organization.id, code: "SUP-001" } },
+    update: { active: true },
+    create: {
+      organizationId: organization.id,
+      code: "SUP-001",
+      name: "Generic Components Supply",
+      contactName: "Demo Purchasing Contact",
+      email: "supplier@example.local",
+      website: "https://supplier.example.local",
+    },
+  });
+
+  await prisma.partSupplier.upsert({
+    where: { partId_supplierId: { partId: sealKit.id, supplierId: supplier.id } },
+    update: {
+      supplierPartNumber: "GCS-SEAL-200",
+      preferred: true,
+      leadTimeDays: 7,
+      minOrderQuantity: 2,
+      unitCost: 24.5,
+      currency: "EUR",
+      active: true,
+    },
+    create: {
+      partId: sealKit.id,
+      supplierId: supplier.id,
+      supplierPartNumber: "GCS-SEAL-200",
+      preferred: true,
+      leadTimeDays: 7,
+      minOrderQuantity: 2,
+      unitCost: 24.5,
+      currency: "EUR",
+    },
+  });
+
   const openingKey = "synthetic-seed-opening-SP-001";
   const existingOpening = await prisma.stockMovement.findUnique({
     where: {
