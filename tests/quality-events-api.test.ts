@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => {
   return {
     authenticateRequest: vi.fn(),
     getCapaWorkspace: vi.fn(),
+    getEightDWorkspace: vi.fn(),
     listQualityEvents: vi.fn(),
     createQualityEvent: vi.fn(),
     getQualityEvent: vi.fn(),
@@ -21,6 +22,7 @@ const mocks = vi.hoisted(() => {
 
 vi.mock("@/lib/auth/request-auth", () => ({ authenticateRequest: mocks.authenticateRequest }));
 vi.mock("@/lib/quality/capa", () => ({ getCapaWorkspace: mocks.getCapaWorkspace }));
+vi.mock("@/lib/quality/eight-d", () => ({ getEightDWorkspace: mocks.getEightDWorkspace }));
 vi.mock("@/lib/quality/events", () => ({
   listQualityEvents: mocks.listQualityEvents,
   createQualityEvent: mocks.createQualityEvent,
@@ -73,6 +75,10 @@ describe("quality event APIs", () => {
       event: { organizationId: "org-a", siteId: "site-a" },
       rootCause: null,
       capa: null,
+    });
+    mocks.getEightDWorkspace.mockResolvedValue({
+      event: { organizationId: "org-a", siteId: "site-a" },
+      eightD: null,
     });
     mocks.listQualityEvents.mockResolvedValue([]);
     mocks.createQualityEvent.mockResolvedValue({
@@ -241,6 +247,11 @@ describe("quality event APIs", () => {
       siteId: "site-a",
       eventId: "event-1",
     });
+    expect(mocks.getEightDWorkspace).toHaveBeenCalledWith({
+      organizationId: "org-a",
+      siteId: "site-a",
+      eventId: "event-1",
+    });
     expect(mocks.transitionQualityEvent).toHaveBeenCalledWith({
       organizationId: "org-a",
       siteId: "site-a",
@@ -249,6 +260,33 @@ describe("quality event APIs", () => {
       resolutionSummary: "Synthetic issue resolved.",
       actorId: "quality-1",
     });
+  });
+
+  it("blocks quality-event closure while an 8D record remains incomplete", async () => {
+    mocks.authenticateRequest.mockResolvedValue(auth("QUALITY_MANAGER"));
+    mocks.getEightDWorkspace.mockResolvedValue({
+      event: { organizationId: "org-a", siteId: "site-a" },
+      eightD: { status: "IN_PROGRESS", currentDiscipline: "D6" },
+    });
+
+    const response = await patchEvent(
+      new Request("http://localhost/api/quality/events/event-1", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          organizationId: "org-a",
+          siteId: "site-a",
+          action: "CLOSE",
+          resolutionSummary: "Synthetic issue resolved.",
+        }),
+      }),
+      eventContext,
+    );
+
+    expectStatus(response, 409);
+    if (!response) throw new Error("expected response");
+    expect(await response.json()).toMatchObject({ error: { code: "EIGHT_D_INCOMPLETE" } });
+    expect(mocks.transitionQualityEvent).not.toHaveBeenCalled();
   });
 
   it("rejects malformed workflow transitions", async () => {
