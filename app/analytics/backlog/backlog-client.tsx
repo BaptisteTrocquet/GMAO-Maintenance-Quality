@@ -8,6 +8,7 @@ type BacklogPayload = {
   empty: boolean;
   totalOpen: number;
   overdue: number;
+  dueSoon: number;
   unplanned: number;
   urgent: number;
   status: {
@@ -111,6 +112,7 @@ export default function BacklogClient({
           <div className="grid grid-4">
             <section className="card"><div className="muted">Open backlog</div><div className="title">{payload.totalOpen}</div></section>
             <section className="card"><div className="muted">Overdue</div><div className="title">{payload.overdue}</div></section>
+            <section className="card"><div className="muted">Due in 7 days</div><div className="title">{payload.dueSoon}</div></section>
             <section className="card"><div className="muted">Unplanned</div><div className="title">{payload.unplanned}</div></section>
             <section className="card"><div className="muted">Urgent</div><div className="title">{payload.urgent}</div></section>
           </div>
