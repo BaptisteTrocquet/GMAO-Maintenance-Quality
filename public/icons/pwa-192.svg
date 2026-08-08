@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="192" height="192" viewBox="0 0 192 192" role="img" aria-label="OpenGMAO">
+  <rect width="192" height="192" rx="40" fill="#111827"/>
+  <path d="M48 56h96v20H72v40h72v20H48z" fill="#fff"/>
+  <circle cx="120" cy="96" r="20" fill="none" stroke="#fff" stroke-width="12"/>
+</svg>
