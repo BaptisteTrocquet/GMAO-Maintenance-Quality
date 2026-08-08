@@ -41,19 +41,23 @@ function savedViewError(error: unknown) {
 
 async function authorize(request: Request, organizationId: string, siteId: string) {
   const auth = await authenticateRequest(request, organizationId);
-  if ("error" in auth) return auth.error;
+  if ("error" in auth) return { response: auth.error } as const;
   try {
     assertSitePermission(auth.tenant.scope, siteId, "work:read");
   } catch (error) {
-    return savedViewError(error);
+    return { response: savedViewError(error) } as const;
   }
 
   const site = await db.site.findFirst({
     where: { id: siteId, organizationId, active: true },
     select: { id: true },
   });
-  if (!site) return apiError(404, "SITE_NOT_FOUND", "Active site not found in organization scope");
-  return auth;
+  if (!site) {
+    return {
+      response: apiError(404, "SITE_NOT_FOUND", "Active site not found in organization scope"),
+    } as const;
+  }
+  return { auth } as const;
 }
 
 export async function GET(request: Request) {
@@ -73,12 +77,12 @@ export async function GET(request: Request) {
     return apiError(400, "INVALID_QUERY", "organizationId, siteId and a supported surface are required");
   }
 
-  const auth = await authorize(request, parsed.data.organizationId, parsed.data.siteId);
-  if (auth instanceof Response) return auth;
+  const authorization = await authorize(request, parsed.data.organizationId, parsed.data.siteId);
+  if ("response" in authorization) return authorization.response;
 
   return apiData(
     await listSavedViews({
-      userId: auth.session.user.id,
+      userId: authorization.auth.session.user.id,
       ...parsed.data,
     }),
   );
@@ -97,13 +101,13 @@ export async function POST(request: Request) {
     return apiError(400, "INVALID_PAYLOAD", "Invalid saved view", parsed.error.flatten());
   }
 
-  const auth = await authorize(request, parsed.data.organizationId, parsed.data.siteId);
-  if (auth instanceof Response) return auth;
+  const authorization = await authorize(request, parsed.data.organizationId, parsed.data.siteId);
+  if ("response" in authorization) return authorization.response;
 
   try {
     return apiData(
       await createSavedView({
-        userId: auth.session.user.id,
+        userId: authorization.auth.session.user.id,
         ...parsed.data,
       }),
       { status: 201 },
