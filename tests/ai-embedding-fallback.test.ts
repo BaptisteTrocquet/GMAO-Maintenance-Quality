@@ -4,7 +4,6 @@ import {
   createDisabledEmbeddingProvider,
   EmbeddingProviderRegistry,
   type EmbeddingProvider,
-  type EmbeddingProviderEmbedInput,
 } from "@/lib/ai/embedding-provider";
 import { createResilientControlledDocumentSemanticSearch } from "@/lib/ai/fallback";
 import { createDisabledVectorStoreAdapter, ScopedVectorStore } from "@/lib/ai/vector-store";
@@ -73,9 +72,9 @@ describe("embedding provider fallback", () => {
   });
 
   it("converts embedding provider failures to the retryable safe state", async () => {
-    const embed = vi.fn(async (_input: EmbeddingProviderEmbedInput) => {
+    const embed: EmbeddingProvider["embed"] = async () => {
       throw new Error("provider transport diagnostic");
-    });
+    };
     const provider: EmbeddingProvider = {
       id: "test-embedding",
       displayName: "Test embeddings",
