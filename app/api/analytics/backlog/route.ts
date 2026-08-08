@@ -15,8 +15,7 @@ export async function GET(request: Request): Promise<Response> {
 
   const auth = await authenticateRequest(request, organizationId);
   if ("error" in auth) {
-    if (auth.error) return auth.error;
-    return apiError(401, "UNAUTHENTICATED", "Authentication required");
+    return auth.error ?? apiError(401, "UNAUTHENTICATED", "Authentication required");
   }
   if (!hasSiteAccess(auth.tenant.scope, siteId) || !can(auth.tenant.scope.role, "work:read")) {
     return apiError(403, "ACCESS_DENIED", "Backlog analytics access denied");
@@ -24,9 +23,15 @@ export async function GET(request: Request): Promise<Response> {
 
   const site = await db.site.findFirst({
     where: { id: siteId, organizationId, active: true },
-    select: { id: true },
+    select: { id: true, organization: { select: { timezone: true } } },
   });
   if (!site) return apiError(404, "SITE_NOT_FOUND", "Active site not found in organization scope");
 
-  return apiData(await buildBacklogDashboard({ organizationId, siteId }));
+  return apiData(
+    await buildBacklogDashboard({
+      organizationId,
+      siteId,
+      timeZone: site.organization.timezone,
+    }),
+  );
 }
