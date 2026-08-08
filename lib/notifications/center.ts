@@ -95,7 +95,13 @@ async function listRecentQualityNotifications(input: {
   for (const log of logs) {
     if (latest.has(log.entityId)) continue;
     const snapshot = parseQualityNotification(log.afterJson);
-    if (snapshot) latest.set(log.entityId, snapshot);
+    if (
+      snapshot &&
+      snapshot.organizationId === input.organizationId &&
+      snapshot.siteId === input.siteId
+    ) {
+      latest.set(log.entityId, snapshot);
+    }
   }
 
   return [...latest.values()].filter(
