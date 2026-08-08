@@ -57,6 +57,13 @@ function validateContainerScan(ciWorkflow: string, violations: string[]) {
   }
 }
 
+function removesRuntimePath(runnerSection: string, path: string) {
+  const normalized = runnerSection.replace(/\\\r?\n\s*/g, " ");
+  return normalized
+    .split(/\r?\n/)
+    .some((line) => /\brm\s+-rf\b/.test(line) && line.includes(path));
+}
+
 export function validateProductionHardening(input: ProductionHardeningInputs) {
   const violations: string[] = [];
   const runnerSection = input.dockerfile.split(/\nFROM\s+base\s+AS\s+runner\s*\n/i)[1] ?? "";
@@ -76,10 +83,10 @@ export function validateProductionHardening(input: ProductionHardeningInputs) {
     if (!/VOLUME\s*\[\s*"\/app\/data"\s*\]/.test(runnerSection)) {
       violations.push("production container must declare /app/data as the persistence boundary");
     }
-    if (!/rm\s+-rf\s+[^\n\\]*\/usr\/local\/lib\/node_modules\/npm/.test(runnerSection)) {
+    if (!removesRuntimePath(runnerSection, "/usr/local/lib/node_modules/npm")) {
       violations.push("production runtime must remove the global npm package manager after build");
     }
-    if (!/\/opt\/yarn-v\*/.test(runnerSection)) {
+    if (!removesRuntimePath(runnerSection, "/opt/yarn-v*")) {
       violations.push("production runtime must remove bundled Yarn after build");
     }
   }
