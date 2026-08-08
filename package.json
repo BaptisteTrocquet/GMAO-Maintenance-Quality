@@ -1,6 +1,6 @@
 {
   "name": "gmao-maintenance-quality",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": false,
   "license": "AGPL-3.0-only",
   "packageManager": "npm@10.9.8",
@@ -9,7 +9,7 @@
   },
   "scripts": {
     "dev": "next dev",
-    "prebuild": "npm run upgrade:check && npm run hardening:check",
+    "prebuild": "npm run upgrade:check && npm run hardening:check && npm run release:check",
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
@@ -26,7 +26,8 @@
     "upgrade:check": "tsx scripts/check-upgrade-policy.ts",
     "hardening:check": "tsx scripts/check-production-hardening.ts",
     "deployment:check": "tsx scripts/check-deployment-examples.ts",
-    "check": "npm run typecheck && npm run lint && npm run test && npm run sdk:build && npm run examples:check && npm run upgrade:check && npm run hardening:check && npm run deployment:check && npm run build",
+    "release:check": "tsx scripts/check-release-policy.ts",
+    "check": "npm run typecheck && npm run lint && npm run test && npm run sdk:build && npm run examples:check && npm run upgrade:check && npm run hardening:check && npm run deployment:check && npm run release:check && npm run build",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",

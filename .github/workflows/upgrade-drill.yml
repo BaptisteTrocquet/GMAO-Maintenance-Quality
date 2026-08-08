@@ -1,0 +1,177 @@
+name: Previous release upgrade drill
+
+on:
+  workflow_call:
+  push:
+    branches: [main]
+    paths:
+      - package.json
+      - package-lock.json
+      - prisma/**
+      - release/**
+      - scripts/check-release-policy.ts
+      - lib/release-policy.ts
+      - docs/RELEASING.md
+      - docs/UPGRADING.md
+      - .github/workflows/upgrade-drill.yml
+  pull_request:
+    paths:
+      - package.json
+      - package-lock.json
+      - prisma/**
+      - release/**
+      - scripts/check-release-policy.ts
+      - lib/release-policy.ts
+      - docs/RELEASING.md
+      - docs/UPGRADING.md
+      - .github/workflows/upgrade-drill.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  upgrade-from-previous-supported-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: gmao
+          POSTGRES_PASSWORD: gmao
+          POSTGRES_DB: gmao_upgrade_drill
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U gmao -d gmao_upgrade_drill"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+    env:
+      DATABASE_URL: postgresql://gmao:gmao@127.0.0.1:5432/gmao_upgrade_drill?schema=public
+      PSQL_DATABASE_URL: postgresql://gmao:gmao@127.0.0.1:5432/gmao_upgrade_drill
+
+    steps:
+      - name: Checkout candidate source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve immutable previous release baseline
+        id: release-policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE' >> "$GITHUB_OUTPUT"
+          const fs = require("node:fs");
+          const policy = JSON.parse(fs.readFileSync("release/release-policy.json", "utf8"));
+          const commit = policy.previousSupportedRelease?.commit;
+          const version = policy.previousSupportedRelease?.version;
+          if (!/^[0-9a-f]{40}$/.test(commit ?? "")) throw new Error("previous release commit must be a full SHA");
+          if (!/^\d+\.\d+\.\d+$/.test(version ?? "")) throw new Error("previous release version must be exact SemVer");
+          console.log(`commit=${commit}`);
+          console.log(`version=${version}`);
+          NODE
+
+      - name: Checkout previous supported release
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.release-policy.outputs.commit }}
+          path: previous-release
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Verify previous release identity
+        shell: bash
+        env:
+          EXPECTED_PREVIOUS_VERSION: ${{ steps.release-policy.outputs.version }}
+          EXPECTED_PREVIOUS_COMMIT: ${{ steps.release-policy.outputs.commit }}
+        run: |
+          set -euo pipefail
+          actual_version="$(node -p "require('./previous-release/package.json').version")"
+          actual_commit="$(git -C previous-release rev-parse HEAD)"
+          test "$actual_version" = "$EXPECTED_PREVIOUS_VERSION"
+          test "$actual_commit" = "$EXPECTED_PREVIOUS_COMMIT"
+
+      - name: Install previous release dependencies
+        working-directory: previous-release
+        run: npm ci --no-audit --no-fund
+
+      - name: Bootstrap previous supported release database
+        working-directory: previous-release
+        run: |
+          npm run prisma:generate
+          npm run prisma:deploy
+          npm run prisma:seed
+
+      - name: Capture previous release historical invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          psql "$PSQL_DATABASE_URL" -X -v ON_ERROR_STOP=1 -At <<'SQL' | LC_ALL=C sort > /tmp/before-upgrade.txt
+          SELECT 'organization|' || "id" || '|' || "slug" || '|' || "name" || '|' || "timezone"
+            FROM "Organization" WHERE "slug" = 'demo-operations';
+          SELECT 'site|' || s."id" || '|' || s."code" || '|' || s."name"
+            FROM "Site" s JOIN "Organization" o ON o."id" = s."organizationId"
+            WHERE o."slug" = 'demo-operations' AND s."code" = 'NORTH';
+          SELECT 'asset|' || a."id" || '|' || a."code" || '|' || a."name" || '|' || COALESCE(a."serialNumber", '')
+            FROM "Asset" a JOIN "Site" s ON s."id" = a."siteId"
+            JOIN "Organization" o ON o."id" = s."organizationId"
+            WHERE o."slug" = 'demo-operations' AND a."code" = 'P-100';
+          SELECT 'work-order|' || "id" || '|' || "number" || '|' || "title" || '|' || "status"
+            FROM "WorkOrder" WHERE "number" = 'WO-000001';
+          SELECT 'part|' || p."id" || '|' || p."sku" || '|' || p."name"
+            FROM "Part" p JOIN "Organization" o ON o."id" = p."organizationId"
+            WHERE o."slug" = 'demo-operations' AND p."sku" = 'SP-001';
+          SQL
+
+          test "$(wc -l < /tmp/before-upgrade.txt)" -eq 5
+          cat /tmp/before-upgrade.txt
+
+      - name: Install candidate dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Verify release and migration policy
+        run: |
+          npm run release:check
+          npm run upgrade:check
+
+      - name: Apply candidate migrations to previous release database
+        run: |
+          npm run prisma:generate
+          npm run prisma:deploy
+          npm run prisma:status
+
+      - name: Verify historical records survived unchanged
+        shell: bash
+        run: |
+          set -euo pipefail
+          psql "$PSQL_DATABASE_URL" -X -v ON_ERROR_STOP=1 -At <<'SQL' | LC_ALL=C sort > /tmp/after-upgrade.txt
+          SELECT 'organization|' || "id" || '|' || "slug" || '|' || "name" || '|' || "timezone"
+            FROM "Organization" WHERE "slug" = 'demo-operations';
+          SELECT 'site|' || s."id" || '|' || s."code" || '|' || s."name"
+            FROM "Site" s JOIN "Organization" o ON o."id" = s."organizationId"
+            WHERE o."slug" = 'demo-operations' AND s."code" = 'NORTH';
+          SELECT 'asset|' || a."id" || '|' || a."code" || '|' || a."name" || '|' || COALESCE(a."serialNumber", '')
+            FROM "Asset" a JOIN "Site" s ON s."id" = a."siteId"
+            JOIN "Organization" o ON o."id" = s."organizationId"
+            WHERE o."slug" = 'demo-operations' AND a."code" = 'P-100';
+          SELECT 'work-order|' || "id" || '|' || "number" || '|' || "title" || '|' || "status"
+            FROM "WorkOrder" WHERE "number" = 'WO-000001';
+          SELECT 'part|' || p."id" || '|' || p."sku" || '|' || p."name"
+            FROM "Part" p JOIN "Organization" o ON o."id" = p."organizationId"
+            WHERE o."slug" = 'demo-operations' AND p."sku" = 'SP-001';
+          SQL
+
+          test "$(wc -l < /tmp/after-upgrade.txt)" -eq 5
+          diff -u /tmp/before-upgrade.txt /tmp/after-upgrade.txt
+
+      - name: Run candidate database smoke check
+        run: npm run test:db

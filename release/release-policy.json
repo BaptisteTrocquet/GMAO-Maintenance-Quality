@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "currentVersion": "0.2.0",
+  "previousSupportedRelease": {
+    "version": "0.1.0",
+    "commit": "bdb214640c047185aa25f59c16a52aff1cbabc53"
+  },
+  "versioning": "semver",
+  "upgradePolicy": {
+    "directUpgradeFromPreviousSupportedRelease": true,
+    "downgradeSupported": false
+  }
+}
