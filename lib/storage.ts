@@ -307,8 +307,10 @@ function optionalPositiveInteger(value: string | undefined, name: string) {
   return parsed;
 }
 
+type StorageEnvironment = Readonly<Record<string, string | undefined>>;
+
 export function createStorageFromEnv(
-  env: NodeJS.ProcessEnv = process.env,
+  env: StorageEnvironment = process.env,
   options: S3StorageAdapterOptions = {},
 ): StorageAdapter {
   const provider = (env.STORAGE_PROVIDER || "local").trim().toLowerCase();
