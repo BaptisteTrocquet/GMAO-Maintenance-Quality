@@ -24,7 +24,7 @@ import { PATCH } from "@/app/api/work-orders/[workOrderId]/route";
 
 function auth() {
   return {
-    session: { user: { id: "tech-1" } },
+    session: { user: { id: "tech-1", displayName: "Taylor Technician" } },
     tenant: {
       scope: {
         organizationId: "org-a",
@@ -45,6 +45,7 @@ function workOrder(input?: { completionNote?: string | null; completed?: boolean
     assetId: null,
     requesterId: "requester-1",
     assigneeId: "tech-1",
+    teamId: null,
     title: "Inspect utility area",
     description: null,
     type: "CORRECTIVE",
@@ -64,11 +65,16 @@ function workOrder(input?: { completionNote?: string | null; completed?: boolean
   };
 }
 
-function request() {
+function request(completionSignature?: { signerName: string; attested: true }) {
   return new Request("http://localhost/api/work-orders/wo-1", {
     method: "PATCH",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ organizationId: "org-a", siteId: "site-a", status: "COMPLETED" }),
+    body: JSON.stringify({
+      organizationId: "org-a",
+      siteId: "site-a",
+      status: "COMPLETED",
+      ...(completionSignature ? { completionSignature } : {}),
+    }),
   });
 }
 
@@ -77,6 +83,12 @@ const params = { params: Promise.resolve({ workOrderId: "wo-1" }) };
 async function expectStatus(response: Response | undefined, status: number) {
   expect(response).toBeDefined();
   expect(response?.status).toBe(status);
+}
+
+async function errorCode(response: Response | undefined) {
+  expect(response).toBeDefined();
+  const body = await response?.json() as { error?: { code?: string } } | undefined;
+  return body?.error?.code;
 }
 
 describe("signed work order completion", () => {
@@ -93,7 +105,10 @@ describe("signed work order completion", () => {
   it("requires a completion note before closing", async () => {
     mocks.workOrderFindFirst.mockResolvedValue(workOrder({ completionNote: null, completed: true }));
 
-    const response = await PATCH(request(), params);
+    const response = await PATCH(
+      request({ signerName: "Taylor Technician", attested: true }),
+      params,
+    );
 
     await expectStatus(response, 409);
     expect(mocks.workOrderUpdate).not.toHaveBeenCalled();
@@ -104,18 +119,51 @@ describe("signed work order completion", () => {
       workOrder({ completionNote: "Completed safely", completed: false }),
     );
 
-    const response = await PATCH(request(), params);
+    const response = await PATCH(
+      request({ signerName: "Taylor Technician", attested: true }),
+      params,
+    );
 
     await expectStatus(response, 409);
     expect(mocks.workOrderUpdate).not.toHaveBeenCalled();
   });
 
-  it("closes and signs the work order with authenticated user and timestamp", async () => {
+  it("requires explicit signature capture before closing", async () => {
     mocks.workOrderFindFirst.mockResolvedValue(
       workOrder({ completionNote: "Completed safely", completed: true }),
     );
 
     const response = await PATCH(request(), params);
+
+    await expectStatus(response, 409);
+    expect(await errorCode(response)).toBe("SIGNATURE_REQUIRED");
+    expect(mocks.workOrderUpdate).not.toHaveBeenCalled();
+  });
+
+  it("rejects a typed signature that does not match the authenticated identity", async () => {
+    mocks.workOrderFindFirst.mockResolvedValue(
+      workOrder({ completionNote: "Completed safely", completed: true }),
+    );
+
+    const response = await PATCH(
+      request({ signerName: "Another Person", attested: true }),
+      params,
+    );
+
+    await expectStatus(response, 409);
+    expect(await errorCode(response)).toBe("SIGNATURE_IDENTITY_MISMATCH");
+    expect(mocks.workOrderUpdate).not.toHaveBeenCalled();
+  });
+
+  it("closes and signs with typed name, authenticated identity and server timestamp", async () => {
+    mocks.workOrderFindFirst.mockResolvedValue(
+      workOrder({ completionNote: "Completed safely", completed: true }),
+    );
+
+    const response = await PATCH(
+      request({ signerName: "  Taylor   Technician ", attested: true }),
+      params,
+    );
 
     await expectStatus(response, 200);
     expect(mocks.workOrderUpdate).toHaveBeenCalledWith({
@@ -131,9 +179,22 @@ describe("signed work order completion", () => {
 
     const auditPayload = mocks.auditCreate.mock.calls[0]?.[0]?.data;
     const after = JSON.parse(auditPayload.afterJson) as {
-      signature?: { signedById?: string; signedAt?: string };
+      signature?: {
+        method?: string;
+        signedById?: string;
+        signedByName?: string;
+        capturedName?: string;
+        signedAt?: string;
+        attestationVersion?: string;
+      };
     };
-    expect(after.signature?.signedById).toBe("tech-1");
+    expect(after.signature).toEqual(expect.objectContaining({
+      method: "TYPED_NAME",
+      signedById: "tech-1",
+      signedByName: "Taylor Technician",
+      capturedName: "Taylor Technician",
+      attestationVersion: "work-completion-v1",
+    }));
     expect(after.signature?.signedAt).toBeTruthy();
   });
 });

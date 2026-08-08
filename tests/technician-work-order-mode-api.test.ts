@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => {
     teamMemberFindMany: vi.fn(),
     workOrderFindMany: vi.fn(),
     workOrderFindFirst: vi.fn(),
+    auditFindFirst: vi.fn(),
     canExecuteWorkOrder: vi.fn(),
   };
 });
@@ -29,6 +30,7 @@ vi.mock("@/lib/db", () => ({
       findMany: mocks.workOrderFindMany,
       findFirst: mocks.workOrderFindFirst,
     },
+    auditLog: { findFirst: mocks.auditFindFirst },
   },
 }));
 
@@ -40,7 +42,7 @@ const expectedPartition = offlineReadPartitionFromAuthorization(authorization);
 
 function auth() {
   return {
-    session: { user: { id: "tech-1" } },
+    session: { user: { id: "tech-1", displayName: "Demo Technician" } },
     tenant: {
       scope: {
         organizationId: "org-a",
@@ -102,6 +104,7 @@ describe("technician work-order mode API", () => {
       team: null,
       checkItems: [],
     });
+    mocks.auditFindFirst.mockResolvedValue(null);
     mocks.canExecuteWorkOrder.mockResolvedValue(true);
   });
 
@@ -137,7 +140,7 @@ describe("technician work-order mode API", () => {
     expect(mocks.workOrderFindMany).not.toHaveBeenCalled();
   });
 
-  it("loads a focused work order only after tenant and site scoping", async () => {
+  it("loads a focused work order only after tenant and site scoping and returns signer identity", async () => {
     const response = await GET_DETAIL(detailRequest(), detailParams);
 
     expect(await responseStatus(response)).toBe(200);
@@ -157,6 +160,61 @@ describe("technician work-order mode API", () => {
       assigneeId: "tech-1",
       teamId: null,
     });
+    const body = await response?.json() as {
+      data?: { signer?: { id?: string; displayName?: string }; completionSignature?: unknown };
+    };
+    expect(body.data?.signer).toEqual({ id: "tech-1", displayName: "Demo Technician" });
+    expect(body.data?.completionSignature).toBeNull();
+  });
+
+  it("returns a persisted typed completion signature from the immutable completion audit", async () => {
+    mocks.workOrderFindFirst.mockResolvedValue({
+      id: "wo-1",
+      number: "WO-000001",
+      title: "Inspect pump",
+      description: null,
+      status: "COMPLETED",
+      priority: "NORMAL",
+      type: "CORRECTIVE",
+      plannedStart: null,
+      dueAt: null,
+      startedAt: null,
+      laborMinutes: 30,
+      downtimeMinutes: 2,
+      completionNote: "Done",
+      assigneeId: "tech-1",
+      teamId: null,
+      asset: null,
+      assignee: { id: "tech-1", displayName: "Demo Technician" },
+      team: null,
+      checkItems: [],
+    });
+    mocks.auditFindFirst.mockResolvedValue({
+      afterJson: JSON.stringify({
+        signature: {
+          method: "TYPED_NAME",
+          signedById: "tech-1",
+          signedByName: "Demo Technician",
+          capturedName: "Demo Technician",
+          signedAt: "2026-08-08T07:40:00.000Z",
+          attestationVersion: "work-completion-v1",
+        },
+      }),
+    });
+
+    const response = await GET_DETAIL(detailRequest(), detailParams);
+
+    expect(await responseStatus(response)).toBe(200);
+    expect(mocks.auditFindFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { entityType: "WorkOrder", entityId: "wo-1", action: "COMPLETED_SIGNED" },
+    }));
+    const body = await response?.json() as { data?: { completionSignature?: unknown } };
+    expect(body.data?.completionSignature).toEqual(expect.objectContaining({
+      method: "TYPED_NAME",
+      signedById: "tech-1",
+      signedByName: "Demo Technician",
+      capturedName: "Demo Technician",
+    }));
   });
 
   it("rejects deep links to work orders not assigned to the technician or their team", async () => {
