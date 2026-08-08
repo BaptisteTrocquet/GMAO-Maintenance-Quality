@@ -7,6 +7,10 @@ import { db } from "@/lib/db";
 import type { Permission } from "@/lib/permissions";
 import { canExecuteWorkOrder } from "@/lib/work-orders/authorization";
 import {
+  WORK_ORDER_COMPLETION_ATTESTATION_VERSION,
+  signatureNameMatchesIdentity,
+} from "@/lib/work-orders/completion-signature";
+import {
   commitIdempotentWorkOrderMutation,
   IDEMPOTENT_REPLAY_HEADER,
   lookupWorkOrderIdempotencyReplay,
@@ -19,6 +23,11 @@ import {
   transitionPermission,
   WorkOrderWorkflowError,
 } from "@/lib/work-orders/workflow";
+
+const completionSignatureSchema = z.object({
+  signerName: z.string().trim().min(2).max(120),
+  attested: z.literal(true),
+});
 
 const updateSchema = z.object({
   organizationId: z.string().min(1),
@@ -43,6 +52,7 @@ const updateSchema = z.object({
   plannedStart: z.coerce.date().nullable().optional(),
   dueAt: z.coerce.date().nullable().optional(),
   statusNote: z.string().max(1000).nullable().optional(),
+  completionSignature: completionSignatureSchema.optional(),
 });
 
 function hasOwn(input: object, key: string) {
@@ -259,6 +269,25 @@ export async function PATCH(
           "All work-order checklist items must be completed before closing",
         );
       }
+      if (!parsed.data.completionSignature) {
+        return apiError(
+          409,
+          "SIGNATURE_REQUIRED",
+          "An explicit technician signature is required before closing the work order",
+        );
+      }
+      if (
+        !signatureNameMatchesIdentity(
+          parsed.data.completionSignature.signerName,
+          auth.session.user.displayName,
+        )
+      ) {
+        return apiError(
+          409,
+          "SIGNATURE_IDENTITY_MISMATCH",
+          "The typed signature must match the authenticated technician name",
+        );
+      }
     }
 
     const dates = deriveTransitionDates({
@@ -277,7 +306,8 @@ export async function PATCH(
     }
   }
 
-  const completedWithSignature = parsed.data.status === "COMPLETED" && signedAt;
+  const completedWithSignature =
+    parsed.data.status === "COMPLETED" && signedAt && parsed.data.completionSignature;
   const auditAction = completedWithSignature
     ? "COMPLETED_SIGNED"
     : isReopen
@@ -291,7 +321,16 @@ export async function PATCH(
     workOrder: updated,
     note: parsed.data.statusNote ?? null,
     ...(completedWithSignature
-      ? { signature: { signedById: auth.session.user.id, signedAt } }
+      ? {
+          signature: {
+            method: "TYPED_NAME" as const,
+            signedById: auth.session.user.id,
+            signedByName: auth.session.user.displayName,
+            capturedName: parsed.data.completionSignature!.signerName.trim().replace(/\s+/g, " "),
+            signedAt,
+            attestationVersion: WORK_ORDER_COMPLETION_ATTESTATION_VERSION,
+          },
+        }
       : {}),
   });
 
