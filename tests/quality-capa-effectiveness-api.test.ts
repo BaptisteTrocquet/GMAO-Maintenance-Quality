@@ -54,13 +54,21 @@ function expectStatus(response: Response | undefined, status: number) {
 
 const context = { params: Promise.resolve({ eventId: "event-1" }) };
 
+function readyCapa(actionStatus: "COMPLETED" | "CANCELLED" = "COMPLETED") {
+  return {
+    event: { organizationId: "org-a", siteId: "site-a", status: "INVESTIGATING" },
+    capa: {
+      eventId: "event-1",
+      status: "READY_FOR_EFFECTIVENESS",
+      actions: [{ id: "action-1", status: actionStatus }],
+    },
+  };
+}
+
 describe("CAPA effectiveness API", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.getCapa.mockResolvedValue({
-      event: { organizationId: "org-a", siteId: "site-a", status: "INVESTIGATING" },
-      capa: { eventId: "event-1", status: "READY_FOR_EFFECTIVENESS" },
-    });
+    mocks.getCapa.mockResolvedValue(readyCapa());
     mocks.getCapaEffectiveness.mockResolvedValue(null);
     mocks.listCapaEffectivenessTimeline.mockResolvedValue([]);
     mocks.startCapaEffectivenessReview.mockResolvedValue({
@@ -135,6 +143,32 @@ describe("CAPA effectiveness API", () => {
       dueAt: new Date("2026-09-01T00:00:00.000Z"),
       actorId: "quality-4",
     });
+  });
+
+  it("blocks effectiveness when every CAPA action was cancelled", async () => {
+    mocks.authenticateRequest.mockResolvedValue(auth("QUALITY_MANAGER"));
+    mocks.getCapa.mockResolvedValue(readyCapa("CANCELLED"));
+
+    const response = await PATCH(
+      new Request("http://localhost/api/quality/events/event-1/capa/effectiveness", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          organizationId: "org-a",
+          siteId: "site-a",
+          action: "START",
+          criteria: "No recurrence during observation.",
+          verifierId: "quality-4",
+          dueAt: "2026-09-01T00:00:00.000Z",
+        }),
+      }),
+      context,
+    );
+
+    expectStatus(response, 409);
+    const body = await response!.json();
+    expect(body.error.code).toBe("COMPLETED_ACTION_REQUIRED");
+    expect(mocks.startCapaEffectivenessReview).not.toHaveBeenCalled();
   });
 
   it("routes effectiveness results with an explicit summary", async () => {
