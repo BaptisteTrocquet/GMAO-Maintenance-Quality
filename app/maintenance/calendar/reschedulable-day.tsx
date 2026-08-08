@@ -3,10 +3,7 @@
 import Link from "next/link";
 import { useState, type DragEvent } from "react";
 import { useRouter } from "next/navigation";
-import {
-  buildSchedulePatch,
-  type WorkOrderScheduleField,
-} from "@/lib/maintenance/reschedule";
+import { buildSchedulePatch } from "@/lib/maintenance/reschedule";
 
 const DRAG_MIME = "application/x-gmao-work-order-schedule";
 
@@ -30,7 +27,6 @@ type CalendarItem = {
 type DragPayload = {
   workOrderId: string;
   workOrderNumber: string;
-  field: WorkOrderScheduleField;
   sourceInstant: string;
 };
 
@@ -66,7 +62,6 @@ function readPayload(event: DragEvent) {
     if (
       typeof parsed.workOrderId !== "string" ||
       typeof parsed.workOrderNumber !== "string" ||
-      (parsed.field !== "plannedStart" && parsed.field !== "dueAt") ||
       typeof parsed.sourceInstant !== "string"
     ) {
       return null;
@@ -75,10 +70,6 @@ function readPayload(event: DragEvent) {
   } catch {
     return null;
   }
-}
-
-function handleLabel(field: WorkOrderScheduleField) {
-  return field === "plannedStart" ? "START" : "DUE";
 }
 
 export default function ReschedulableCalendarDay({
@@ -95,12 +86,11 @@ export default function ReschedulableCalendarDay({
   const hiddenCount = Math.max(day.items.length - maxItems, 0);
 
   async function move(payload: DragPayload, targetDateKey: string) {
-    const operationKey = `${payload.workOrderId}:${payload.field}`;
-    setBusy(operationKey);
+    setBusy(payload.workOrderId);
     setFeedback(null);
     try {
       const patch = buildSchedulePatch({
-        field: payload.field,
+        field: "plannedStart",
         instant: new Date(payload.sourceInstant),
         targetDateKey,
         timeZone,
@@ -116,7 +106,7 @@ export default function ReschedulableCalendarDay({
       }
       setFeedback({
         kind: "success",
-        message: `${payload.workOrderNumber} ${handleLabel(payload.field).toLowerCase()} moved to ${targetDateKey}.`,
+        message: `${payload.workOrderNumber} start moved to ${targetDateKey}.`,
       });
       router.refresh();
     } catch (error) {
@@ -138,7 +128,7 @@ export default function ReschedulableCalendarDay({
 
   async function keyboardMove(payload: DragPayload) {
     const target = window.prompt(
-      `Move ${payload.workOrderNumber} ${handleLabel(payload.field).toLowerCase()} to local date (YYYY-MM-DD)`,
+      `Move ${payload.workOrderNumber} start to local date (YYYY-MM-DD)`,
       day.dateKey,
     );
     if (!target?.trim()) return;
@@ -150,20 +140,19 @@ export default function ReschedulableCalendarDay({
     setDragOver(false);
     const payload = readPayload(event);
     if (!payload) {
-      setFeedback({ kind: "error", message: "This drag item is not a work-order schedule marker." });
+      setFeedback({ kind: "error", message: "This drag item is not a work-order start marker." });
       return;
     }
     await move(payload, day.dateKey);
   }
 
-  function scheduleHandle(item: CalendarItem, field: WorkOrderScheduleField, instant: string) {
+  function scheduleHandle(item: CalendarItem) {
+    if (!item.planned || !item.plannedStart) return null;
     const payload: DragPayload = {
       workOrderId: item.id,
       workOrderNumber: item.number,
-      field,
-      sourceInstant: instant,
+      sourceInstant: item.plannedStart,
     };
-    const operationKey = `${item.id}:${field}`;
     return (
       <button
         type="button"
@@ -171,11 +160,11 @@ export default function ReschedulableCalendarDay({
         disabled={busy !== null}
         onDragStart={(event) => startDrag(event, payload)}
         onClick={() => keyboardMove(payload)}
-        aria-label={`Move ${item.number} ${handleLabel(field).toLowerCase()}; drag to another day or activate to enter a date`}
-        title="Drag to another day, or activate to enter a date"
+        aria-label={`Move ${item.number} planned start; drag to another day or activate to enter a date`}
+        title="Drag planned start to another day, or activate to enter a date"
         style={{ padding: "4px 7px", cursor: busy ? "wait" : "grab" }}
       >
-        {busy === operationKey ? "…" : handleLabel(field)}
+        {busy === item.id ? "…" : "START"}
       </button>
     );
   }
@@ -183,7 +172,7 @@ export default function ReschedulableCalendarDay({
   return (
     <section
       className="card"
-      aria-label={`${day.dateKey}, ${day.items.length} work-order event${day.items.length === 1 ? "" : "s"}. Drop a schedule marker here to reschedule it.`}
+      aria-label={`${day.dateKey}, ${day.items.length} work-order event${day.items.length === 1 ? "" : "s"}. Drop a planned-start marker here to reschedule it.`}
       onDragOver={(event) => {
         event.preventDefault();
         event.dataTransfer.dropEffect = "move";
@@ -230,10 +219,8 @@ export default function ReschedulableCalendarDay({
               {item.assetCode ?? "No asset"} · {item.assigneeName ?? item.teamName ?? "Unassigned"}
             </div>
             <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginTop: 6 }} aria-label="Schedule controls">
-              {item.planned && item.plannedStart
-                ? scheduleHandle(item, "plannedStart", item.plannedStart)
-                : null}
-              {item.due && item.dueAt ? scheduleHandle(item, "dueAt", item.dueAt) : null}
+              {scheduleHandle(item)}
+              {item.due ? <span className="badge">DUE · read only</span> : null}
             </div>
           </article>
         ))}
