@@ -123,8 +123,8 @@ describe("personal maintenance dashboard", () => {
     );
   });
 
-  it("returns empty without querying when role lacks work:read", async () => {
-    const result = await buildPersonalMaintenanceDashboard({
+  it("lets an operator see work but does not query maintenance reminders", async () => {
+    await buildPersonalMaintenanceDashboard({
       organizationId: "org-a",
       siteId: "site-a",
       userId: "user-a",
@@ -132,8 +132,7 @@ describe("personal maintenance dashboard", () => {
       now: NOW,
     });
 
-    expect(result.workOrders).toEqual([]);
-    expect(mocks.workOrderFindMany).not.toHaveBeenCalled();
+    expect(mocks.workOrderFindMany).toHaveBeenCalled();
     expect(mocks.reminderFindMany).not.toHaveBeenCalled();
   });
 });
