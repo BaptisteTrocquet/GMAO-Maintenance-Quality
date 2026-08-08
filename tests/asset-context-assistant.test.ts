@@ -324,13 +324,13 @@ describe("asset-context assistant", () => {
         type: "work-order",
         id: "wo-1",
         number: "WO-1001",
-        href: "/work-orders/wo-1",
+        href: "/maintenance/wo-1",
       },
       {
         type: "work-order",
         id: "wo-2",
         number: "WO-1002",
-        href: "/work-orders/wo-2",
+        href: "/maintenance/wo-2",
       },
     ]);
   });
