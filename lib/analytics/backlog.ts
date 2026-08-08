@@ -50,15 +50,15 @@ export async function buildBacklogDashboard(input: {
     db.workOrder.count({ where: { ...openScope, plannedStart: null } }),
     db.workOrder.count({ where: { ...openScope, priority: "URGENT" } }),
     db.workOrder.count({
-      where: { ...openScope, requestedAt: { gte: sevenDaysAgo, lte: now } },
+      where: { ...openScope, requestedAt: { gt: sevenDaysAgo, lte: now } },
     }),
     db.workOrder.count({
-      where: { ...openScope, requestedAt: { gte: thirtyDaysAgo, lt: sevenDaysAgo } },
+      where: { ...openScope, requestedAt: { lte: sevenDaysAgo, gt: thirtyDaysAgo } },
     }),
     db.workOrder.count({
-      where: { ...openScope, requestedAt: { gte: ninetyDaysAgo, lt: thirtyDaysAgo } },
+      where: { ...openScope, requestedAt: { lte: thirtyDaysAgo, gt: ninetyDaysAgo } },
     }),
-    db.workOrder.count({ where: { ...openScope, requestedAt: { lt: ninetyDaysAgo } } }),
+    db.workOrder.count({ where: { ...openScope, requestedAt: { lte: ninetyDaysAgo } } }),
     db.workOrder.findMany({
       where: openScope,
       select: {
