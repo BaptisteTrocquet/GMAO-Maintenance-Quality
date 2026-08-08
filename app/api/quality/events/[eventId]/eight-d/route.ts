@@ -9,6 +9,7 @@ import {
   listEightDTimeline,
   resetEightDAfterIneffectiveCapa,
   saveEightDWorkspace,
+  type EightDDiscipline,
 } from "@/lib/quality/eight-d";
 
 const scopeSchema = z.object({
@@ -62,6 +63,38 @@ function eightDError(error: EightDError) {
   return apiError(status, error.code, error.message);
 }
 
+function disciplinePayload(
+  discipline: EightDDiscipline,
+  data: z.infer<typeof saveSchema>,
+) {
+  switch (discipline) {
+    case "D1":
+      return { team: data.team };
+    case "D2":
+      return {
+        problemStatement: data.problemStatement,
+        impactScope: data.impactScope,
+      };
+    case "D4":
+      return { escapePoint: data.escapePoint };
+    case "D6":
+      return { validationNote: data.validationNote };
+    case "D7":
+      return {
+        preventionSummary: data.preventionSummary,
+        systemicChanges: data.systemicChanges,
+      };
+    case "D8":
+      return {
+        recognitionNote: data.recognitionNote,
+        lessonsLearned: data.lessonsLearned,
+      };
+    case "D3":
+    case "D5":
+      return {};
+  }
+}
+
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ eventId: string }> },
@@ -108,21 +141,23 @@ export async function PUT(
   const denied = authorize(auth.tenant.scope, parsed.data.siteId, "quality:manage");
   if (denied) return denied;
 
+  const workspace = await getEightDWorkspace({
+    organizationId: parsed.data.organizationId,
+    siteId: parsed.data.siteId,
+    eventId,
+  });
+  if (!workspace) {
+    return apiError(404, "QUALITY_EVENT_NOT_FOUND", "Quality event not found in site scope");
+  }
+  const discipline = workspace.eightD?.currentDiscipline ?? "D1";
+
   try {
     return apiData(
       await saveEightDWorkspace({
         organizationId: parsed.data.organizationId,
         siteId: parsed.data.siteId,
         eventId,
-        team: parsed.data.team,
-        problemStatement: parsed.data.problemStatement,
-        impactScope: parsed.data.impactScope,
-        escapePoint: parsed.data.escapePoint,
-        validationNote: parsed.data.validationNote,
-        preventionSummary: parsed.data.preventionSummary,
-        systemicChanges: parsed.data.systemicChanges,
-        recognitionNote: parsed.data.recognitionNote,
-        lessonsLearned: parsed.data.lessonsLearned,
+        ...disciplinePayload(discipline, parsed.data),
         actorId: auth.session.user.id,
       }),
     );
