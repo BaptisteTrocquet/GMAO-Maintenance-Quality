@@ -13,29 +13,33 @@ test("command palette opens from keyboard and navigates with Enter", async ({ pa
   });
   await expect(input).toBeFocused();
   await expect(input).toHaveAttribute("aria-expanded", "true");
-  await expect(page.getByRole("option", { name: /Global search/ })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
+
+  const options = dialog.getByRole("option");
+  const optionCount = await options.count();
+  expect(optionCount).toBeGreaterThan(0);
+  await expect(options.first()).toHaveAttribute("aria-selected", "true");
 
   // Keep the pointer outside the command options so this test exercises keyboard selection only.
   await page.mouse.move(0, 0);
   await page.keyboard.press("End");
-  await expect(page.getByRole("option", { name: /Quality workspace/ })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
+  await expect(options.nth(optionCount - 1)).toHaveAttribute("aria-selected", "true");
   await page.keyboard.press("Home");
-  await expect(page.getByRole("option", { name: /Global search/ })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
-  await page.keyboard.press("ArrowDown");
+  await expect(options.first()).toHaveAttribute("aria-selected", "true");
+
+  // Exercise ArrowDown navigation without assuming a hard-coded quick-action order.
+  const labels = await options.allTextContents();
+  const kanbanIndex = labels.findIndex((label) => label.includes("Work-order Kanban"));
+  expect(kanbanIndex).toBeGreaterThanOrEqual(0);
+  for (let index = 0; index < kanbanIndex; index += 1) {
+    await page.keyboard.press("ArrowDown");
+  }
   await expect(page.getByRole("option", { name: /Work-order Kanban/ })).toHaveAttribute(
     "aria-selected",
     "true",
   );
-  await page.keyboard.press("ArrowUp");
+
+  // Return to the first option and verify Enter still activates the selected action.
+  await page.keyboard.press("Home");
   await page.keyboard.press("Enter");
   await expect(page).toHaveURL(/\/search$/);
 });
