@@ -12,7 +12,7 @@ export default async function AssetQrScannerPage() {
       <div className="header asset-header">
         <div>
           <Link className="muted" href="/assets">← Assets</Link>
-          <div className="title">Scan asset QR</div>
+          <h1 className="title" style={{ margin: 0 }}>Scan asset QR</h1>
           <div className="muted">Open an equipment record directly from its printed OpenGMAO label.</div>
         </div>
       </div>
