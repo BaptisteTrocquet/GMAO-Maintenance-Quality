@@ -78,7 +78,7 @@ describe("personal dashboard", () => {
     );
   });
 
-  it("does not query document approvals for a technician without document:read", async () => {
+  it("lets a technician see only their own pending document approvals", async () => {
     await buildPersonalDashboard({
       organizationId: "org-a",
       siteId: "site-a",
@@ -88,8 +88,22 @@ describe("personal dashboard", () => {
     });
 
     expect(mocks.workFindMany).toHaveBeenCalled();
-    expect(mocks.approvalCount).not.toHaveBeenCalled();
-    expect(mocks.approvalFindMany).not.toHaveBeenCalled();
+    expect(mocks.approvalCount).toHaveBeenCalledWith({
+      where: {
+        approverId: "tech-a",
+        decision: "PENDING",
+        revision: { document: { organizationId: "org-a" } },
+      },
+    });
+    expect(mocks.approvalFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          approverId: "tech-a",
+          decision: "PENDING",
+          revision: { document: { organizationId: "org-a" } },
+        },
+      }),
+    );
   });
 
   it("returns exact counters independently from the bounded top-work list", async () => {
