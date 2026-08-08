@@ -17,6 +17,7 @@ export default async function QualityEventLayout({
           <Link className="table-link" href={`/quality/${eventId}`}>Event</Link>
           <Link className="table-link" href={`/quality/${eventId}/root-cause`}>Root cause</Link>
           <Link className="table-link" href={`/quality/${eventId}/capa`}>CAPA</Link>
+          <Link className="table-link" href={`/quality/${eventId}/eight-d`}>8D</Link>
           <Link className="table-link" href={`/quality/${eventId}/evidence`}>Evidence</Link>
         </div>
       </nav>
