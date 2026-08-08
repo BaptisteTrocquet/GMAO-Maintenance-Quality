@@ -25,6 +25,12 @@ function request(url: string, token: string, key: string, body: Record<string, u
   });
 }
 
+function definedResponse(response: Response | undefined): Response {
+  expect(response).toBeDefined();
+  if (!response) throw new Error("Expected route to return a response");
+  return response;
+}
+
 async function responseErrorCode(response: Response) {
   const body = (await response.json()) as { error?: { code?: string } };
   return body.error?.code;
@@ -79,17 +85,17 @@ describe("work-order retry idempotency", () => {
         where: { actorId: technician.id, entityType: "WorkOrder", entityId: workOrder.id },
       });
 
-      const firstExecution = await patchExecution(
+      const firstExecution = definedResponse(await patchExecution(
         request(`/api/work-orders/${workOrder.id}/execution`, session.token, executionKey, executionBody),
         params,
-      );
+      ));
       expect(firstExecution.status).toBe(200);
       expect(firstExecution.headers.get("x-opengmao-idempotent-replay")).toBe("false");
 
-      const retriedExecution = await patchExecution(
+      const retriedExecution = definedResponse(await patchExecution(
         request(`/api/work-orders/${workOrder.id}/execution`, session.token, executionKey, executionBody),
         params,
-      );
+      ));
       expect(retriedExecution.status).toBe(200);
       expect(retriedExecution.headers.get("x-opengmao-idempotent-replay")).toBe("true");
 
@@ -100,13 +106,13 @@ describe("work-order retry idempotency", () => {
       });
       expect(auditsAfterExecution - auditsBeforeExecution).toBe(1);
 
-      const reusedExecutionKey = await patchExecution(
+      const reusedExecutionKey = definedResponse(await patchExecution(
         request(`/api/work-orders/${workOrder.id}/execution`, session.token, executionKey, {
           ...executionBody,
           laborMinutes: executionBody.laborMinutes + 1,
         }),
         params,
-      );
+      ));
       expect(reusedExecutionKey.status).toBe(409);
       expect(await responseErrorCode(reusedExecutionKey)).toBe("IDEMPOTENCY_KEY_REUSED");
       expect(
@@ -117,17 +123,17 @@ describe("work-order retry idempotency", () => {
 
       const transitionKey = `retry-transition-${randomUUID()}`;
       const transitionBody = { ...scope, status: "BLOCKED" };
-      const firstTransition = await patchWorkOrder(
+      const firstTransition = definedResponse(await patchWorkOrder(
         request(`/api/work-orders/${workOrder.id}`, session.token, transitionKey, transitionBody),
         params,
-      );
+      ));
       expect(firstTransition.status).toBe(200);
       expect(firstTransition.headers.get("x-opengmao-idempotent-replay")).toBe("false");
 
-      const retriedTransition = await patchWorkOrder(
+      const retriedTransition = definedResponse(await patchWorkOrder(
         request(`/api/work-orders/${workOrder.id}`, session.token, transitionKey, transitionBody),
         params,
-      );
+      ));
       expect(retriedTransition.status).toBe(200);
       expect(retriedTransition.headers.get("x-opengmao-idempotent-replay")).toBe("true");
       expect((await db.workOrder.findUnique({ where: { id: workOrder.id } }))?.status).toBe("BLOCKED");
