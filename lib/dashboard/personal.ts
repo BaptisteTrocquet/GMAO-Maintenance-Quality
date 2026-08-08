@@ -16,7 +16,10 @@ function assignedWorkWhere(input: {
     status: { notIn: ["COMPLETED", "CANCELLED"] },
     OR: [
       { assigneeId: input.userId },
-      { team: { members: { some: { userId: input.userId } } } },
+      {
+        assigneeId: null,
+        team: { members: { some: { userId: input.userId } } },
+      },
     ],
   };
 }
