@@ -1,16 +1,54 @@
 # Work-order summarization
 
-E13 provides a provider-neutral server-side work-order summarization boundary without making core maintenance workflows depend on AI.
+OpenGMAO provides a provider-neutral server-side Work Order summarization capability and exposes it through an authenticated application API without making core maintenance workflows depend on AI.
 
-## Purpose
+## Runtime API
 
-`createWorkOrderSummarizer()` turns one authorized work order into a concise maintenance handoff using the existing `LlmProviderRegistry`.
+The application route is:
 
-The service deliberately summarizes structured operational facts only. It is not a generic dump of the work-order database row.
+```text
+POST /api/ai/work-orders/{workOrderId}/summary
+```
+
+Request body:
+
+```json
+{
+  "organizationId": "org-id",
+  "siteId": "site-id"
+}
+```
+
+The request schema is strict. Clients cannot select a provider or model through this route. The active provider/model remains server-side deployment configuration (`OPENAI_LLM_MODEL` for the repository-provided OpenAI adapter).
+
+The route authenticates the request before composing the AI runtime. An unauthenticated request therefore cannot invoke the provider. It then passes the authenticated actor and tenant membership scope into the existing resilient Work Order summarizer.
+
+A successful generation is returned as normal API data with the existing summary, provider/model metadata, finish reason, token usage, Work Order identity and deterministic source records.
+
+When AI is deliberately disabled, not configured, times out or has a provider-level failure, the existing resilient fallback is returned as normal API data, for example:
+
+```json
+{
+  "status": "unavailable",
+  "reason": "AI_DISABLED",
+  "retryable": false,
+  "message": "AI is disabled. Core maintenance data and workflows remain available."
+}
+```
+
+Authorization, tenant-context, citation and audit failures are **not** converted to provider fallback. They remain request/server errors and are returned with bounded generic diagnostics.
+
+## Server runtime composition
+
+`lib/ai/server-runtime.ts` is the repository-provided server composition boundary. It registers `createOpenAiResponsesLlmProviderFromEnv()` in `LlmProviderRegistry` under provider ID `openai` and builds the resilient/audited Work Order summarizer.
+
+With no `OPENAI_LLM_MODEL`, the registry contains the normal disabled provider. Invalid deployment configuration is wrapped as a safe runtime-configuration error rather than exposing the underlying secret/config diagnostic through the API.
+
+The route intentionally composes the runtime only after `authenticateRequest()` succeeds.
 
 ## Authorization boundary
 
-The caller supplies an explicit authorization context:
+`createWorkOrderSummarizer()` receives an explicit authorization context:
 
 - `organizationId`
 - `siteId`
@@ -21,18 +59,18 @@ The service requires both `work:read` and `asset:read` for the requested site be
 
 The default repository then constrains the query by:
 
-- work-order ID
+- Work Order ID
 - site ID
 - active site
 - site organization ID
 
-Custom repository implementations are not trusted. Returned records are revalidated before the LLM is invoked. The service fails closed if the work order, linked asset, consumed part, or linked controlled document is outside the authorized organization/site relationships.
+Custom repository implementations are not trusted. Returned records are revalidated before the LLM is invoked. The service fails closed if the Work Order, linked asset, consumed part, or linked controlled document is outside the authorized organization/site relationships.
 
 ## Model context allowlist
 
 The model receives only explicitly selected fields.
 
-Work-order facts:
+Work Order facts:
 
 - ID and number
 - title
@@ -70,15 +108,15 @@ Linked controlled-document facts:
 - code
 - title
 
-All collections are bounded by the repository query so a single work order cannot create an unbounded prompt.
+All collections are bounded by the repository query so a single Work Order cannot create an unbounded prompt.
 
 ## Explicitly excluded fields
 
-This story intentionally does **not** send the following to the model:
+The summarizer intentionally does **not** send the following to the model:
 
 - requester or assignee identities
 - team/user identities
-- work-order description
+- Work Order description
 - completion note
 - checklist notes
 - attachment names/content
@@ -88,17 +126,17 @@ This story intentionally does **not** send the following to the model:
 - supplier information
 - unit costs or other cost data
 
-Those omissions are deliberate. E13 still has a separate sensitive-field policy story/check, so richer free-form or identity-bearing fields must not be introduced ad hoc.
+Those omissions are enforced by the current AI sensitive-field policy and must not be expanded ad hoc.
 
 ## Prompt-injection boundary
 
-Work-order titles, checklist labels, part names, document titles and all other retrieved values are treated as untrusted data.
+Work Order titles, checklist labels, part names, document titles and all other retrieved values are treated as untrusted data.
 
 The fixed system instruction tells the model to ignore instructions embedded in record values. Retrieved values are serialized only in the user-context message and never interpolated into the system instruction.
 
 This is a defense-in-depth boundary, not permission to include arbitrary untrusted fields later.
 
-## Provenance
+## Provenance and citations
 
 The result returns deterministic source records for:
 
@@ -106,10 +144,20 @@ The result returns deterministic source records for:
 - the linked `/assets/{assetId}`, when present
 - linked `/documents/{documentId}` records
 
-This provenance is intentionally separate from the later E13 story that will enforce citations inside AI answers. Returning sources here does not by itself satisfy the mandatory answer-citation check.
+The citation wrapper enforces the E13 answer-citation contract before a successful result reaches the resilient API surface. The audit wrapper records citation references and generation metadata without storing the prompt or answer text.
+
+## Audit behavior
+
+The production composition uses the Prisma AI audit sink. A successful summary writes `AI_SUMMARY_GENERATED`; auditable provider/citation failures write `AI_SUMMARY_FAILED` before fallback is considered.
+
+Audit payloads include bounded metadata such as organization/site, provider/model, finish reason, token usage and source/citation references. Prompt text and generated answer text are not persisted in the AI audit payload.
+
+An audit write failure is fail-closed and is not converted to `AI_TEMPORARILY_UNAVAILABLE`.
 
 ## Provider independence and failure behavior
 
-The summarizer depends only on `LlmProviderRegistry`. It does not import a vendor SDK, API key, endpoint, or provider-specific response type.
+The summarizer itself depends only on `LlmProviderRegistry`. It does not import a vendor SDK, API key, endpoint, or provider-specific response type.
 
-Provider-disabled graceful fallback remains a separate E13 story. Until that story is implemented, provider errors propagate through the generic LLM abstraction and normal non-AI maintenance workflows remain unaffected.
+The server runtime currently registers the optional repository OpenAI Responses adapter, but alternate/local providers can implement the same registry contract. Core non-AI Work Order APIs continue to work when the registered provider is disabled or unavailable.
+
+See `docs/AI_PROVIDERS.md` and `docs/AI_OPENAI_RESPONSES.md` for provider configuration and transport details.
