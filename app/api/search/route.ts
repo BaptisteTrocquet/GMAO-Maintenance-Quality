@@ -1,4 +1,4 @@
-import { AccessDeniedError, assertSitePermission } from "@/lib/access-control";
+import { hasSiteAccess } from "@/lib/access-control";
 import { apiData, apiError } from "@/lib/api-response";
 import { authenticateRequest } from "@/lib/auth/request-auth";
 import {
@@ -22,15 +22,8 @@ export async function GET(request: Request) {
   const auth = await authenticateRequest(request, organizationId);
   if ("error" in auth) return auth.error;
 
-  try {
-    // Every membership role has asset:read today. This validates site membership once;
-    // searchGlobal then applies category-specific permissions before issuing each query.
-    assertSitePermission(auth.tenant.scope, siteId, "asset:read");
-  } catch (error) {
-    if (error instanceof AccessDeniedError) {
-      return apiError(403, "ACCESS_DENIED", error.message);
-    }
-    throw error;
+  if (!hasSiteAccess(auth.tenant.scope, siteId)) {
+    return apiError(403, "ACCESS_DENIED", "Site access denied");
   }
 
   const results = await searchGlobal({
