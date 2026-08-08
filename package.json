@@ -17,6 +17,7 @@
     "format": "prettier . --write",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:e2e": "playwright test",
     "test:db": "tsx scripts/check-db.ts",
     "sdk:build": "tsc -p sdk/tsconfig.json",
     "examples:check": "vitest run tests/integration-examples.test.tsx tests/embed-static-example.test.ts tests/widget-loader-example.test.ts",
@@ -37,6 +38,7 @@
   },
   "devDependencies": {
     "@eslint/eslintrc": "3.3.6",
+    "@playwright/test": "1.59.1",
     "@types/node": "22.10.0",
     "@types/react": "19.0.0",
     "@types/react-dom": "19.0.0",
