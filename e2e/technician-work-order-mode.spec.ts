@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-test("technician mode shows assigned work and completes a focused mobile work order", async ({ page }) => {
+test("technician mode captures an explicit mobile signature before completion", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.setExtraHTTPHeaders({
     "x-organization-id": "org-e2e",
@@ -59,7 +59,13 @@ test("technician mode shows assigned work and completes a focused mobile work or
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ data: { workOrder: detail } }),
+      body: JSON.stringify({
+        data: {
+          workOrder: detail,
+          signer: { id: "tech-e2e", displayName: "Synthetic Technician" },
+          completionSignature: null,
+        },
+      }),
     });
   });
 
@@ -92,14 +98,27 @@ test("technician mode shows assigned work and completes a focused mobile work or
   await expect(blockButton).toBeVisible();
   expect((await blockButton.boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(44);
 
-  const completeButton = page.getByRole("button", { name: "Complete work" });
+  const completeButton = page.getByRole("button", { name: "Complete and sign" });
   await expect(completeButton).toBeDisabled();
+  await expect(page.getByTestId("signature-capture")).toContainText(
+    "Authenticated signer: Synthetic Technician",
+  );
 
   await page.getByRole("checkbox", { name: "Verify guard" }).check();
   await page.getByLabel("Note for Verify guard").fill("OK");
   await page.getByLabel("Labor minutes").fill("35");
   await page.getByLabel("Downtime minutes").fill("5");
   await page.getByLabel("Completion note").fill("Guard verified");
+  await expect(completeButton).toBeDisabled();
+
+  await page.getByLabel("Type your name to sign").fill("Wrong Technician");
+  await expect(page.getByText("Typed signature must match Synthetic Technician.")).toBeVisible();
+  await expect(completeButton).toBeDisabled();
+
+  await page.getByLabel("Type your name to sign").fill("Synthetic Technician");
+  const attestation = page.getByRole("checkbox", { name: /I confirm that the recorded work/ });
+  await expect(attestation).toBeEnabled();
+  await attestation.check();
   await expect(completeButton).toBeEnabled();
   await completeButton.click();
 
@@ -115,5 +134,9 @@ test("technician mode shows assigned work and completes a focused mobile work or
     organizationId: "org-e2e",
     siteId: "site-e2e",
     status: "COMPLETED",
+    completionSignature: {
+      signerName: "Synthetic Technician",
+      attested: true,
+    },
   });
 });
