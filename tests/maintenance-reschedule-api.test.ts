@@ -56,6 +56,11 @@ function request(targetDate = "2026-10-25") {
   });
 }
 
+async function expectStatus(response: Response | undefined, status: number) {
+  expect(response).toBeDefined();
+  expect(response?.status).toBe(status);
+}
+
 describe("maintenance calendar rescheduling API", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -84,7 +89,7 @@ describe("maintenance calendar rescheduling API", () => {
 
   it("preserves local wall-clock planning through DST and audits in the same transaction", async () => {
     const response = await PATCH(request(), context);
-    expect(response.status).toBe(200);
+    await expectStatus(response, 200);
 
     expect(mocks.transaction).toHaveBeenCalledTimes(1);
     expect(mocks.workOrderUpdate).toHaveBeenCalledWith({
@@ -110,7 +115,7 @@ describe("maintenance calendar rescheduling API", () => {
 
     const response = await PATCH(request(), context);
 
-    expect(response.status).toBe(403);
+    await expectStatus(response, 403);
     expect(mocks.siteFindFirst).not.toHaveBeenCalled();
     expect(mocks.transaction).not.toHaveBeenCalled();
     expect(mocks.workOrderUpdate).not.toHaveBeenCalled();
@@ -128,7 +133,7 @@ describe("maintenance calendar rescheduling API", () => {
 
     const response = await PATCH(request(), context);
 
-    expect(response.status).toBe(409);
+    await expectStatus(response, 409);
     expect(mocks.workOrderUpdate).not.toHaveBeenCalled();
     expect(mocks.auditCreate).not.toHaveBeenCalled();
   });
@@ -138,7 +143,7 @@ describe("maintenance calendar rescheduling API", () => {
 
     const response = await PATCH(request(), context);
 
-    expect(response.status).toBe(404);
+    await expectStatus(response, 404);
     expect(mocks.workOrderUpdate).not.toHaveBeenCalled();
     expect(mocks.auditCreate).not.toHaveBeenCalled();
   });
