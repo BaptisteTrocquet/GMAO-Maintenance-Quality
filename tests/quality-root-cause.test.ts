@@ -104,6 +104,45 @@ describe("quality root-cause analysis", () => {
     });
   });
 
+  it("rejects a blank problem statement at the domain boundary", async () => {
+    await expect(
+      saveRootCauseAnalysis({
+        organizationId: "org-a",
+        siteId: "site-a",
+        eventId: "event-1",
+        problemStatement: "   ",
+        fiveWhys: [],
+        actorId: "quality-1",
+      }),
+    ).rejects.toMatchObject({ code: "PROBLEM_STATEMENT_REQUIRED" });
+
+    expect(mocks.transaction).not.toHaveBeenCalled();
+  });
+
+  it("rejects invalid 5 Why evidence at the domain boundary", async () => {
+    await expect(
+      saveRootCauseAnalysis({
+        organizationId: "org-a",
+        siteId: "site-a",
+        eventId: "event-1",
+        problemStatement: "Leakage",
+        fiveWhys: ["First cause", "   "],
+        actorId: "quality-1",
+      }),
+    ).rejects.toMatchObject({ code: "FIVE_WHYS_INVALID" });
+
+    await expect(
+      saveRootCauseAnalysis({
+        organizationId: "org-a",
+        siteId: "site-a",
+        eventId: "event-1",
+        problemStatement: "Leakage",
+        fiveWhys: ["1", "2", "3", "4", "5", "6"],
+        actorId: "quality-1",
+      }),
+    ).rejects.toMatchObject({ code: "FIVE_WHYS_INVALID" });
+  });
+
   it("blocks root-cause editing before investigation starts", async () => {
     mocks.auditFindFirst.mockResolvedValue(qualityEvent("CONTAINED"));
 
@@ -181,7 +220,11 @@ describe("quality root-cause analysis", () => {
   });
 
   it("requires reopening before a completed analysis can be edited", async () => {
-    const completed = analysis({ status: "COMPLETED", completedById: "quality-1", completedAt: "2026-08-08T01:00:00.000Z" });
+    const completed = analysis({
+      status: "COMPLETED",
+      completedById: "quality-1",
+      completedAt: "2026-08-08T01:00:00.000Z",
+    });
     mocks.auditFindMany.mockResolvedValue([{ afterJson: JSON.stringify(completed) }]);
 
     await expect(
@@ -197,7 +240,11 @@ describe("quality root-cause analysis", () => {
   });
 
   it("reopens completed analysis as a new audited draft version", async () => {
-    const completed = analysis({ status: "COMPLETED", completedById: "quality-1", completedAt: "2026-08-08T01:00:00.000Z" });
+    const completed = analysis({
+      status: "COMPLETED",
+      completedById: "quality-1",
+      completedAt: "2026-08-08T01:00:00.000Z",
+    });
     mocks.auditFindMany.mockResolvedValue([{ afterJson: JSON.stringify(completed) }]);
 
     const result = await transitionRootCauseAnalysis({
