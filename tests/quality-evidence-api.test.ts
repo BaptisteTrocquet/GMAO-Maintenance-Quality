@@ -38,6 +38,12 @@ function auth(role: "VIEWER" | "QUALITY_MANAGER") {
   };
 }
 
+function expectStatus(response: Response | undefined, status: number) {
+  expect(response).toBeDefined();
+  if (!response) throw new Error("expected response");
+  expect(response.status).toBe(status);
+}
+
 const context = { params: Promise.resolve({ eventId: "event-1" }) };
 
 function postRequest() {
@@ -81,7 +87,7 @@ describe("quality evidence API", () => {
       context,
     );
 
-    expect(response.status).toBe(200);
+    expectStatus(response, 200);
     expect(mocks.listQualityEvidence).toHaveBeenCalledWith({
       organizationId: "org-a",
       siteId: "site-a",
@@ -95,7 +101,7 @@ describe("quality evidence API", () => {
 
     const response = await POST(postRequest(), context);
 
-    expect(response.status).toBe(403);
+    expectStatus(response, 403);
     expect(mocks.addQualityEvidence).not.toHaveBeenCalled();
   });
 
@@ -104,7 +110,7 @@ describe("quality evidence API", () => {
 
     const response = await POST(postRequest(), context);
 
-    expect(response.status).toBe(201);
+    expectStatus(response, 201);
     expect(mocks.addQualityEvidence).toHaveBeenCalledWith({
       organizationId: "org-a",
       siteId: "site-a",
@@ -131,7 +137,7 @@ describe("quality evidence API", () => {
       { params: Promise.resolve({ eventId: "event-missing" }) },
     );
 
-    expect(response.status).toBe(404);
+    expectStatus(response, 404);
   });
 
   it("maps closed-event evidence attempts to conflict", async () => {
@@ -142,7 +148,7 @@ describe("quality evidence API", () => {
 
     const response = await POST(postRequest(), context);
 
-    expect(response.status).toBe(409);
+    expectStatus(response, 409);
   });
 
   it("rejects malformed JSON before authentication", async () => {
@@ -155,7 +161,7 @@ describe("quality evidence API", () => {
       context,
     );
 
-    expect(response.status).toBe(400);
+    expectStatus(response, 400);
     expect(mocks.authenticateRequest).not.toHaveBeenCalled();
   });
 });
