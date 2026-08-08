@@ -2,16 +2,18 @@
 
 OpenGMAO keeps embeddings behind the provider-neutral `EmbeddingProvider` contract. `lib/ai/openai-embedding-provider.ts` provides an optional server-side OpenAI adapter so controlled-document semantic search can run without application code supplying a custom embedding implementation.
 
-OpenAI remains optional. When the adapter is not configured, `createOpenAiEmbeddingProviderFromEnv()` returns the existing disabled provider and core maintenance, Quality, document and planning workflows continue to operate without AI.
+OpenAI remains optional. When the embedding model is not configured, `createOpenAiEmbeddingProviderFromEnv()` returns the existing disabled provider and core maintenance, Quality, document and planning workflows continue to operate without AI.
 
 ## Configuration
 
-Configure both of these server-side environment variables to enable the adapter:
+Configure an embedding model together with the shared server-side OpenAI API key:
 
 ```text
 OPENAI_API_KEY=<server-side API key>
 OPENAI_EMBEDDING_MODEL=<embedding model available to the deployment>
 ```
+
+`OPENAI_EMBEDDING_MODEL` is the activation switch for this adapter. `OPENAI_API_KEY` may also be used by the optional OpenAI Responses LLM adapter and does **not** enable embeddings by itself.
 
 The repository does not hard-code the active model because model availability is an operator/account choice. `.env.example` shows `text-embedding-3-small` as an example supported embedding model.
 
@@ -21,7 +23,7 @@ For embedding models that support selecting output dimensions, an optional overr
 OPENAI_EMBEDDING_DIMENSIONS=<positive integer>
 ```
 
-If no OpenAI embedding variables are set, the provider is disabled. Partial configuration is rejected rather than silently creating a provider that will fail later.
+A shared API key with no embedding model leaves the provider disabled. Embedding-specific partial configuration is rejected: a model requires the API key, and a dimensions override requires the embedding model.
 
 `OPENAI_API_KEY` is secret material. It must stay in the deployment secret mechanism and must never be exposed through `NEXT_PUBLIC_*`, committed files, browser configuration, logs, provider metadata or error responses.
 

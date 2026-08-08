@@ -1,24 +1,25 @@
 # LLM provider abstraction
 
-OpenGMAO treats AI as an optional capability. The core maintenance and quality workflows must not depend on one LLM vendor or on AI being available.
+OpenGMAO treats AI as an optional capability. Core maintenance and Quality workflows do not depend on one LLM vendor or on AI being available.
 
-The provider-neutral contract lives in `lib/ai/llm-provider.ts`.
+The provider-neutral contract lives in `lib/ai/llm-provider.ts`. The repository-provided optional OpenAI adapter lives in `lib/ai/openai-llm-provider.ts` and is documented in `docs/AI_OPENAI_RESPONSES.md`.
 
 ## Boundary
 
 Application features call `LlmProviderRegistry.generate(...)`. Vendor adapters implement the `LlmProvider` interface behind that registry.
 
-The abstraction deliberately does **not** contain:
+The provider-neutral abstraction deliberately does **not** contain:
 
-- OpenAI, Anthropic, Azure, Google or local-model SDK code;
-- provider API keys or endpoints;
+- vendor API keys or private endpoints;
 - document retrieval;
 - authorization decisions;
 - prompt logging;
 - persistence or audit events;
 - retry policy or vendor-specific rate-limit handling.
 
-Those concerns are separate boundaries. In particular, carrying `organizationId` and optional `siteId` in `LlmInvocationContext` does not authorize a request. A feature must authenticate and authorize the caller **before** retrieval and before `generate(...)` is invoked.
+Those concerns remain separate boundaries. Carrying `organizationId` and optional `siteId` in `LlmInvocationContext` does not authorize a request. A feature must authenticate and authorize the caller **before** retrieval and before `generate(...)` is invoked.
+
+Provider adapters remain server-only. OpenAI is one optional implementation, not a dependency of the core provider contract.
 
 ## Provider contract
 
@@ -56,9 +57,10 @@ The registry validates requests before the adapter is called:
 - temperature between 0 and 2;
 - model identifiers are bounded and cannot contain newlines or NUL;
 - invocation context requires an organization and a short purpose string;
-- timeout defaults to 20 seconds and is capped at 120 seconds.
+- timeout defaults to 20 seconds and is capped at 120 seconds;
+- prompt messages pass the AI sensitive-field policy before provider invocation.
 
-These are defensive transport/application limits, not a substitute for provider token limits or the future sensitive-field policy.
+These are defensive application limits and do not replace provider-specific token/context limits.
 
 ## Failure model
 
@@ -74,17 +76,33 @@ These are defensive transport/application limits, not a substitute for provider 
 
 Unknown exceptions from adapters are converted to the generic `PROVIDER_ERROR` message. Provider diagnostics, HTTP response bodies and credentials are not propagated through this layer.
 
-The deadline is enforced with `Promise.race`, so a buggy adapter that ignores its `AbortSignal` cannot hold an application request indefinitely.
+The deadline is enforced with `Promise.race`, so an adapter that ignores its `AbortSignal` cannot hold an application request indefinitely.
 
 ## Disabled provider
 
 `createDisabledLlmProvider()` supplies an explicit provider entry that cannot generate. The registry rejects it with `PROVIDER_DISABLED` before its adapter method is called.
 
-This gives later stories a stable way to represent deployments where AI is not configured. The E13 provider-disabled fallback story still needs to wire this state through user-facing workflows; this first story only defines the provider-level primitive.
+`createOpenAiResponsesLlmProviderFromEnv()` returns this disabled state unless `OPENAI_LLM_MODEL` is explicitly configured. This preserves the provider-disabled fallback for deployments that do not enable generative AI.
 
-## Example adapter
+## Repository OpenAI adapter
 
-A future vendor adapter can be registered without changing application code:
+The repository includes an optional OpenAI Responses adapter:
+
+```ts
+const registry = new LlmProviderRegistry([
+  createOpenAiResponsesLlmProviderFromEnv(process.env),
+]);
+```
+
+When enabled, it uses a fixed server-side OpenAI Responses endpoint and `store: false`, maps the provider-neutral message sequence to the Responses API, parses only assistant output text/refusals, ignores reasoning output items, maps usage/finish state back to the provider-neutral contract, and keeps credentials/upstream error bodies behind the adapter boundary.
+
+The baseline capabilities remain conservative: no streaming, structured output or tool calling is advertised because current OpenGMAO generative features only require bounded text generation.
+
+See `docs/AI_OPENAI_RESPONSES.md` for configuration and transport details.
+
+## Alternate adapters
+
+Other vendors or local models can be registered without changing application feature code:
 
 ```ts
 const registry = new LlmProviderRegistry([
@@ -99,9 +117,6 @@ const registry = new LlmProviderRegistry([
       toolCalling: false,
     },
     async generate(input) {
-      // Resolve server-side provider credentials here.
-      // Call the provider using input.signal.
-      // Never place credentials in returned metadata or diagnostics.
       return {
         text: "...",
         model: input.model,
@@ -112,20 +127,10 @@ const registry = new LlmProviderRegistry([
 ]);
 ```
 
-Vendor adapters should remain server-only and should apply the same secret-handling principles as the E12 connector credential boundary.
+Vendor adapters should remain server-only and apply the same secret-handling principles as the OpenAI and E12 connector credential boundaries.
 
 ## Tests
 
-`tests/llm-provider.test.ts` covers:
+`tests/llm-provider.test.ts` covers the provider-neutral registry contract: registration/routing, model selection, safe metadata, disabled providers, tenant context, sensitive-field policy, request/output bounds, timeout/cancellation, provider-error redaction and response validation.
 
-- provider registration and routing;
-- default and overridden models;
-- safe metadata projection;
-- duplicate/malformed provider rejection;
-- disabled-provider behavior;
-- mandatory tenant context;
-- prompt/output/temperature bounds;
-- hard timeouts even for adapters that ignore abort;
-- caller cancellation;
-- provider-error redaction;
-- response validation.
+`tests/openai-llm-provider.test.ts` covers the optional OpenAI adapter with a fake transport only: fixed endpoint, `store: false`, message mapping, usage/finish parsing, reasoning exclusion, refusals, malformed/oversized responses, secret/error-body redaction, disabled/shared-key configuration and AbortSignal propagation.
