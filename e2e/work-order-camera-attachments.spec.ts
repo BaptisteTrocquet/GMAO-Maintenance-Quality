@@ -1,11 +1,27 @@
 import { Buffer } from "node:buffer";
 import { expect, test } from "@playwright/test";
+import { db } from "../lib/db";
 
 test("mobile work order supports camera capture preview and photo upload", async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 844 });
+  const workOrder = await db.workOrder.findFirst({
+    where: { number: "WO-000001" },
+    select: {
+      id: true,
+      siteId: true,
+      site: { select: { organizationId: true } },
+    },
+  });
+  expect(workOrder).not.toBeNull();
+  if (!workOrder) throw new Error("Seeded work order WO-000001 was not found");
 
-  await page.goto("/maintenance");
-  await page.getByRole("link", { name: "WO-000001", exact: true }).click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.setExtraHTTPHeaders({
+    "x-organization-id": workOrder.site.organizationId,
+    "x-site-id": workOrder.siteId,
+  });
+
+  const response = await page.goto(`/maintenance/${workOrder.id}`);
+  expect(response?.ok()).toBe(true);
   await expect(page.getByRole("heading", { name: "Attachments" })).toBeVisible();
 
   const takePhoto = page.getByRole("button", { name: "Take photo" });
@@ -42,7 +58,7 @@ test("mobile work order supports camera capture preview and photo upload", async
   await page.getByRole("button", { name: "Upload photo" }).click();
   await expect(page.getByText(/field-photo\.jpg was added to this work order/i)).toBeVisible();
   await expect.poll(() => uploadUrl).toContain("/attachments/upload?");
-  expect(uploadUrl).toContain("organizationId=");
-  expect(uploadUrl).toContain("siteId=");
+  expect(uploadUrl).toContain(`organizationId=${encodeURIComponent(workOrder.site.organizationId)}`);
+  expect(uploadUrl).toContain(`siteId=${encodeURIComponent(workOrder.siteId)}`);
   expect(uploadContentType).toContain("multipart/form-data");
 });
