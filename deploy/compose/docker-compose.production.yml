@@ -21,9 +21,9 @@ services:
 
   migrate:
     profiles: ["migrate"]
-    image: ${OPENGMAO_MIGRATION_IMAGE:?set OPENGMAO_MIGRATION_IMAGE to the immutable migration-tooling image for this release}
+    image: ${OPENGMAO_MIGRATION_IMAGE:?set OPENGMAO_MIGRATION_IMAGE to the immutable migration image for this release}
     user: "1001:1001"
-    command: ["npm", "run", "prisma:deploy"]
+    command: ["./node_modules/.bin/prisma", "migrate", "deploy"]
     environment:
       DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in the external runtime environment}
       HOME: /tmp
