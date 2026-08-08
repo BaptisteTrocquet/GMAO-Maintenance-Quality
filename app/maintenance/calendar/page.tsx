@@ -12,6 +12,7 @@ import {
   shiftCalendarMonth,
   UNSCHEDULED_WORK_ORDER_LIMIT,
 } from "@/lib/maintenance/planning-calendar";
+import ReschedulableCalendarDay from "./reschedulable-day";
 
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
@@ -194,7 +195,7 @@ export default async function MaintenanceCalendarPage({
           </Link>
         </div>
         <p className="muted" style={{ marginBottom: 0 }}>
-          Planned starts and due dates are rendered in the organization timezone. Date changes continue to use the existing permission-checked work-order API; drag-and-drop rescheduling is intentionally a separate story.
+          Drag a START or DUE control onto another day to reschedule that marker. Activate the same control with the keyboard to enter a target date. Every move uses the existing permission-checked, audited work-order API.
         </p>
         {truncated ? (
           <p className="muted" role="status" style={{ marginBottom: 0 }}>
@@ -233,67 +234,33 @@ export default async function MaintenanceCalendarPage({
             }}
           >
             {calendar.map((day) => (
-              <section
+              <ReschedulableCalendarDay
                 key={day.dateKey}
-                className="card"
-                aria-label={day.dateKey}
-                style={{
-                  minHeight: 180,
-                  padding: 10,
-                  opacity: day.inMonth ? 1 : 0.62,
-                  alignSelf: "stretch",
+                organizationId={organizationId}
+                siteId={siteId}
+                timeZone={site.organization.timezone}
+                day={{
+                  dateKey: day.dateKey,
+                  dayOfMonth: day.dayOfMonth,
+                  inMonth: day.inMonth,
+                  items: day.items.map((item) => ({
+                    id: item.id,
+                    number: item.number,
+                    title: item.title,
+                    status: item.status,
+                    priority: item.priority,
+                    assetCode: item.assetCode,
+                    assigneeName: item.assigneeName,
+                    teamName: item.teamName,
+                    planned: item.planned,
+                    due: item.due,
+                    plannedTime: item.plannedTime,
+                    dueTime: item.dueTime,
+                    plannedStart: item.plannedStart?.toISOString() ?? null,
+                    dueAt: item.dueAt?.toISOString() ?? null,
+                  })),
                 }}
-              >
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    gap: 8,
-                    marginBottom: 8,
-                  }}
-                >
-                  <strong>{day.dayOfMonth}</strong>
-                  {day.items.length ? <span className="badge">{day.items.length}</span> : null}
-                </div>
-
-                <div style={{ display: "grid", gap: 8 }}>
-                  {day.items.map((item) => (
-                    <article
-                      key={`${day.dateKey}-${item.id}`}
-                      style={{
-                        border: "1px solid #e5e7eb",
-                        borderRadius: 8,
-                        padding: 8,
-                        display: "grid",
-                        gap: 5,
-                      }}
-                    >
-                      <div
-                        style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                          gap: 6,
-                          alignItems: "start",
-                        }}
-                      >
-                        <Link className="table-link" href={`/maintenance/${item.id}`}>
-                          <strong>{item.number}</strong>
-                        </Link>
-                        <span className="badge">{item.priority}</span>
-                      </div>
-                      <div style={{ fontSize: 13, fontWeight: 650 }}>{item.title}</div>
-                      <div className="muted" style={{ fontSize: 12 }}>
-                        {item.assetCode ?? "No asset"} · {item.assigneeName ?? item.teamName ?? "Unassigned"}
-                      </div>
-                      <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
-                        {item.planned ? <span className="badge">START {item.plannedTime}</span> : null}
-                        {item.due ? <span className="badge">DUE {item.dueTime}</span> : null}
-                        <span className="badge">{statusLabel(item.status)}</span>
-                      </div>
-                    </article>
-                  ))}
-                </div>
-              </section>
+              />
             ))}
           </div>
         </div>
