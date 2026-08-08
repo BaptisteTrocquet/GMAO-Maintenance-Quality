@@ -1,6 +1,7 @@
 import { Prisma, type WorkOrderStatus } from "@prisma/client";
 
 export type PlanningMonth = { year: number; month: number };
+export type PlanningDate = { year: number; month: number; day: number };
 
 const ACTIVE_PLANNING_STATUSES = [
   "REQUESTED",
@@ -19,7 +20,7 @@ type LocalDateTime = {
   second: number;
 };
 
-function localParts(date: Date, timeZone: string): LocalDateTime {
+export function localParts(date: Date, timeZone: string): LocalDateTime {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone,
     year: "numeric",
@@ -42,7 +43,7 @@ function localParts(date: Date, timeZone: string): LocalDateTime {
   };
 }
 
-function localDateTimeToUtc(value: LocalDateTime, timeZone: string) {
+export function localDateTimeToUtc(value: LocalDateTime, timeZone: string) {
   const targetAsUtc = Date.UTC(
     value.year,
     value.month - 1,
@@ -79,6 +80,74 @@ function localDateTimeToUtc(value: LocalDateTime, timeZone: string) {
     throw new Error("Unable to resolve planning calendar boundary in configured timezone");
   }
   return candidate;
+}
+
+export function parsePlanningDate(value: string): PlanningDate | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const [yearText, monthText, dayText] = value.split("-");
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const day = Number(dayText);
+  if (!Number.isInteger(year) || year < 2000 || year > 2200 || month < 1 || month > 12 || day < 1 || day > 31) {
+    return null;
+  }
+  const check = new Date(Date.UTC(year, month - 1, day));
+  if (check.getUTCFullYear() !== year || check.getUTCMonth() !== month - 1 || check.getUTCDate() !== day) {
+    return null;
+  }
+  return { year, month, day };
+}
+
+function localDayNumber(value: Pick<LocalDateTime, "year" | "month" | "day">) {
+  return Math.floor(Date.UTC(value.year, value.month - 1, value.day) / (24 * 60 * 60 * 1000));
+}
+
+function shiftPlanningDate(value: PlanningDate, deltaDays: number): PlanningDate {
+  const shifted = new Date(Date.UTC(value.year, value.month - 1, value.day + deltaDays));
+  return {
+    year: shifted.getUTCFullYear(),
+    month: shifted.getUTCMonth() + 1,
+    day: shifted.getUTCDate(),
+  };
+}
+
+export function reschedulePlanningDates(input: {
+  plannedStart: Date | null;
+  dueAt: Date | null;
+  targetDate: string;
+  timeZone: string;
+}) {
+  const target = parsePlanningDate(input.targetDate);
+  if (!target) throw new Error("Invalid target planning date");
+
+  const originalStart = input.plannedStart ? localParts(input.plannedStart, input.timeZone) : null;
+  const targetStart = localDateTimeToUtc(
+    {
+      ...target,
+      hour: originalStart?.hour ?? 8,
+      minute: originalStart?.minute ?? 0,
+      second: originalStart?.second ?? 0,
+    },
+    input.timeZone,
+  );
+
+  if (!input.dueAt || !originalStart) {
+    return { plannedStart: targetStart, dueAt: input.dueAt };
+  }
+
+  const originalDue = localParts(input.dueAt, input.timeZone);
+  const dueDayOffset = localDayNumber(originalDue) - localDayNumber(originalStart);
+  const targetDueDate = shiftPlanningDate(target, dueDayOffset);
+  const targetDue = localDateTimeToUtc(
+    {
+      ...targetDueDate,
+      hour: originalDue.hour,
+      minute: originalDue.minute,
+      second: originalDue.second,
+    },
+    input.timeZone,
+  );
+  return { plannedStart: targetStart, dueAt: targetDue };
 }
 
 export function currentPlanningMonth(now: Date, timeZone: string): PlanningMonth {
@@ -154,8 +223,8 @@ export function monthGridDays(month: PlanningMonth) {
   const firstWeekday = new Date(Date.UTC(month.year, month.month - 1, 1)).getUTCDay();
   const daysInMonth = new Date(Date.UTC(month.year, month.month, 0)).getUTCDate();
   const mondayOffset = (firstWeekday + 6) % 7;
-  return [
-    ...Array.from({ length: mondayOffset }, () => null),
-    ...Array.from({ length: daysInMonth }, (_, index) => index + 1),
-  ];
+  const leading = Array.from({ length: mondayOffset }, () => null);
+  const days = Array.from({ length: daysInMonth }, (_, index) => index + 1);
+  const trailingCount = (7 - ((leading.length + days.length) % 7)) % 7;
+  return [...leading, ...days, ...Array.from({ length: trailingCount }, () => null)];
 }
