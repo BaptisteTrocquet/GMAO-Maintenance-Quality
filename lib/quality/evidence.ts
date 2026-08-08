@@ -11,7 +11,8 @@ export type QualityEvidencePhase =
   | "CONTAINMENT"
   | "ROOT_CAUSE"
   | "CAPA"
-  | "EFFECTIVENESS";
+  | "EFFECTIVENESS"
+  | "EIGHT_D";
 
 export type QualityEvidenceKind = "DOCUMENT" | "PHOTO" | "RECORD";
 
@@ -66,7 +67,8 @@ function parseEvidence(value: string | null): QualityEvidenceSnapshot | null {
         parsed.phase !== "CONTAINMENT" &&
         parsed.phase !== "ROOT_CAUSE" &&
         parsed.phase !== "CAPA" &&
-        parsed.phase !== "EFFECTIVENESS") ||
+        parsed.phase !== "EFFECTIVENESS" &&
+        parsed.phase !== "EIGHT_D") ||
       (parsed.kind !== "DOCUMENT" && parsed.kind !== "PHOTO" && parsed.kind !== "RECORD") ||
       typeof parsed.fileName !== "string" ||
       typeof parsed.storageKey !== "string" ||
