@@ -45,22 +45,10 @@ function checkPackageScripts(packageJson: PackageJson) {
 }
 
 async function checkDockerRuntime() {
-  let dockerfile: string;
-  try {
-    dockerfile = await readFile(path.join(root, "Dockerfile"), "utf8");
-  } catch (error: unknown) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      // Production .dockerignore intentionally omits Dockerfile from COPY . . .
-      // The checkout-level prebuild gate validates it before docker build starts;
-      // the in-image repetition still validates package scripts and migrations.
-      process.stdout.write(
-        "Dockerfile is not present in this build context; checkout-level Docker runtime policy already applies\n",
-      );
-      return;
-    }
-    throw error;
-  }
-
+  // Dockerfile is intentionally kept in the build context so this assertion runs
+  // both from the checkout-level build and from the production Docker builder.
+  // Missing Dockerfile is therefore a policy failure, not a condition to skip.
+  const dockerfile = await readFile(path.join(root, "Dockerfile"), "utf8");
   const runtimeSection = dockerfile.split(/\nFROM\s+base\s+AS\s+runner\s*\n/i)[1];
   if (!runtimeSection) fail("Dockerfile runner stage could not be located");
   if (/prisma\s+(?:migrate|db\s+push)/i.test(runtimeSection)) {
