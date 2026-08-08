@@ -3,6 +3,12 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import WorkOrderCameraAttachments from "@/app/maintenance/[workOrderId]/work-order-camera-attachments";
+import {
+  fetchTechnicianRead,
+  isOfflineReadPartition,
+  OFFLINE_CACHED_AT_HEADER,
+  OFFLINE_SOURCE_HEADER,
+} from "@/lib/pwa/technician-read-cache-client";
 
 type WorkOrderStatus =
   | "REQUESTED"
@@ -46,9 +52,6 @@ type ApiResponse<T> = {
 };
 
 const OFFLINE_PARTITION_HEADER = "x-opengmao-offline-partition";
-const OFFLINE_SOURCE_HEADER = "x-opengmao-offline-source";
-const OFFLINE_CACHED_AT_HEADER = "x-opengmao-offline-cached-at";
-const PARTITION_PATTERN = /^[a-f0-9]{32}$/;
 
 const buttonStyle = {
   minHeight: 44,
@@ -114,21 +117,16 @@ export default function TechnicianWorkOrder({
     setLoading(true);
     setError("");
     const query = new URLSearchParams({ organizationId, siteId });
+    const endpoint = `/api/work-orders/technician/${encodeURIComponent(workOrderId)}?${query.toString()}`;
     try {
-      const response = await fetch(
-        `/api/work-orders/technician/${encodeURIComponent(workOrderId)}?${query.toString()}`,
-        {
-          cache: "no-store",
-          headers: cachePartition ? { [OFFLINE_PARTITION_HEADER]: cachePartition } : undefined,
-        },
-      );
+      const response = await fetchTechnicianRead(endpoint, cachePartition);
       const body = (await response.json()) as ApiResponse<{ workOrder: TechnicianWorkOrderData }>;
       if (!response.ok || !body.data) {
         throw new Error(body.error?.message ?? "Unable to load technician work order");
       }
 
       const confirmedPartition = response.headers.get(OFFLINE_PARTITION_HEADER) ?? "";
-      if (PARTITION_PATTERN.test(confirmedPartition) && confirmedPartition !== cachePartition) {
+      if (isOfflineReadPartition(confirmedPartition) && confirmedPartition !== cachePartition) {
         setCachePartition(confirmedPartition);
       }
 
