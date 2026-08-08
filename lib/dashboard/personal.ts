@@ -18,7 +18,7 @@ function assignedWorkWhere(input: {
       { assigneeId: input.userId },
       {
         assigneeId: null,
-        team: { members: { some: { userId: input.userId } } },
+        team: { active: true, members: { some: { userId: input.userId } } },
       },
     ],
   };
