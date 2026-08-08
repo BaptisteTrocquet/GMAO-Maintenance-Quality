@@ -36,6 +36,8 @@ export class RootCauseAnalysisError extends Error {
       | "ANALYSIS_NOT_FOUND"
       | "ANALYSIS_COMPLETED"
       | "ANALYSIS_NOT_COMPLETED"
+      | "PROBLEM_STATEMENT_REQUIRED"
+      | "FIVE_WHYS_INVALID"
       | "FIVE_WHYS_INCOMPLETE"
       | "ROOT_CAUSE_CONCLUSION_REQUIRED"
       | "CONCURRENT_UPDATE",
@@ -119,11 +121,8 @@ async function appendAnalysis(
   });
 }
 
-function isRetryable(error: unknown) {
-  return (
-    error instanceof Prisma.PrismaClientKnownRequestError &&
-    (error.code === "P2034" || error.code === "P2002")
-  );
+function prismaCode(error: unknown, code: string) {
+  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === code;
 }
 
 async function serializable<T>(work: (tx: Prisma.TransactionClient) => Promise<T>) {
@@ -135,7 +134,17 @@ async function serializable<T>(work: (tx: Prisma.TransactionClient) => Promise<T
       });
     } catch (error) {
       lastError = error;
-      if (!isRetryable(error) || attempt === MAX_TRANSACTION_ATTEMPTS) throw error;
+      const retryable = prismaCode(error, "P2034") || prismaCode(error, "P2002");
+      if (!retryable) throw error;
+      if (attempt === MAX_TRANSACTION_ATTEMPTS) {
+        if (prismaCode(error, "P2002")) {
+          throw new RootCauseAnalysisError(
+            "CONCURRENT_UPDATE",
+            "Root-cause analysis changed concurrently; reload before editing",
+          );
+        }
+        throw error;
+      }
     }
   }
   throw lastError;
@@ -177,6 +186,12 @@ async function requireInvestigatingEvent(
 }
 
 function normalizeFiveWhys(answers: string[]) {
+  if (answers.length > 5 || answers.some((answer) => !answer.trim())) {
+    throw new RootCauseAnalysisError(
+      "FIVE_WHYS_INVALID",
+      "5 Why analysis accepts at most five non-empty answers in sequence",
+    );
+  }
   return answers.map((answer, index) => ({
     sequence: index + 1,
     answer: answer.trim(),
@@ -212,6 +227,16 @@ export async function saveRootCauseAnalysis(input: {
   rootCauseConclusion?: string | null;
   actorId: string;
 }) {
+  const problemStatement = input.problemStatement.trim();
+  if (!problemStatement) {
+    throw new RootCauseAnalysisError(
+      "PROBLEM_STATEMENT_REQUIRED",
+      "A problem statement is required for root-cause analysis",
+    );
+  }
+  const fiveWhys = normalizeFiveWhys(input.fiveWhys);
+  const rootCauseConclusion = input.rootCauseConclusion?.trim() || null;
+
   return serializable(async (tx) => {
     await requireInvestigatingEvent(tx, input);
     const previous = await latestAnalysis(tx, input.eventId);
@@ -230,9 +255,9 @@ export async function saveRootCauseAnalysis(input: {
       siteId: input.siteId,
       qualityEventId: input.eventId,
       status: "DRAFT",
-      problemStatement: input.problemStatement.trim(),
-      fiveWhys: normalizeFiveWhys(input.fiveWhys),
-      rootCauseConclusion: input.rootCauseConclusion?.trim() || null,
+      problemStatement,
+      fiveWhys,
+      rootCauseConclusion,
       createdById: previous?.createdById ?? input.actorId,
       completedById: null,
       completedAt: null,
