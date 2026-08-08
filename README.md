@@ -29,14 +29,16 @@ Build a modern alternative to legacy CMMS/GMAO products with a clean UX, strong 
 ```bash
 cp .env.example .env
 docker compose up -d db
-npm install
+npm ci
 npm run prisma:generate
-npm run prisma:migrate
+npm run prisma:migrate:deploy
 npm run prisma:seed
 npm run dev
 ```
 
 Then open `http://localhost:3000`.
+
+For schema changes, use `npm run prisma:migrate -- --name <change_name>` and commit both `prisma/schema.prisma` and the generated migration. See `docs/DATABASE_MIGRATIONS.md` for the migration and existing-database baseline procedure.
 
 ## Roadmap
 
