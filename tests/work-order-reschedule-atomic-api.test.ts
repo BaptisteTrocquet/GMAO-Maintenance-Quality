@@ -112,7 +112,7 @@ describe("atomic calendar rescheduling API", () => {
         entityId: "wo-1",
         action: "RESCHEDULED",
         beforeJson: expect.any(String),
-        afterJson: expect.stringContaining('\"targetDate\":\"2026-08-12\"'),
+        afterJson: expect.stringContaining('"targetDate":"2026-08-12"'),
       }),
     });
     expect(mocks.workOrderUpdate.mock.invocationCallOrder[0]).toBeLessThan(
