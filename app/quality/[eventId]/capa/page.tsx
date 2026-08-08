@@ -69,9 +69,9 @@ export default async function CapaPage({
         eventId={eventId}
         eventStatus={qualityEvent.status}
         initialCapa={scoped.capa}
-        owners={memberships.map((membership) => ({
+        members={memberships.map((membership) => ({
           id: membership.userId,
-          name: membership.user.displayName,
+          displayName: membership.user.displayName,
         }))}
       />
 
