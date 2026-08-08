@@ -1,6 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+} from "react";
 import { useRouter } from "next/navigation";
 import {
   COMMAND_PALETTE_QUICK_ACTIONS,
@@ -34,7 +41,7 @@ export default function CommandPalette({ organizationId, siteId }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [activeIndex, setActiveIndex] = useState(0);
 
-  function close({ restoreFocus = true } = {}) {
+  const close = useCallback(({ restoreFocus = true }: { restoreFocus?: boolean } = {}) => {
     setOpen(false);
     setQuery("");
     setResults([]);
@@ -42,13 +49,14 @@ export default function CommandPalette({ organizationId, siteId }: Props) {
     if (restoreFocus) {
       window.requestAnimationFrame(() => triggerRef.current?.focus());
     }
-  }
+  }, []);
 
   useEffect(() => {
     function globalKeyDown(event: globalThis.KeyboardEvent) {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
-        setOpen((value) => !value);
+        if (open) close();
+        else setOpen(true);
       } else if (event.key === "Escape" && open) {
         event.preventDefault();
         close();
@@ -56,7 +64,7 @@ export default function CommandPalette({ organizationId, siteId }: Props) {
     }
     window.addEventListener("keydown", globalKeyDown);
     return () => window.removeEventListener("keydown", globalKeyDown);
-  }, [open]);
+  }, [close, open]);
 
   useEffect(() => {
     if (!open) return;
@@ -140,6 +148,7 @@ export default function CommandPalette({ organizationId, siteId }: Props) {
       navigate(item);
     } else if (event.key === "Escape") {
       event.preventDefault();
+      event.stopPropagation();
       close();
     }
   }
