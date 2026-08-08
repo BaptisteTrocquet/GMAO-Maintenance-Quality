@@ -49,7 +49,9 @@ export async function buildBacklogDashboard(input: {
     db.workOrder.count({ where: { ...openScope, dueAt: { lt: now } } }),
     db.workOrder.count({ where: { ...openScope, plannedStart: null } }),
     db.workOrder.count({ where: { ...openScope, priority: "URGENT" } }),
-    db.workOrder.count({ where: { ...openScope, requestedAt: { gte: sevenDaysAgo } } }),
+    db.workOrder.count({
+      where: { ...openScope, requestedAt: { gte: sevenDaysAgo, lte: now } },
+    }),
     db.workOrder.count({
       where: { ...openScope, requestedAt: { gte: thirtyDaysAgo, lt: sevenDaysAgo } },
     }),
