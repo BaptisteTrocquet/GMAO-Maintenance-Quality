@@ -8,6 +8,8 @@ import {
   WORK_ORDER_BOARD_LIMIT,
   type WorkOrderDueFilter,
 } from "@/lib/maintenance/board";
+import { BULK_WORK_ORDER_LIMIT } from "@/lib/work-orders/bulk-triage";
+import BulkActionsPanel from "./bulk-actions-panel";
 import SavedViewControls from "./saved-view-controls";
 import WorkOrderCard from "./work-order-card";
 
@@ -110,6 +112,13 @@ export default async function WorkOrderKanbanPage({
   }));
   const board = buildWorkOrderBoard({ workOrders: items, dueFilter: selectedFilter, now });
   const visibleCount = board.reduce((sum, column) => sum + column.items.length, 0);
+  const bulkOptions = items.slice(0, BULK_WORK_ORDER_LIMIT).map((workOrder) => ({
+    id: workOrder.id,
+    number: workOrder.number,
+    title: workOrder.title,
+    priority: workOrder.priority,
+    dueAt: workOrder.dueAt?.toISOString() ?? null,
+  }));
 
   return (
     <>
@@ -161,6 +170,14 @@ export default async function WorkOrderKanbanPage({
           </p>
         ) : null}
       </section>
+
+      <div className="section">
+        <BulkActionsPanel
+          organizationId={organizationId}
+          siteId={siteId}
+          workOrders={bulkOptions}
+        />
+      </div>
 
       <section className="section" aria-label="Work-order Kanban board">
         <div
