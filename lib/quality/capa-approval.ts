@@ -150,19 +150,21 @@ export async function approveCapaGoverned(input: {
             );
           }
 
-          const lastDraftEdit = await tx.auditLog.findFirst({
+          const draftEdits = await tx.auditLog.findMany({
             where: {
               entityType: CAPA_ENTITY,
               entityId: input.eventId,
               action: { in: ["CREATED", "PLAN_UPDATED"] },
             },
-            orderBy: { createdAt: "desc" },
             select: { actorId: true },
           });
-          if (lastDraftEdit?.actorId === input.approverId) {
+          const draftAuthors = new Set(
+            draftEdits.flatMap((edit) => (edit.actorId ? [edit.actorId] : [])),
+          );
+          if (draftAuthors.has(input.approverId)) {
             throw new CapaApprovalError(
               "CAPA_SELF_APPROVAL_NOT_ALLOWED",
-              "The last author or editor of the CAPA draft cannot approve that draft",
+              "A user who authored or edited the CAPA draft cannot approve that CAPA",
             );
           }
 
