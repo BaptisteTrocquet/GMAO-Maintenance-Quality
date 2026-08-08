@@ -78,7 +78,7 @@ async function listRecentQualityNotifications(input: {
   organizationId: string;
   siteId: string;
 }) {
-  const marker = `\"organizationId\":\"${input.organizationId}\",\"siteId\":\"${input.siteId}\"`;
+  const marker = `"organizationId":"${input.organizationId}","siteId":"${input.siteId}"`;
   const logs = await db.auditLog.findMany({
     where: { entityType: "QualityEvent", afterJson: { contains: marker } },
     orderBy: { createdAt: "desc" },
