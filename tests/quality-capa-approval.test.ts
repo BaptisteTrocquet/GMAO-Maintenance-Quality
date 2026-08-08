@@ -65,7 +65,7 @@ function mockApprovalReads(lastDraftEditorId = "quality-author") {
 
 describe("CAPA approval separation", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     mocks.transaction.mockImplementation(
       async (callback: (transaction: typeof tx) => Promise<unknown>) => callback(tx),
     );
