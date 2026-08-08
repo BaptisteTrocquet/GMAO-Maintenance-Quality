@@ -1,7 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+} from "react";
 import { useRouter } from "next/navigation";
 import {
   COMMAND_PALETTE_QUICK_ACTIONS,
@@ -26,8 +32,13 @@ type SearchResponse = {
   error?: { message?: string };
 };
 
+const FOCUSABLE_SELECTOR =
+  'button:not([disabled]), input:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])';
+
 export default function CommandPalette({ organizationId, siteId }: Props) {
   const router = useRouter();
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useRef<HTMLElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -37,17 +48,27 @@ export default function CommandPalette({ organizationId, siteId }: Props) {
   const [activeIndex, setActiveIndex] = useState(0);
 
   useEffect(() => {
-    function globalKeyDown(event: globalThis.KeyboardEvent) {
+    function dismissFromKeyboard() {
+      setOpen(false);
+      setQuery("");
+      setResults([]);
+      setError(null);
+      window.requestAnimationFrame(() => triggerRef.current?.focus());
+    }
+
+    function onGlobalKeyDown(event: globalThis.KeyboardEvent) {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
-        setOpen((value) => !value);
-      } else if (event.key === "Escape") {
-        setOpen(false);
+        if (open) dismissFromKeyboard();
+        else setOpen(true);
+      } else if (event.key === "Escape" && open) {
+        dismissFromKeyboard();
       }
     }
-    window.addEventListener("keydown", globalKeyDown);
-    return () => window.removeEventListener("keydown", globalKeyDown);
-  }, []);
+
+    window.addEventListener("keydown", onGlobalKeyDown);
+    return () => window.removeEventListener("keydown", onGlobalKeyDown);
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -63,6 +84,10 @@ export default function CommandPalette({ organizationId, siteId }: Props) {
       return;
     }
 
+    setResults([]);
+    setLoading(true);
+    setError(null);
+
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
       const params = new URLSearchParams({
@@ -70,8 +95,6 @@ export default function CommandPalette({ organizationId, siteId }: Props) {
         siteId,
         q: query.trim(),
       });
-      setLoading(true);
-      setError(null);
       void fetch(`/api/search?${params.toString()}`, { signal: controller.signal })
         .then(async (response) => {
           const body = (await response.json()) as SearchResponse;
@@ -101,25 +124,38 @@ export default function CommandPalette({ organizationId, siteId }: Props) {
 
   useEffect(() => setActiveIndex(items.length ? 0 : -1), [items]);
 
-  function close() {
+  function close({ restoreFocus = true } = {}) {
     setOpen(false);
     setQuery("");
     setResults([]);
     setError(null);
+    if (restoreFocus) {
+      window.requestAnimationFrame(() => triggerRef.current?.focus());
+    }
   }
 
   function navigate(item: CommandPaletteItem) {
-    close();
+    close({ restoreFocus: false });
     router.push(item.href);
   }
 
   function onInputKeyDown(event: KeyboardEvent<HTMLInputElement>) {
     if (event.key === "ArrowDown") {
       event.preventDefault();
-      setActiveIndex((current) => nextCommandIndex({ current, direction: 1, total: items.length }));
+      setActiveIndex((current) =>
+        nextCommandIndex({ current, direction: 1, total: items.length }),
+      );
     } else if (event.key === "ArrowUp") {
       event.preventDefault();
-      setActiveIndex((current) => nextCommandIndex({ current, direction: -1, total: items.length }));
+      setActiveIndex((current) =>
+        nextCommandIndex({ current, direction: -1, total: items.length }),
+      );
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      setActiveIndex(items.length ? 0 : -1);
+    } else if (event.key === "End") {
+      event.preventDefault();
+      setActiveIndex(items.length ? items.length - 1 : -1);
     } else if (event.key === "Enter") {
       const item = items[activeIndex];
       if (!item) return;
@@ -127,13 +163,40 @@ export default function CommandPalette({ organizationId, siteId }: Props) {
       navigate(item);
     } else if (event.key === "Escape") {
       event.preventDefault();
+      event.stopPropagation();
       close();
+    }
+  }
+
+  function onDialogKeyDown(event: KeyboardEvent<HTMLElement>) {
+    if (event.key !== "Tab") return;
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+
+    const focusable = Array.from(dialog.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
+      (element) => !element.hasAttribute("disabled") && element.getAttribute("aria-hidden") !== "true",
+    );
+    if (!focusable.length) {
+      event.preventDefault();
+      return;
+    }
+
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    const active = document.activeElement;
+    if (event.shiftKey && active === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && active === last) {
+      event.preventDefault();
+      first.focus();
     }
   }
 
   return (
     <>
       <button
+        ref={triggerRef}
         type="button"
         onClick={() => setOpen(true)}
         aria-haspopup="dialog"
@@ -161,39 +224,53 @@ export default function CommandPalette({ organizationId, siteId }: Props) {
           }}
         >
           <section
+            ref={dialogRef}
             role="dialog"
             aria-modal="true"
             aria-labelledby="command-palette-title"
+            onKeyDown={onDialogKeyDown}
             style={{ width: "min(720px, 100%)", maxHeight: "72vh", overflow: "auto" }}
             className="card"
           >
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
               <h2 id="command-palette-title" style={{ margin: 0 }}>Command palette</h2>
-              <button type="button" onClick={close} aria-label="Close command palette">Esc</button>
+              <button type="button" onClick={() => close()} aria-label="Close command palette">Esc</button>
             </div>
 
             <label htmlFor="command-palette-input" className="muted" style={{ display: "block", marginTop: 12 }}>
-              Search records or choose an action
+              Search permitted records or choose an action
             </label>
             <input
               ref={inputRef}
               id="command-palette-input"
+              role="combobox"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               onKeyDown={onInputKeyDown}
               autoComplete="off"
               placeholder="Type at least two characters…"
+              aria-autocomplete="list"
+              aria-expanded={open}
               aria-controls="command-palette-results"
               aria-activedescendant={activeIndex >= 0 ? `command-item-${activeIndex}` : undefined}
               style={{ width: "100%", marginTop: 6 }}
             />
 
             <div className="muted" style={{ marginTop: 8, fontSize: 12 }} aria-live="polite">
-              {loading ? "Searching…" : query.trim().length < GLOBAL_SEARCH_MIN_LENGTH ? "Quick actions · use ↑/↓ and Enter" : `${items.length} result${items.length === 1 ? "" : "s"}`}
+              {loading
+                ? "Searching…"
+                : query.trim().length < GLOBAL_SEARCH_MIN_LENGTH
+                  ? "Quick actions · use ↑/↓, Home/End and Enter"
+                  : `${items.length} result${items.length === 1 ? "" : "s"}`}
             </div>
             {error ? <div role="alert" style={{ marginTop: 8 }}>{error}</div> : null}
 
-            <div id="command-palette-results" role="listbox" aria-label="Command results" style={{ display: "grid", gap: 6, marginTop: 12 }}>
+            <div
+              id="command-palette-results"
+              role="listbox"
+              aria-label="Command results"
+              style={{ display: "grid", gap: 6, marginTop: 12 }}
+            >
               {items.map((item, index) => (
                 <Link
                   id={`command-item-${index}`}
@@ -201,7 +278,7 @@ export default function CommandPalette({ organizationId, siteId }: Props) {
                   aria-selected={index === activeIndex}
                   key={item.key}
                   href={item.href}
-                  onClick={close}
+                  onClick={() => close({ restoreFocus: false })}
                   onMouseEnter={() => setActiveIndex(index)}
                   style={{
                     display: "grid",
