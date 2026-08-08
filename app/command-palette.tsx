@@ -30,9 +30,13 @@ type SearchResponse = {
   error?: { message?: string };
 };
 
+const FOCUSABLE_SELECTOR =
+  'button:not([disabled]), input:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])';
+
 export default function CommandPalette({ organizationId, siteId }: Props) {
   const router = useRouter();
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useRef<HTMLElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -45,6 +49,7 @@ export default function CommandPalette({ organizationId, siteId }: Props) {
     setOpen(false);
     setQuery("");
     setResults([]);
+    setLoading(false);
     setError(null);
     if (restoreFocus) {
       window.requestAnimationFrame(() => triggerRef.current?.focus());
@@ -87,11 +92,14 @@ export default function CommandPalette({ organizationId, siteId }: Props) {
       return;
     }
 
+    // Do not allow an old query's commands to remain actionable during the debounce window.
+    setResults([]);
+    setLoading(true);
+    setError(null);
+
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
       const params = new URLSearchParams({ organizationId, siteId, q: normalized });
-      setLoading(true);
-      setError(null);
       void fetch(`/api/search?${params.toString()}`, { signal: controller.signal })
         .then(async (response) => {
           const body = (await response.json()) as SearchResponse;
@@ -153,6 +161,29 @@ export default function CommandPalette({ organizationId, siteId }: Props) {
     }
   }
 
+  function onDialogKeyDown(event: KeyboardEvent<HTMLElement>) {
+    if (event.key !== "Tab") return;
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const focusable = Array.from(dialog.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
+      (element) => !element.hasAttribute("disabled") && element.getAttribute("aria-hidden") !== "true",
+    );
+    if (!focusable.length) {
+      event.preventDefault();
+      return;
+    }
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    const active = document.activeElement;
+    if (event.shiftKey && active === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && active === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
+
   return (
     <>
       <button
@@ -185,9 +216,11 @@ export default function CommandPalette({ organizationId, siteId }: Props) {
           }}
         >
           <section
+            ref={dialogRef}
             role="dialog"
             aria-modal="true"
             aria-labelledby="command-palette-title"
+            onKeyDown={onDialogKeyDown}
             style={{ width: "min(720px, 100%)", maxHeight: "72vh", overflow: "auto" }}
             className="card"
           >
