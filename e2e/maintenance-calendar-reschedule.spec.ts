@@ -10,7 +10,7 @@ test.afterAll(async () => {
 async function demoScope() {
   const organization = await prisma.organization.findUnique({
     where: { slug: "demo-operations" },
-    select: { id: true },
+    select: { id: true, timezone: true },
   });
   if (!organization) throw new Error("Synthetic demo organization was not seeded");
 
@@ -28,11 +28,20 @@ async function demoScope() {
     throw new Error("Synthetic planned work order was not seeded in the demo site");
   }
 
+  const monthParts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: organization.timezone,
+    year: "numeric",
+    month: "2-digit",
+  }).formatToParts(workOrder.plannedStart);
+  const year = monthParts.find((part) => part.type === "year")?.value;
+  const month = monthParts.find((part) => part.type === "month")?.value;
+  if (!year || !month) throw new Error("Could not resolve synthetic planning month");
+
   return {
     organizationId: organization.id,
     siteId: site.id,
     workOrderNumber: workOrder.number,
-    month: workOrder.plannedStart.toISOString().slice(0, 7),
+    month: `${year}-${month}`,
   };
 }
 
