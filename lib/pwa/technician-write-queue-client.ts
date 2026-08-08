@@ -11,6 +11,9 @@ export type TechnicianQueuedWrite = {
   body: Record<string, unknown>;
   sequence: number;
   createdAt: string;
+  attempts: number;
+  lastAttemptAt: string | null;
+  nextAttemptAt: string | null;
   lastError: string | null;
 };
 
@@ -19,12 +22,15 @@ export type TechnicianQueueFlushResult = {
   remaining: number;
   blocked: TechnicianQueuedWrite | null;
   message: string | null;
+  retryAt: string | null;
 };
 
 const DATABASE_NAME = "opengmao-technician-offline";
 const DATABASE_VERSION = 1;
 const STORE_NAME = "writeQueue";
 const PARTITION_PATTERN = /^[a-f0-9]{32}$/;
+const MAX_RETRY_DELAY_MS = 30_000;
+const RETRYABLE_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
 
 function queueSupported() {
   return typeof window !== "undefined" && "indexedDB" in window;
@@ -76,6 +82,25 @@ export function isTechnicianQueuePartition(value: string) {
   return PARTITION_PATTERN.test(value);
 }
 
+export function technicianRetryDelayMs(attempts: number) {
+  const exponent = Math.max(0, Math.min(10, Math.floor(attempts) - 1));
+  return Math.min(MAX_RETRY_DELAY_MS, 1_000 * 2 ** exponent);
+}
+
+export function isRetryableTechnicianWriteStatus(status: number) {
+  return RETRYABLE_STATUS.has(status);
+}
+
+function normalizeWrite(value: TechnicianQueuedWrite): TechnicianQueuedWrite {
+  return {
+    ...value,
+    attempts: Number.isFinite(value.attempts) ? value.attempts : 0,
+    lastAttemptAt: typeof value.lastAttemptAt === "string" ? value.lastAttemptAt : null,
+    nextAttemptAt: typeof value.nextAttemptAt === "string" ? value.nextAttemptAt : null,
+    lastError: typeof value.lastError === "string" ? value.lastError : null,
+  };
+}
+
 export async function enqueueTechnicianWrite(input: {
   partition: string;
   organizationId: string;
@@ -97,6 +122,9 @@ export async function enqueueTechnicianWrite(input: {
     id: crypto.randomUUID(),
     sequence: 0,
     createdAt: new Date().toISOString(),
+    attempts: 0,
+    lastAttemptAt: null,
+    nextAttemptAt: null,
     lastError: null,
   };
 
@@ -126,6 +154,7 @@ export async function listTechnicianWrites(partition: string, workOrderId?: stri
     const request = store.getAll();
     request.onsuccess = () => {
       const writes = (request.result as TechnicianQueuedWrite[])
+        .map(normalizeWrite)
         .filter(
           (item) =>
             item.partition === partition &&
@@ -146,16 +175,41 @@ async function removeTechnicianWrite(id: string) {
   });
 }
 
-async function markTechnicianWriteError(id: string, message: string) {
-  return withStore<void>("readwrite", (store, done, fail) => {
+async function updateTechnicianWrite(
+  id: string,
+  update: (current: TechnicianQueuedWrite) => TechnicianQueuedWrite,
+) {
+  return withStore<TechnicianQueuedWrite | null>("readwrite", (store, done, fail) => {
     const getRequest = store.get(id);
     getRequest.onerror = () => fail(getRequest.error ?? new Error("Unable to read queued write"));
     getRequest.onsuccess = () => {
-      const current = getRequest.result as TechnicianQueuedWrite | undefined;
-      if (!current) return done(undefined);
-      const request = store.put({ ...current, lastError: message });
-      request.onsuccess = () => done(undefined);
+      const raw = getRequest.result as TechnicianQueuedWrite | undefined;
+      if (!raw) return done(null);
+      const next = update(normalizeWrite(raw));
+      const request = store.put(next);
+      request.onsuccess = () => done(next);
       request.onerror = () => fail(request.error ?? new Error("Unable to update queued write"));
+    };
+  });
+}
+
+async function markTechnicianWriteError(id: string, message: string) {
+  return updateTechnicianWrite(id, (current) => ({
+    ...current,
+    lastError: message,
+    nextAttemptAt: null,
+  }));
+}
+
+async function markTechnicianWriteRetry(id: string, message: string, now: Date) {
+  return updateTechnicianWrite(id, (current) => {
+    const attempts = current.attempts + 1;
+    return {
+      ...current,
+      attempts,
+      lastAttemptAt: now.toISOString(),
+      nextAttemptAt: new Date(now.getTime() + technicianRetryDelayMs(attempts)).toISOString(),
+      lastError: message,
     };
   });
 }
@@ -214,23 +268,56 @@ function responseErrorMessage(body: unknown, fallback: string) {
   return fallback;
 }
 
-export async function flushTechnicianWrites(partition: string): Promise<TechnicianQueueFlushResult> {
+export async function flushTechnicianWrites(
+  partition: string,
+  options: { force?: boolean; now?: Date } = {},
+): Promise<TechnicianQueueFlushResult> {
   if (!isTechnicianQueuePartition(partition)) {
-    return { synced: 0, remaining: 0, blocked: null, message: "No authenticated offline queue is available." };
+    return {
+      synced: 0,
+      remaining: 0,
+      blocked: null,
+      message: "No authenticated offline queue is available.",
+      retryAt: null,
+    };
   }
   if (typeof navigator !== "undefined" && !navigator.onLine) {
     const remaining = (await listTechnicianWrites(partition)).length;
-    return { synced: 0, remaining, blocked: null, message: "Device is offline." };
+    return {
+      synced: 0,
+      remaining,
+      blocked: null,
+      message: "Device is offline.",
+      retryAt: null,
+    };
   }
 
   const writes = await listTechnicianWrites(partition);
   let synced = 0;
 
   for (const write of writes) {
+    const now = options.now ?? new Date();
+    if (
+      !options.force &&
+      write.nextAttemptAt &&
+      Date.parse(write.nextAttemptAt) > now.getTime()
+    ) {
+      return {
+        synced,
+        remaining: writes.length - synced,
+        blocked: null,
+        message: "Queued write is waiting for its retry window.",
+        retryAt: write.nextAttemptAt,
+      };
+    }
+
     try {
       const response = await fetch(write.endpoint, {
         method: "PATCH",
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          "Idempotency-Key": write.id,
+        },
         body: JSON.stringify(write.body),
       });
       const body = await response.json().catch(() => null);
@@ -241,8 +328,7 @@ export async function flushTechnicianWrites(partition: string): Promise<Technici
         continue;
       }
 
-      // A queued status transition is state-setting. If replay reports no changes,
-      // the requested status is already current, so removing it is safe.
+      // Compatibility for queues created before server idempotency receipts existed.
       if (
         write.kind === "transition" &&
         response.status === 400 &&
@@ -260,14 +346,41 @@ export async function flushTechnicianWrites(partition: string): Promise<Technici
       }
 
       const message = responseErrorMessage(body, `Queued write failed with HTTP ${response.status}`);
-      await markTechnicianWriteError(write.id, message);
+      if (isRetryableTechnicianWriteStatus(response.status)) {
+        const retried = await markTechnicianWriteRetry(write.id, message, now);
+        const remaining = (await listTechnicianWrites(partition)).length;
+        return {
+          synced,
+          remaining,
+          blocked: null,
+          message,
+          retryAt: retried?.nextAttemptAt ?? null,
+        };
+      }
+
+      const blocked = await markTechnicianWriteError(write.id, message);
       const remaining = (await listTechnicianWrites(partition)).length;
-      return { synced, remaining, blocked: { ...write, lastError: message }, message };
+      return {
+        synced,
+        remaining,
+        blocked: blocked ?? { ...write, lastError: message },
+        message,
+        retryAt: null,
+      };
     } catch {
+      const now = options.now ?? new Date();
+      const message = "Network unavailable while syncing queued work.";
+      const retried = await markTechnicianWriteRetry(write.id, message, now);
       const remaining = (await listTechnicianWrites(partition)).length;
-      return { synced, remaining, blocked: null, message: "Network unavailable while syncing queued work." };
+      return {
+        synced,
+        remaining,
+        blocked: null,
+        message,
+        retryAt: retried?.nextAttemptAt ?? null,
+      };
     }
   }
 
-  return { synced, remaining: 0, blocked: null, message: null };
+  return { synced, remaining: 0, blocked: null, message: null, retryAt: null };
 }

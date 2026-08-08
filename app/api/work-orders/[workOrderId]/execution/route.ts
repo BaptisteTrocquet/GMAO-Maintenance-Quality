@@ -4,6 +4,13 @@ import { AccessDeniedError, assertSitePermission } from "@/lib/access-control";
 import { authenticateRequest } from "@/lib/auth/request-auth";
 import { db } from "@/lib/db";
 import { canExecuteWorkOrder } from "@/lib/work-orders/authorization";
+import {
+  commitIdempotentWorkOrderMutation,
+  IDEMPOTENT_REPLAY_HEADER,
+  lookupWorkOrderIdempotencyReplay,
+  prepareWorkOrderIdempotency,
+  WorkOrderIdempotencyError,
+} from "@/lib/work-orders/idempotency";
 
 const checklistUpdateSchema = z
   .object({
@@ -32,6 +39,13 @@ function hasOwn(input: object, key: string) {
 function denied(error: unknown) {
   if (error instanceof AccessDeniedError) {
     return apiError(403, "ACCESS_DENIED", error.message);
+  }
+  throw error;
+}
+
+function idempotencyError(error: unknown) {
+  if (error instanceof WorkOrderIdempotencyError) {
+    return apiError(error.status, error.code, error.message);
   }
   throw error;
 }
@@ -110,25 +124,6 @@ export async function PATCH(
     return apiError(404, "WORK_ORDER_NOT_FOUND", "Work order not found in site scope");
   }
 
-  if (
-    hasChecklistAdd &&
-    !["APPROVED", "PLANNED", "IN_PROGRESS", "BLOCKED"].includes(existing.status)
-  ) {
-    return apiError(
-      409,
-      "CHECKLIST_NOT_CONFIGURABLE",
-      "Checklist can only be configured after approval and before closure",
-    );
-  }
-
-  if (hasExecutionCapture && existing.status !== "IN_PROGRESS" && existing.status !== "BLOCKED") {
-    return apiError(
-      409,
-      "WORK_NOT_ACTIVE",
-      "Execution can only be recorded while the work order is in progress or blocked",
-    );
-  }
-
   if (hasChecklistAdd) {
     try {
       assertSitePermission(auth.tenant.scope, existing.siteId, "work:manage");
@@ -161,10 +156,109 @@ export async function PATCH(
     }
   }
 
+  let idempotency = null;
+  try {
+    idempotency = prepareWorkOrderIdempotency({
+      request,
+      actorId: auth.session.user.id,
+      organizationId: parsed.data.organizationId,
+      siteId: parsed.data.siteId,
+      workOrderId,
+      operation: "WORK_ORDER_EXECUTION_PATCH",
+      payload: parsed.data,
+    });
+    const replay = await lookupWorkOrderIdempotencyReplay<unknown>(idempotency);
+    if (replay !== null) {
+      return apiData(replay, { headers: { [IDEMPOTENT_REPLAY_HEADER]: "true" } });
+    }
+  } catch (error) {
+    return idempotencyError(error);
+  }
+
+  if (
+    hasChecklistAdd &&
+    !["APPROVED", "PLANNED", "IN_PROGRESS", "BLOCKED"].includes(existing.status)
+  ) {
+    return apiError(
+      409,
+      "CHECKLIST_NOT_CONFIGURABLE",
+      "Checklist can only be configured after approval and before closure",
+    );
+  }
+
+  if (hasExecutionCapture && existing.status !== "IN_PROGRESS" && existing.status !== "BLOCKED") {
+    return apiError(
+      409,
+      "WORK_NOT_ACTIVE",
+      "Execution can only be recorded while the work order is in progress or blocked",
+    );
+  }
+
   if (parsed.data.checklistUpdates?.length) {
     const existingIds = new Set(existing.checkItems.map((item) => item.id));
     if (parsed.data.checklistUpdates.some((item) => !existingIds.has(item.id))) {
       return apiError(404, "CHECK_ITEM_NOT_FOUND", "Checklist item not found on this work order");
+    }
+  }
+
+  const executionData = {
+    ...(hasOwn(parsed.data, "laborMinutes")
+      ? { laborMinutes: parsed.data.laborMinutes ?? null }
+      : {}),
+    ...(hasOwn(parsed.data, "downtimeMinutes")
+      ? { downtimeMinutes: parsed.data.downtimeMinutes ?? null }
+      : {}),
+    ...(hasOwn(parsed.data, "completionNote")
+      ? { completionNote: parsed.data.completionNote ?? null }
+      : {}),
+  };
+  const auditAction =
+    hasChecklistAdd && !hasExecutionCapture ? "CHECKLIST_CONFIGURED" : "EXECUTION_UPDATED";
+
+  if (idempotency) {
+    try {
+      const result = await commitIdempotentWorkOrderMutation({
+        context: idempotency,
+        mutate: async (transaction) => {
+          if (hasExecutionFields) {
+            await transaction.workOrder.update({
+              where: { id: existing.id },
+              data: executionData,
+            });
+          }
+          if (parsed.data.checklistAdd?.length) {
+            await transaction.workOrderCheckItem.createMany({
+              data: parsed.data.checklistAdd.map((label) => ({ workOrderId: existing.id, label })),
+            });
+          }
+          for (const item of parsed.data.checklistUpdates ?? []) {
+            await transaction.workOrderCheckItem.update({
+              where: { id: item.id },
+              data: {
+                ...(item.completed !== undefined ? { completed: item.completed } : {}),
+                ...(hasOwn(item, "note") ? { note: item.note ?? null } : {}),
+              },
+            });
+          }
+          const updated = await transaction.workOrder.findFirst({
+            where: { id: existing.id },
+            include: { checkItems: true, assignee: true, team: true },
+          });
+          return {
+            value: updated,
+            audit: {
+              action: auditAction,
+              beforeJson: JSON.stringify(existing),
+              after: updated,
+            },
+          };
+        },
+      });
+      return apiData(result.value, {
+        headers: { [IDEMPOTENT_REPLAY_HEADER]: result.replayed ? "true" : "false" },
+      });
+    } catch (error) {
+      return idempotencyError(error);
     }
   }
 
@@ -173,17 +267,7 @@ export async function PATCH(
     transaction.push(
       db.workOrder.update({
         where: { id: existing.id },
-        data: {
-          ...(hasOwn(parsed.data, "laborMinutes")
-            ? { laborMinutes: parsed.data.laborMinutes ?? null }
-            : {}),
-          ...(hasOwn(parsed.data, "downtimeMinutes")
-            ? { downtimeMinutes: parsed.data.downtimeMinutes ?? null }
-            : {}),
-          ...(hasOwn(parsed.data, "completionNote")
-            ? { completionNote: parsed.data.completionNote ?? null }
-            : {}),
-        },
+        data: executionData,
       }),
     );
   }
@@ -219,8 +303,7 @@ export async function PATCH(
       actorId: auth.session.user.id,
       entityType: "WorkOrder",
       entityId: existing.id,
-      action:
-        hasChecklistAdd && !hasExecutionCapture ? "CHECKLIST_CONFIGURED" : "EXECUTION_UPDATED",
+      action: auditAction,
       beforeJson: JSON.stringify(existing),
       afterJson: JSON.stringify(updated),
     },
