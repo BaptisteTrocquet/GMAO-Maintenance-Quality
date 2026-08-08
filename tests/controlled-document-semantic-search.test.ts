@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MembershipRole } from "@prisma/client";
 import {
   EmbeddingProviderRegistry,
@@ -127,6 +127,10 @@ function hit(overrides: Partial<VectorStoreQueryHit> = {}): VectorStoreQueryHit 
 }
 
 describe("controlled document semantic search", () => {
+  beforeEach(() => {
+    readDocumentRevisionFileMock.mockReset();
+  });
+
   it("authorizes before database, embedding, vector-store or storage calls", async () => {
     const { instance, provider, adapter, repo } = service({ hits: [hit()] });
 
