@@ -29,6 +29,7 @@ type QueueResponse = {
 const OFFLINE_PARTITION_HEADER = "x-opengmao-offline-partition";
 const OFFLINE_SOURCE_HEADER = "x-opengmao-offline-source";
 const OFFLINE_CACHED_AT_HEADER = "x-opengmao-offline-cached-at";
+const PARTITION_PATTERN = /^[a-f0-9]{32}$/;
 
 const statusRank: Record<QueueWorkOrder["status"], number> = {
   IN_PROGRESS: 0,
@@ -70,6 +71,7 @@ export default function TechnicianWorkQueue({
   const [offlineRead, setOfflineRead] = useState(false);
   const [cachedAt, setCachedAt] = useState("");
   const [online, setOnline] = useState(true);
+  const [cachePartition, setCachePartition] = useState(offlinePartition);
 
   useEffect(() => {
     const update = () => setOnline(navigator.onLine);
@@ -89,13 +91,19 @@ export default function TechnicianWorkQueue({
     try {
       const response = await fetch(`/api/work-orders/technician?${query.toString()}`, {
         cache: "no-store",
-        headers: offlinePartition ? { [OFFLINE_PARTITION_HEADER]: offlinePartition } : undefined,
+        headers: cachePartition ? { [OFFLINE_PARTITION_HEADER]: cachePartition } : undefined,
       });
       const body = (await response.json()) as QueueResponse;
       if (!response.ok || !body.data) {
         throw new Error(body.error?.message ?? "Unable to load assigned work orders");
       }
       setWorkOrders(body.data.workOrders);
+
+      const confirmedPartition = response.headers.get(OFFLINE_PARTITION_HEADER) ?? "";
+      if (PARTITION_PATTERN.test(confirmedPartition) && confirmedPartition !== cachePartition) {
+        setCachePartition(confirmedPartition);
+      }
+
       const fromCache = response.headers.get(OFFLINE_SOURCE_HEADER) === "cache";
       setOfflineRead(fromCache);
       setCachedAt(fromCache ? response.headers.get(OFFLINE_CACHED_AT_HEADER) ?? "" : "");
@@ -104,7 +112,7 @@ export default function TechnicianWorkQueue({
     } finally {
       setLoading(false);
     }
-  }, [offlinePartition, organizationId, siteId]);
+  }, [cachePartition, organizationId, siteId]);
 
   useEffect(() => {
     void load();
@@ -130,9 +138,9 @@ export default function TechnicianWorkQueue({
           <div className="muted">
             {offlineRead
               ? "Read-only cached data. Reconnect before changing work orders."
-              : offlinePartition
+              : cachePartition
                 ? "Assigned work is cached after a successful online refresh."
-                : "Offline cache is unavailable without an authenticated session."}
+                : "Offline cache is armed after the first authenticated online read."}
           </div>
         </div>
         <button
