@@ -144,10 +144,11 @@ export async function buildReliabilityDashboard(input: {
         SELECT
           wo."assetId",
           wo."requestedAt",
-          LAG(wo."requestedAt") OVER (
+          wo."completedAt",
+          LAG(wo."completedAt") OVER (
             PARTITION BY wo."assetId"
             ORDER BY wo."requestedAt", wo.id
-          ) AS "previousRequestedAt"
+          ) AS "previousCompletedAt"
         FROM "WorkOrder" wo
         INNER JOIN "Site" site ON site.id = wo."siteId"
         WHERE wo."siteId" = ${input.siteId}
@@ -162,10 +163,10 @@ export async function buildReliabilityDashboard(input: {
         SELECT
           "assetId",
           "requestedAt",
-          EXTRACT(EPOCH FROM ("requestedAt" - "previousRequestedAt")) / 3600.0 AS hours
+          EXTRACT(EPOCH FROM ("requestedAt" - "previousCompletedAt")) / 3600.0 AS hours
         FROM failures
-        WHERE "previousRequestedAt" IS NOT NULL
-          AND "requestedAt" > "previousRequestedAt"
+        WHERE "previousCompletedAt" IS NOT NULL
+          AND "requestedAt" > "previousCompletedAt"
           ${mtbfFromFilter}
       )
       SELECT
@@ -201,7 +202,7 @@ export async function buildReliabilityDashboard(input: {
       mttr:
         "Average elapsed hours from startedAt to completedAt for completed corrective work orders whose completion falls inside the reporting window. Missing or chronologically invalid startedAt values are excluded and counted separately.",
       mtbf:
-        "Corrective-event interval proxy: average elapsed hours between successive non-cancelled corrective requestedAt events on the same asset. The later event must fall inside the reporting window; the prior event may precede it. This is a proxy until explicit failure and operating-hours telemetry exists.",
+        "Calendar-time MTBF: average elapsed hours from completion of the previous non-cancelled corrective repair to requestedAt of the next corrective event on the same asset. The next failure must fall inside the reporting window; the previous repair may precede it. This measures calendar uptime and is not operating-hours MTBF when assets are not continuously operated.",
     },
   };
 }
