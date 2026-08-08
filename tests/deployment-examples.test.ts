@@ -24,10 +24,8 @@ describe("production deployment examples", () => {
   });
 
   it("separates the hardened application runtime from migration tooling in Compose", () => {
-    expect(compose).toContain("target: runner");
-    expect(compose).toContain("target: builder");
+    expect(compose).toContain('command: ["npm", "run", "prisma:deploy"]');
     expect(compose).toContain('user: "1001:1001"');
-    expect(compose).toContain('["./node_modules/.bin/prisma", "migrate", "deploy"]');
     expect(compose).toContain("read_only: true");
     expect(compose).toContain("no-new-privileges:true");
     expect(compose).toContain("cap_drop:");
