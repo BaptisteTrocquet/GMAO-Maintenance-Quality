@@ -87,3 +87,15 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      - name: Build production Docker image
+        run: docker build --pull --tag gmao-maintenance-quality:ci .
+
+      - name: Verify production Docker runtime contract
+        run: >-
+          docker run --rm --entrypoint sh gmao-maintenance-quality:ci -c
+          'test "$(id -u)" = "1001" &&
+          test -f /app/server.js &&
+          test -w /app/data/documents &&
+          test ! -e /app/.env &&
+          test "$NODE_ENV" = "production"'
