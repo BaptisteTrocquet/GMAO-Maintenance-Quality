@@ -10,6 +10,8 @@ export type ProductionHardeningInputs = {
 const SECRET_KEY_PATTERN = /(SECRET|TOKEN|PASSWORD|PASSWD|MASTER_KEY|PRIVATE_KEY|ACCESS_KEY)/i;
 const SECRET_DOCKER_ARG_PATTERN = /^\s*ARG\s+[^\n]*(SECRET|TOKEN|PASSWORD|PASSWD|MASTER_KEY|PRIVATE_KEY|ACCESS_KEY)/im;
 const SECRET_DOCKER_ENV_PATTERN = /^\s*ENV\s+[^\n]*(SECRET|TOKEN|PASSWORD|PASSWD|MASTER_KEY|PRIVATE_KEY|ACCESS_KEY)\s*=\s*[^\s\\]+/im;
+const PINNED_TRIVY_ACTION = "aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25";
+const PINNED_TRIVY_VERSION = "v0.73.0";
 
 function normalizedLines(value: string) {
   return value
@@ -34,6 +36,24 @@ function validateSecretExamples(envExample: string, violations: string[]) {
     if (value) {
       violations.push(`.env.example must not contain a value for secret-like variable ${key}`);
     }
+  }
+}
+
+function validateContainerScan(ciWorkflow: string, violations: string[]) {
+  if (!ciWorkflow.includes(`uses: ${PINNED_TRIVY_ACTION}`)) {
+    violations.push("CI must pin the Trivy action to the approved immutable commit");
+  }
+  if (!new RegExp(`version:\\s*["']?${PINNED_TRIVY_VERSION.replaceAll(".", "\\.")}["']?`).test(ciWorkflow)) {
+    violations.push(`CI must pin Trivy scanner version ${PINNED_TRIVY_VERSION}`);
+  }
+  if (!/image-ref:\s*gmao-maintenance-quality:ci/.test(ciWorkflow)) {
+    violations.push("CI must scan the production image that it just built");
+  }
+  if (!/severity:\s*["']?CRITICAL["']?/.test(ciWorkflow)) {
+    violations.push("CI vulnerability scan must include CRITICAL severity");
+  }
+  if (!/exit-code:\s*["']1["']/.test(ciWorkflow)) {
+    violations.push("CI vulnerability scan must fail on matching vulnerabilities");
   }
 }
 
@@ -87,6 +107,7 @@ export function validateProductionHardening(input: ProductionHardeningInputs) {
   if (!/permissions:\s*\n\s+contents:\s+read/.test(input.ciWorkflow)) {
     violations.push("CI workflow must keep repository contents permission read-only");
   }
+  validateContainerScan(input.ciWorkflow, violations);
 
   return violations;
 }
