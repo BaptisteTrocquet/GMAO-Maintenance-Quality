@@ -217,7 +217,7 @@ function buildSources(asset: AssetAssistantAssetRecord): AssetAssistantSource[] 
       type: "work-order" as const,
       id: workOrder.id,
       number: workOrder.number,
-      href: `/work-orders/${encodeURIComponent(workOrder.id)}`,
+      href: `/maintenance/${encodeURIComponent(workOrder.id)}`,
     })),
   ];
 }
