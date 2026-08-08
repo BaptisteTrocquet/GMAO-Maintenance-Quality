@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => {
   }
   return {
     authenticateRequest: vi.fn(),
+    getQualityEvent: vi.fn(),
     getQualityRca: vi.fn(),
     listQualityRcaTimeline: vi.fn(),
     saveQualityRca: vi.fn(),
@@ -17,6 +18,7 @@ const mocks = vi.hoisted(() => {
 });
 
 vi.mock("@/lib/auth/request-auth", () => ({ authenticateRequest: mocks.authenticateRequest }));
+vi.mock("@/lib/quality/events", () => ({ getQualityEvent: mocks.getQualityEvent }));
 vi.mock("@/lib/quality/root-cause", () => ({
   getQualityRca: mocks.getQualityRca,
   listQualityRcaTimeline: mocks.listQualityRcaTimeline,
@@ -62,13 +64,14 @@ const context = { params: Promise.resolve({ eventId: "event-1" }) };
 describe("quality RCA API", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getQualityEvent.mockResolvedValue({ id: "event-1", status: "INVESTIGATING" });
     mocks.getQualityRca.mockResolvedValue(null);
     mocks.listQualityRcaTimeline.mockResolvedValue([]);
     mocks.saveQualityRca.mockResolvedValue({ id: "rca-1", status: "DRAFT" });
     mocks.finalizeQualityRca.mockResolvedValue({ id: "rca-1", status: "FINAL" });
   });
 
-  it("lets viewers read an RCA workspace", async () => {
+  it("lets viewers read an RCA workspace for an existing quality event", async () => {
     mocks.authenticateRequest.mockResolvedValue(auth("VIEWER"));
 
     const response = await GET(
@@ -77,11 +80,29 @@ describe("quality RCA API", () => {
     );
 
     expectStatus(response, 200);
+    expect(mocks.getQualityEvent).toHaveBeenCalledWith({
+      organizationId: "org-a",
+      siteId: "site-a",
+      eventId: "event-1",
+    });
     expect(mocks.getQualityRca).toHaveBeenCalledWith({
       organizationId: "org-a",
       siteId: "site-a",
       eventId: "event-1",
     });
+  });
+
+  it("returns 404 for a missing or cross-scope quality event", async () => {
+    mocks.authenticateRequest.mockResolvedValue(auth("VIEWER"));
+    mocks.getQualityEvent.mockResolvedValue(null);
+
+    const response = await GET(
+      new Request("http://localhost/api/quality/events/event-1/rca?organizationId=org-a&siteId=site-a"),
+      context,
+    );
+
+    expectStatus(response, 404);
+    expect(mocks.getQualityRca).not.toHaveBeenCalled();
   });
 
   it("prevents viewers and technicians from saving RCA data", async () => {
