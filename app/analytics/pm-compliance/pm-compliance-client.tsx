@@ -14,39 +14,62 @@ type PmCompliance = {
   from: string;
   to: string;
   generatedAt: string;
+  reporting: {
+    fromDate: string;
+    throughDate: string;
+    timeZone: string;
+  };
 };
 
-type ApiResponse = {
-  data?: PmCompliance;
+type ApiResponse<T> = {
+  data?: T;
   error?: { message?: string };
 };
 
 function yyyyMmDd(value: Date) {
-  return value.toISOString().slice(0, 10);
-}
-
-function toExclusiveUtcDate(day: string) {
-  const start = new Date(`${day}T00:00:00.000Z`);
-  return new Date(start.getTime() + 24 * 60 * 60 * 1000).toISOString();
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 export default function PmComplianceClient({
   organizationId,
   siteId,
-  assets,
 }: {
   organizationId: string;
   siteId: string;
-  assets: AssetOption[];
 }) {
   const today = new Date();
-  const thirtyDaysAgo = new Date(today.getTime() - 29 * 24 * 60 * 60 * 1000);
+  const thirtyDaysAgo = new Date(today);
+  thirtyDaysAgo.setDate(today.getDate() - 29);
   const [fromDay, setFromDay] = useState(yyyyMmDd(thirtyDaysAgo));
   const [throughDay, setThroughDay] = useState(yyyyMmDd(today));
   const [assetId, setAssetId] = useState("");
+  const [assets, setAssets] = useState<AssetOption[]>([]);
   const [data, setData] = useState<PmCompliance | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const params = new URLSearchParams({ organizationId, siteId });
+    void fetch(`/api/assets?${params.toString()}`, {
+      cache: "no-store",
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        const body = (await response.json()) as ApiResponse<AssetOption[]>;
+        if (!response.ok) throw new Error(body.error?.message ?? "Unable to load assets");
+        setAssets(body.data ?? []);
+      })
+      .catch((cause: unknown) => {
+        if (cause instanceof DOMException && cause.name === "AbortError") return;
+        setAssets([]);
+      });
+
+    return () => controller.abort();
+  }, [organizationId, siteId]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -55,13 +78,15 @@ export default function PmComplianceClient({
       const params = new URLSearchParams({
         organizationId,
         siteId,
-        from: new Date(`${fromDay}T00:00:00.000Z`).toISOString(),
-        to: toExclusiveUtcDate(throughDay),
+        from: fromDay,
+        to: throughDay,
       });
       if (assetId) params.set("assetId", assetId);
 
-      const response = await fetch(`/api/analytics/pm-compliance?${params.toString()}`);
-      const body = (await response.json()) as ApiResponse;
+      const response = await fetch(`/api/analytics/pm-compliance?${params.toString()}`, {
+        cache: "no-store",
+      });
+      const body = (await response.json()) as ApiResponse<PmCompliance>;
       if (!response.ok || !body.data) {
         throw new Error(body.error?.message ?? "Unable to load PM compliance");
       }
@@ -88,11 +113,11 @@ export default function PmComplianceClient({
       <section className="card">
         <form onSubmit={submit} style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "end" }}>
           <label>
-            <span className="muted">From (UTC)</span>
+            <span className="muted">From (site calendar)</span>
             <input type="date" value={fromDay} onChange={(event) => setFromDay(event.target.value)} required />
           </label>
           <label>
-            <span className="muted">Through (UTC)</span>
+            <span className="muted">Through (site calendar)</span>
             <input type="date" value={throughDay} onChange={(event) => setThroughDay(event.target.value)} required />
           </label>
           <label>
@@ -107,7 +132,7 @@ export default function PmComplianceClient({
           <button type="submit" disabled={loading}>{loading ? "Refreshing…" : "Apply"}</button>
         </form>
         <p className="muted" style={{ marginBottom: 0 }}>
-          Definition: non-cancelled PREVENTIVE work orders due in the selected UTC window. Future due dates are excluded. A PM is compliant only when completed on or before its due date.
+          Definition: non-cancelled PREVENTIVE work orders due in the selected site-calendar window. Future due dates are excluded. A PM is compliant only when completed on or before its due date.
         </p>
       </section>
 
@@ -137,8 +162,10 @@ export default function PmComplianceClient({
             <section className="card">
               <h2>Reporting window</h2>
               <dl className="detail-list">
-                <div><dt>From</dt><dd>{data.from}</dd></div>
-                <div><dt>To (exclusive)</dt><dd>{data.to}</dd></div>
+                <div><dt>Calendar dates</dt><dd>{data.reporting.fromDate} → {data.reporting.throughDate}</dd></div>
+                <div><dt>Site timezone</dt><dd>{data.reporting.timeZone}</dd></div>
+                <div><dt>From UTC</dt><dd>{data.from}</dd></div>
+                <div><dt>Effective to UTC</dt><dd>{data.to}</dd></div>
                 <div><dt>Generated</dt><dd>{data.generatedAt}</dd></div>
               </dl>
             </section>
