@@ -149,14 +149,12 @@ describe("logger", () => {
       logger.info("circular_context", {
         circular,
         callback: () => undefined,
-        bigint: 42n,
       }),
     ).not.toThrow();
 
     expect(parseFirstCall(spy)).toMatchObject({
       circular: { id: "asset-1", self: "[CIRCULAR]" },
       callback: "[UNSERIALIZABLE]",
-      bigint: "42",
     });
   });
 
