@@ -1,6 +1,7 @@
 import { apiData, apiError } from "@/lib/api-response";
 import { db } from "@/lib/db";
 import { logger } from "@/lib/logger";
+import { applicationMetrics } from "@/lib/metrics";
 
 export const dynamic = "force-dynamic";
 
@@ -12,6 +13,7 @@ function noStore<T extends Response>(response: T) {
 export async function GET() {
   try {
     await db.$queryRaw`SELECT 1`;
+    applicationMetrics.recordReadinessCheck("success");
 
     return noStore(
       apiData({
@@ -23,6 +25,7 @@ export async function GET() {
       }),
     );
   } catch {
+    applicationMetrics.recordReadinessCheck("failure");
     logger.warn("readiness_check_failed", {
       dependency: "database",
     });
