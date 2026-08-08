@@ -7,6 +7,7 @@ import {
   offlineReadPartitionFromAuthorization,
 } from "@/lib/pwa/offline-read-cache";
 import { canExecuteWorkOrder } from "@/lib/work-orders/authorization";
+import { parseCompletionSignatureFromAudit } from "@/lib/work-orders/completion-signature";
 
 function denied(error: unknown) {
   if (error instanceof AccessDeniedError) {
@@ -82,7 +83,27 @@ export async function GET(
     );
   }
 
-  const response = apiData({ workOrder });
+  const signatureAudit = workOrder.status === "COMPLETED"
+    ? await db.auditLog.findFirst({
+        where: {
+          entityType: "WorkOrder",
+          entityId: workOrder.id,
+          action: "COMPLETED_SIGNED",
+        },
+        orderBy: { createdAt: "desc" },
+        select: { afterJson: true },
+      })
+    : null;
+  const completionSignature = parseCompletionSignatureFromAudit(signatureAudit?.afterJson ?? null);
+
+  const response = apiData({
+    workOrder,
+    signer: {
+      id: auth.session.user.id,
+      displayName: auth.session.user.displayName,
+    },
+    completionSignature,
+  });
   const partition = offlineReadPartitionFromAuthorization(request.headers.get("authorization"));
   if (partition) response.headers.set(OFFLINE_READ_PARTITION_HEADER, partition);
   response.headers.set("cache-control", "private, no-store");
