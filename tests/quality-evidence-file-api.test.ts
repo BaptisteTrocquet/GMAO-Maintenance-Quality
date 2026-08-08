@@ -40,6 +40,12 @@ function auth(role: "VIEWER" | "TECHNICIAN") {
   };
 }
 
+function requireResponse(response: Response | undefined) {
+  expect(response).toBeDefined();
+  if (!response) throw new Error("expected response");
+  return response;
+}
+
 function request() {
   return new Request(
     "http://localhost/api/quality/events/event-1/evidence/evidence-1/file?organizationId=org-a&siteId=site-a",
@@ -60,7 +66,7 @@ describe("quality evidence file API", () => {
   });
 
   it("downloads verified evidence with private integrity headers", async () => {
-    const response = await GET(request(), context);
+    const response = requireResponse(await GET(request(), context));
 
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toBe("text/plain");
@@ -78,7 +84,7 @@ describe("quality evidence file API", () => {
 
   it("blocks roles without quality read permission before reading storage", async () => {
     mocks.authenticateRequest.mockResolvedValue(auth("TECHNICIAN"));
-    const response = await GET(request(), context);
+    const response = requireResponse(await GET(request(), context));
     expect(response.status).toBe(403);
     expect(mocks.readQualityEvidence).not.toHaveBeenCalled();
   });
@@ -87,7 +93,7 @@ describe("quality evidence file API", () => {
     mocks.readQualityEvidence.mockRejectedValue(
       new mocks.QualityEvidenceError("FILE_INTEGRITY_FAILED", "Checksum mismatch"),
     );
-    const response = await GET(request(), context);
+    const response = requireResponse(await GET(request(), context));
     expect(response.status).toBe(409);
   });
 
@@ -95,7 +101,7 @@ describe("quality evidence file API", () => {
     mocks.readQualityEvidence.mockRejectedValue(
       new mocks.QualityEvidenceError("EVIDENCE_NOT_FOUND", "Not found"),
     );
-    const response = await GET(request(), context);
+    const response = requireResponse(await GET(request(), context));
     expect(response.status).toBe(404);
   });
 });
