@@ -71,14 +71,89 @@ function localParts(date: Date, timeZone: string) {
     day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
+    second: "2-digit",
     hourCycle: "h23",
   }).formatToParts(date);
   const value = (type: Intl.DateTimeFormatPartTypes) =>
     parts.find((part) => part.type === type)?.value ?? "";
   return {
+    year: Number(value("year")),
+    month: Number(value("month")),
+    day: Number(value("day")),
+    hour: Number(value("hour")),
+    minute: Number(value("minute")),
+    second: Number(value("second")),
     dateKey: `${value("year")}-${value("month")}-${value("day")}`,
     time: `${value("hour")}:${value("minute")}`,
   };
+}
+
+function resolveLocalDateTime(input: {
+  dateKey: string;
+  time: string;
+  timeZone: string;
+}) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.dateKey) || !/^\d{2}:\d{2}$/.test(input.time)) {
+    throw new Error("Invalid local planning date or time");
+  }
+  const [year, month, day] = input.dateKey.split("-").map(Number);
+  const [hour, minute] = input.time.split(":").map(Number);
+  if (
+    !year ||
+    !month ||
+    !day ||
+    hour === undefined ||
+    minute === undefined ||
+    month < 1 ||
+    month > 12 ||
+    day < 1 ||
+    day > 31 ||
+    hour < 0 ||
+    hour > 23 ||
+    minute < 0 ||
+    minute > 59
+  ) {
+    throw new Error("Invalid local planning date or time");
+  }
+
+  const targetAsUtc = Date.UTC(year, month - 1, day, hour, minute, 0);
+  let candidate = new Date(targetAsUtc);
+  for (let iteration = 0; iteration < 6; iteration += 1) {
+    const actual = localParts(candidate, input.timeZone);
+    const actualAsUtc = Date.UTC(
+      actual.year,
+      actual.month - 1,
+      actual.day,
+      actual.hour,
+      actual.minute,
+      0,
+    );
+    const delta = targetAsUtc - actualAsUtc;
+    if (delta === 0) return candidate;
+    candidate = new Date(candidate.getTime() + delta);
+  }
+
+  const resolved = localParts(candidate, input.timeZone);
+  if (resolved.dateKey !== input.dateKey || resolved.time !== input.time) {
+    throw new Error("Selected local planning time does not exist in the configured timezone");
+  }
+  return candidate;
+}
+
+export function movePlannedStartToDate(input: {
+  plannedStart: Date | null;
+  targetDateKey: string;
+  timeZone: string;
+  defaultTime?: string;
+}) {
+  const time = input.plannedStart
+    ? localParts(input.plannedStart, input.timeZone).time
+    : (input.defaultTime ?? "08:00");
+  return resolveLocalDateTime({
+    dateKey: input.targetDateKey,
+    time,
+    timeZone: input.timeZone,
+  });
 }
 
 export function currentCalendarMonth(now: Date, timeZone: string): PlanningCalendarMonth {
