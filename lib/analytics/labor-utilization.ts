@@ -1,42 +1,19 @@
 import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import {
+  localCalendarDate,
   localDateStartUtc,
   resolveAnalyticsDateRange,
   shiftCalendarDate,
 } from "@/lib/analytics/date-range";
+import {
+  baselineCapacityMinutes,
+  countWeekdaysInclusive,
+  listLaborCapacityProfiles,
+} from "@/lib/analytics/labor-capacity";
 
-export const LABOR_UTILIZATION_TOP_LIMIT = 25;
+export const LABOR_UTILIZATION_LIMIT = 50;
 export const LABOR_UTILIZATION_MAX_RANGE_DAYS = 731;
-
-type SummaryRow = {
-  completedCount: number;
-  recordedCount: number;
-  excludedMissingLabor: number;
-  totalMinutes: number;
-  personMinutes: number;
-  teamMinutes: number;
-  unassignedMinutes: number;
-};
-
-type PersonRow = {
-  id: string;
-  label: string;
-  workOrderCount: number;
-  minutes: number;
-};
-
-type TeamRow = PersonRow;
-
-export type LaborUtilizationPoint = {
-  id: string;
-  kind: "PERSON" | "TEAM";
-  label: string;
-  workOrderCount: number;
-  minutes: number;
-  hours: number;
-  sharePercent: number;
-};
 
 export class LaborUtilizationError extends Error {
   constructor(
@@ -48,7 +25,21 @@ export class LaborUtilizationError extends Error {
   }
 }
 
-function minDate(left: Date, right: Date) {
+type SummaryRow = {
+  completedWorkOrders: number;
+  recordedWorkOrders: number;
+  laborMinutes: number;
+  unassignedLaborMinutes: number;
+};
+
+type AssigneeRow = {
+  assigneeId: string | null;
+  displayName: string;
+  workOrderCount: number;
+  laborMinutes: number;
+};
+
+function earlierInstant(left: Date, right: Date) {
   return left.getTime() <= right.getTime() ? left : right;
 }
 
@@ -56,7 +47,7 @@ function numeric(value: number | null | undefined) {
   return value !== null && value !== undefined && Number.isFinite(value) ? value : 0;
 }
 
-export async function buildLaborUtilization(input: {
+export async function buildLaborUtilizationDashboard(input: {
   organizationId: string;
   siteId: string;
   timeZone: string;
@@ -82,7 +73,7 @@ export async function buildLaborUtilization(input: {
   if (range.toExclusive.getTime() > maxToExclusive.getTime()) {
     throw new LaborUtilizationError(
       "RANGE_TOO_LARGE",
-      `Labor utilization is limited to ${LABOR_UTILIZATION_MAX_RANGE_DAYS} local calendar days per request`,
+      `Labor reporting is limited to ${LABOR_UTILIZATION_MAX_RANGE_DAYS} local calendar days per request`,
     );
   }
 
@@ -104,10 +95,7 @@ export async function buildLaborUtilization(input: {
     }
   }
 
-  const toExclusive = minDate(range.toExclusive, now);
-  const definition =
-    "Recorded-labor utilization proxy: distribution of positive laborMinutes on completed work orders by assignee, then team, then unassigned. This is not capacity utilization because contractual or scheduled working-hour capacity is not modeled.";
-
+  const toExclusive = earlierInstant(range.toExclusive, now);
   if (range.from.getTime() >= toExclusive.getTime()) {
     return {
       generatedAt: now.toISOString(),
@@ -117,17 +105,32 @@ export async function buildLaborUtilization(input: {
       empty: true,
       completedWorkOrders: 0,
       recordedWorkOrders: 0,
-      excludedMissingLabor: 0,
-      captureCoveragePercent: null,
-      totalMinutes: 0,
-      totalHours: 0,
-      personMinutes: 0,
-      teamMinutes: 0,
-      unassignedMinutes: 0,
-      attributedPercent: null,
-      people: [] as LaborUtilizationPoint[],
-      teams: [] as LaborUtilizationPoint[],
-      definition,
+      recordingCoveragePercent: null,
+      laborMinutes: 0,
+      laborHours: 0,
+      unassignedLaborMinutes: 0,
+      unassignedSharePercent: null,
+      capacityMode: "RECORDED_ONLY" as const,
+      businessDays: 0,
+      configuredCapacityUsers: 0,
+      capacityMinutes: 0,
+      capacityHours: 0,
+      capacityCoveredLaborMinutes: 0,
+      capacityCoveragePercent: null,
+      utilizationPercent: null,
+      assignees: [] as Array<{
+        assigneeId: string | null;
+        displayName: string;
+        workOrderCount: number;
+        laborMinutes: number;
+        laborHours: number;
+        recordedLaborSharePercent: number;
+        weeklyCapacityMinutes: number | null;
+        capacityMinutes: number | null;
+        utilizationPercent: number | null;
+      }>,
+      definition:
+        "Recorded-labor distribution only. Configure a weekly capacity baseline for maintenance users to calculate utilization; no workforce capacity is inferred automatically.",
     };
   }
 
@@ -135,127 +138,167 @@ export async function buildLaborUtilization(input: {
     ? Prisma.sql`AND wo."assetId" = ${input.assetId}`
     : Prisma.empty;
 
-  const [summaryRows, personRows, teamRows] = await Promise.all([
+  const [summaryRows, assigneeRows, capacityProfiles] = await Promise.all([
     db.$queryRaw<SummaryRow[]>(Prisma.sql`
       SELECT
-        COUNT(*)::int AS "completedCount",
-        COUNT(*) FILTER (WHERE wo."laborMinutes" IS NOT NULL AND wo."laborMinutes" > 0)::int AS "recordedCount",
-        COUNT(*) FILTER (WHERE wo."laborMinutes" IS NULL OR wo."laborMinutes" <= 0)::int AS "excludedMissingLabor",
-        COALESCE(SUM(GREATEST(COALESCE(wo."laborMinutes", 0), 0)), 0)::double precision AS "totalMinutes",
-        COALESCE(SUM(CASE WHEN wo."laborMinutes" > 0 AND wo."assigneeId" IS NOT NULL THEN wo."laborMinutes" ELSE 0 END), 0)::double precision AS "personMinutes",
-        COALESCE(SUM(CASE WHEN wo."laborMinutes" > 0 AND wo."assigneeId" IS NULL AND wo."teamId" IS NOT NULL THEN wo."laborMinutes" ELSE 0 END), 0)::double precision AS "teamMinutes",
-        COALESCE(SUM(CASE WHEN wo."laborMinutes" > 0 AND wo."assigneeId" IS NULL AND wo."teamId" IS NULL THEN wo."laborMinutes" ELSE 0 END), 0)::double precision AS "unassignedMinutes"
+        COUNT(*)::int AS "completedWorkOrders",
+        COUNT(*) FILTER (WHERE wo."laborMinutes" > 0)::int AS "recordedWorkOrders",
+        COALESCE(SUM(GREATEST(COALESCE(wo."laborMinutes", 0), 0)), 0)::double precision AS "laborMinutes",
+        COALESCE(
+          SUM(GREATEST(COALESCE(wo."laborMinutes", 0), 0)) FILTER (WHERE wo."assigneeId" IS NULL),
+          0
+        )::double precision AS "unassignedLaborMinutes"
       FROM "WorkOrder" wo
       INNER JOIN "Site" site ON site.id = wo."siteId"
       WHERE wo."siteId" = ${input.siteId}
         AND site."organizationId" = ${input.organizationId}
         AND site.active = true
         AND wo.status = 'COMPLETED'
-        AND wo."completedAt" IS NOT NULL
         AND wo."completedAt" >= ${range.from}
         AND wo."completedAt" < ${toExclusive}
         ${assetFilter}
     `),
-    db.$queryRaw<PersonRow[]>(Prisma.sql`
+    db.$queryRaw<AssigneeRow[]>(Prisma.sql`
       SELECT
-        user_account.id,
-        user_account."displayName" AS label,
+        wo."assigneeId" AS "assigneeId",
+        COALESCE(assignee."displayName", 'Unassigned') AS "displayName",
         COUNT(*)::int AS "workOrderCount",
-        COALESCE(SUM(wo."laborMinutes"), 0)::double precision AS minutes
+        COALESCE(SUM(wo."laborMinutes"), 0)::double precision AS "laborMinutes"
       FROM "WorkOrder" wo
       INNER JOIN "Site" site ON site.id = wo."siteId"
-      INNER JOIN "User" user_account ON user_account.id = wo."assigneeId"
+      LEFT JOIN "User" assignee ON assignee.id = wo."assigneeId"
       WHERE wo."siteId" = ${input.siteId}
         AND site."organizationId" = ${input.organizationId}
         AND site.active = true
         AND wo.status = 'COMPLETED'
-        AND wo."completedAt" IS NOT NULL
         AND wo."completedAt" >= ${range.from}
         AND wo."completedAt" < ${toExclusive}
-        AND wo."laborMinutes" IS NOT NULL
         AND wo."laborMinutes" > 0
-        AND wo."assigneeId" IS NOT NULL
         ${assetFilter}
-      GROUP BY user_account.id, user_account."displayName"
-      ORDER BY minutes DESC, label ASC
-      LIMIT ${LABOR_UTILIZATION_TOP_LIMIT}
+      GROUP BY wo."assigneeId", assignee."displayName"
+      ORDER BY "laborMinutes" DESC, "displayName" ASC
+      LIMIT ${LABOR_UTILIZATION_LIMIT}
     `),
-    db.$queryRaw<TeamRow[]>(Prisma.sql`
-      SELECT
-        team.id,
-        team.name AS label,
-        COUNT(*)::int AS "workOrderCount",
-        COALESCE(SUM(wo."laborMinutes"), 0)::double precision AS minutes
-      FROM "WorkOrder" wo
-      INNER JOIN "Site" site ON site.id = wo."siteId"
-      INNER JOIN "MaintenanceTeam" team ON team.id = wo."teamId"
-      WHERE wo."siteId" = ${input.siteId}
-        AND site."organizationId" = ${input.organizationId}
-        AND site.active = true
-        AND wo.status = 'COMPLETED'
-        AND wo."completedAt" IS NOT NULL
-        AND wo."completedAt" >= ${range.from}
-        AND wo."completedAt" < ${toExclusive}
-        AND wo."laborMinutes" IS NOT NULL
-        AND wo."laborMinutes" > 0
-        AND wo."assigneeId" IS NULL
-        AND wo."teamId" IS NOT NULL
-        ${assetFilter}
-      GROUP BY team.id, team.name
-      ORDER BY minutes DESC, label ASC
-      LIMIT ${LABOR_UTILIZATION_TOP_LIMIT}
-    `),
+    listLaborCapacityProfiles({
+      organizationId: input.organizationId,
+      siteId: input.siteId,
+    }),
   ]);
 
   const summary = summaryRows[0] ?? {
-    completedCount: 0,
-    recordedCount: 0,
-    excludedMissingLabor: 0,
-    totalMinutes: 0,
-    personMinutes: 0,
-    teamMinutes: 0,
-    unassignedMinutes: 0,
+    completedWorkOrders: 0,
+    recordedWorkOrders: 0,
+    laborMinutes: 0,
+    unassignedLaborMinutes: 0,
   };
-  const totalMinutes = numeric(summary.totalMinutes);
-  const personMinutes = numeric(summary.personMinutes);
-  const teamMinutes = numeric(summary.teamMinutes);
-  const unassignedMinutes = numeric(summary.unassignedMinutes);
+  const laborMinutes = numeric(summary.laborMinutes);
+  const completedWorkOrders = numeric(summary.completedWorkOrders);
+  const recordedWorkOrders = numeric(summary.recordedWorkOrders);
+  const unassignedLaborMinutes = numeric(summary.unassignedLaborMinutes);
 
-  function points(rows: PersonRow[] | TeamRow[], kind: "PERSON" | "TEAM") {
-    return rows.map((row) => {
-      const minutes = numeric(row.minutes);
-      return {
-        id: row.id,
-        kind,
-        label: row.label,
-        workOrderCount: row.workOrderCount,
-        minutes,
-        hours: minutes / 60,
-        sharePercent: totalMinutes ? (minutes / totalMinutes) * 100 : 0,
-      } satisfies LaborUtilizationPoint;
-    });
-  }
+  const lastIncludedInstant = new Date(Math.max(range.from.getTime(), toExclusive.getTime() - 1));
+  const lastCapacityDay = localCalendarDate(lastIncludedInstant, input.timeZone);
+  const businessDays = countWeekdaysInclusive(input.from, lastCapacityDay);
+  const capacityByUser = new Map(
+    capacityProfiles.map((profile) => [
+      profile.userId,
+      {
+        ...profile,
+        capacityMinutes: baselineCapacityMinutes(profile.weeklyCapacityMinutes, businessDays),
+      },
+    ]),
+  );
+  const laborByUser = new Map(
+    assigneeRows
+      .filter((row) => row.assigneeId)
+      .map((row) => [row.assigneeId as string, row]),
+  );
+
+  const userIds = new Set([...capacityByUser.keys(), ...laborByUser.keys()]);
+  const assignedRows = [...userIds].map((userId) => {
+    const labor = laborByUser.get(userId);
+    const capacity = capacityByUser.get(userId);
+    const minutes = numeric(labor?.laborMinutes);
+    const capacityMinutes = capacity?.capacityMinutes ?? null;
+    return {
+      assigneeId: userId,
+      displayName: labor?.displayName ?? capacity?.displayName ?? "Unknown",
+      workOrderCount: numeric(labor?.workOrderCount),
+      laborMinutes: minutes,
+      laborHours: minutes / 60,
+      recordedLaborSharePercent: laborMinutes > 0 ? (minutes / laborMinutes) * 100 : 0,
+      weeklyCapacityMinutes: capacity?.weeklyCapacityMinutes ?? null,
+      capacityMinutes,
+      utilizationPercent:
+        capacityMinutes !== null && capacityMinutes > 0 ? (minutes / capacityMinutes) * 100 : null,
+    };
+  });
+
+  const unassigned = assigneeRows.find((row) => row.assigneeId === null);
+  const assignees = [
+    ...assignedRows,
+    ...(unassigned
+      ? [
+          {
+            assigneeId: null,
+            displayName: unassigned.displayName,
+            workOrderCount: numeric(unassigned.workOrderCount),
+            laborMinutes: numeric(unassigned.laborMinutes),
+            laborHours: numeric(unassigned.laborMinutes) / 60,
+            recordedLaborSharePercent:
+              laborMinutes > 0 ? (numeric(unassigned.laborMinutes) / laborMinutes) * 100 : 0,
+            weeklyCapacityMinutes: null,
+            capacityMinutes: null,
+            utilizationPercent: null,
+          },
+        ]
+      : []),
+  ].sort((left, right) => {
+    const leftUtilization = left.utilizationPercent ?? -1;
+    const rightUtilization = right.utilizationPercent ?? -1;
+    return rightUtilization - leftUtilization || right.laborMinutes - left.laborMinutes;
+  });
+
+  const capacityMinutes = capacityProfiles.reduce(
+    (sum, profile) => sum + baselineCapacityMinutes(profile.weeklyCapacityMinutes, businessDays),
+    0,
+  );
+  const capacityCoveredLaborMinutes = capacityProfiles.reduce(
+    (sum, profile) => sum + numeric(laborByUser.get(profile.userId)?.laborMinutes),
+    0,
+  );
+  const assignedLaborMinutes = Math.max(laborMinutes - unassignedLaborMinutes, 0);
+  const capacityCoveragePercent =
+    assignedLaborMinutes > 0 ? (capacityCoveredLaborMinutes / assignedLaborMinutes) * 100 : null;
+  const utilizationPercent =
+    capacityMinutes > 0 ? (capacityCoveredLaborMinutes / capacityMinutes) * 100 : null;
 
   return {
     generatedAt: now.toISOString(),
     timezone: input.timeZone,
     range: { from: range.from.toISOString(), toExclusive: toExclusive.toISOString() },
     assetId: input.assetId ?? null,
-    empty: summary.recordedCount === 0,
-    completedWorkOrders: summary.completedCount,
-    recordedWorkOrders: summary.recordedCount,
-    excludedMissingLabor: summary.excludedMissingLabor,
-    captureCoveragePercent:
-      summary.completedCount === 0 ? null : (summary.recordedCount / summary.completedCount) * 100,
-    totalMinutes,
-    totalHours: totalMinutes / 60,
-    personMinutes,
-    teamMinutes,
-    unassignedMinutes,
-    attributedPercent:
-      totalMinutes === 0 ? null : ((personMinutes + teamMinutes) / totalMinutes) * 100,
-    people: points(personRows, "PERSON"),
-    teams: points(teamRows, "TEAM"),
-    definition,
+    empty: completedWorkOrders === 0,
+    completedWorkOrders,
+    recordedWorkOrders,
+    recordingCoveragePercent:
+      completedWorkOrders > 0 ? (recordedWorkOrders / completedWorkOrders) * 100 : null,
+    laborMinutes,
+    laborHours: laborMinutes / 60,
+    unassignedLaborMinutes,
+    unassignedSharePercent:
+      laborMinutes > 0 ? (unassignedLaborMinutes / laborMinutes) * 100 : null,
+    capacityMode: capacityProfiles.length ? ("CONFIGURED_BASELINE" as const) : ("RECORDED_ONLY" as const),
+    businessDays,
+    configuredCapacityUsers: capacityProfiles.length,
+    capacityMinutes,
+    capacityHours: capacityMinutes / 60,
+    capacityCoveredLaborMinutes,
+    capacityCoveragePercent,
+    utilizationPercent,
+    assignees,
+    definition: capacityProfiles.length
+      ? "Configured baseline labor utilization = recorded labor for users with a capacity profile divided by their weekly capacity prorated across Monday-Friday days in the reporting window. This is a planning baseline: holidays, leave and shift timing are not inferred."
+      : "Recorded-labor distribution only. Configure a weekly capacity baseline for maintenance users to calculate utilization; no workforce capacity is inferred automatically.",
   };
 }

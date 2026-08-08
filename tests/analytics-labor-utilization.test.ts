@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   assetFindFirst: vi.fn(),
   queryRaw: vi.fn(),
+  listLaborCapacityProfiles: vi.fn(),
 }));
 
 vi.mock("@/lib/db", () => ({
@@ -11,41 +12,58 @@ vi.mock("@/lib/db", () => ({
     $queryRaw: mocks.queryRaw,
   },
 }));
+vi.mock("@/lib/analytics/labor-capacity", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/analytics/labor-capacity")>();
+  return { ...actual, listLaborCapacityProfiles: mocks.listLaborCapacityProfiles };
+});
 
-import { buildLaborUtilization, LaborUtilizationError } from "@/lib/analytics/labor-utilization";
+import {
+  buildLaborUtilizationDashboard,
+  LABOR_UTILIZATION_LIMIT,
+  LaborUtilizationError,
+} from "@/lib/analytics/labor-utilization";
 
 const now = new Date("2026-08-08T10:00:00.000Z");
 
 function sqlText(callIndex: number) {
-  const query = mocks.queryRaw.mock.calls[callIndex]?.[0] as { sql?: string; text?: string } | undefined;
-  return query?.sql ?? query?.text ?? "";
+  const query = mocks.queryRaw.mock.calls[callIndex]?.[0] as
+    | { sql?: string; text?: string; strings?: string[] }
+    | undefined;
+  return query?.sql ?? query?.text ?? query?.strings?.join("?") ?? "";
 }
 
 describe("labor utilization analytics", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.assetFindFirst.mockResolvedValue({ id: "asset-a" });
+    mocks.listLaborCapacityProfiles.mockResolvedValue([]);
     mocks.queryRaw
-      .mockResolvedValueOnce([{
-        completedCount: 10,
-        recordedCount: 8,
-        excludedMissingLabor: 2,
-        totalMinutes: 480,
-        personMinutes: 300,
-        teamMinutes: 120,
-        unassignedMinutes: 60,
-      }])
       .mockResolvedValueOnce([
-        { id: "user-1", label: "Synthetic Technician", workOrderCount: 3, minutes: 180 },
-        { id: "user-2", label: "Synthetic Technician 2", workOrderCount: 2, minutes: 120 },
+        {
+          completedWorkOrders: 4,
+          recordedWorkOrders: 3,
+          laborMinutes: 600,
+          unassignedLaborMinutes: 120,
+        },
       ])
       .mockResolvedValueOnce([
-        { id: "team-1", label: "Synthetic Team", workOrderCount: 2, minutes: 120 },
+        {
+          assigneeId: "user-a",
+          displayName: "Synthetic Technician",
+          workOrderCount: 2,
+          laborMinutes: 360,
+        },
+        {
+          assigneeId: null,
+          displayName: "Unassigned",
+          workOrderCount: 1,
+          laborMinutes: 120,
+        },
       ]);
   });
 
-  it("reports recorded labor, capture coverage and non-overlapping attribution shares", async () => {
-    const result = await buildLaborUtilization({
+  it("keeps recorded-labor distribution explicit when no capacity baseline exists", async () => {
+    const result = await buildLaborUtilizationDashboard({
       organizationId: "org-a",
       siteId: "site-a",
       timeZone: "Europe/Paris",
@@ -54,22 +72,66 @@ describe("labor utilization analytics", () => {
       now,
     });
 
-    expect(result.totalHours).toBe(8);
-    expect(result.completedWorkOrders).toBe(10);
-    expect(result.recordedWorkOrders).toBe(8);
-    expect(result.excludedMissingLabor).toBe(2);
-    expect(result.captureCoveragePercent).toBe(80);
-    expect(result.personMinutes).toBe(300);
-    expect(result.teamMinutes).toBe(120);
-    expect(result.unassignedMinutes).toBe(60);
-    expect(result.attributedPercent).toBe(87.5);
-    expect(result.people[0]).toMatchObject({ id: "user-1", hours: 3, sharePercent: 37.5 });
-    expect(result.teams[0]).toMatchObject({ id: "team-1", hours: 2, sharePercent: 25 });
-    expect(result.definition).toContain("not capacity utilization");
+    expect(result.completedWorkOrders).toBe(4);
+    expect(result.recordedWorkOrders).toBe(3);
+    expect(result.recordingCoveragePercent).toBe(75);
+    expect(result.laborHours).toBe(10);
+    expect(result.unassignedSharePercent).toBe(20);
+    expect(result.capacityMode).toBe("RECORDED_ONLY");
+    expect(result.utilizationPercent).toBeNull();
+    expect(result.assignees[0]).toMatchObject({
+      displayName: "Synthetic Technician",
+      workOrderCount: 2,
+      laborHours: 6,
+      recordedLaborSharePercent: 60,
+      capacityMinutes: null,
+      utilizationPercent: null,
+    });
+    expect(result.definition).toMatch(/configure a weekly capacity baseline/i);
   });
 
-  it("scopes completed-work queries and assigns team labor only when no person is assigned", async () => {
-    await buildLaborUtilization({
+  it("calculates utilization from recorded labor covered by configured weekday capacity", async () => {
+    mocks.listLaborCapacityProfiles.mockResolvedValue([
+      {
+        id: "profile-a",
+        organizationId: "org-a",
+        siteId: "site-a",
+        userId: "user-a",
+        displayName: "Synthetic Technician",
+        weeklyCapacityMinutes: 2100,
+        active: true,
+        updatedAt: "2026-08-01T00:00:00.000Z",
+      },
+    ]);
+
+    const result = await buildLaborUtilizationDashboard({
+      organizationId: "org-a",
+      siteId: "site-a",
+      timeZone: "UTC",
+      from: "2026-08-03",
+      to: "2026-08-07",
+      now,
+    });
+
+    expect(result.capacityMode).toBe("CONFIGURED_BASELINE");
+    expect(result.businessDays).toBe(5);
+    expect(result.configuredCapacityUsers).toBe(1);
+    expect(result.capacityMinutes).toBe(2100);
+    expect(result.capacityHours).toBe(35);
+    expect(result.capacityCoveredLaborMinutes).toBe(360);
+    expect(result.capacityCoveragePercent).toBe(75);
+    expect(result.utilizationPercent).toBeCloseTo((360 / 2100) * 100);
+    expect(result.assignees[0]).toMatchObject({
+      assigneeId: "user-a",
+      weeklyCapacityMinutes: 2100,
+      capacityMinutes: 2100,
+    });
+    expect(result.assignees[0]?.utilizationPercent).toBeCloseTo((360 / 2100) * 100);
+    expect(result.definition).toMatch(/configured baseline labor utilization/i);
+  });
+
+  it("uses bounded tenant/site aggregate queries and only positive labor for distribution", async () => {
+    await buildLaborUtilizationDashboard({
       organizationId: "org-a",
       siteId: "site-a",
       timeZone: "UTC",
@@ -79,20 +141,19 @@ describe("labor utilization analytics", () => {
     });
 
     expect(sqlText(0)).toContain("wo.status = 'COMPLETED'");
-    expect(sqlText(0)).toContain('wo."completedAt"');
-    expect(sqlText(1)).toContain('wo."assigneeId" IS NOT NULL');
-    expect(sqlText(2)).toContain('wo."assigneeId" IS NULL');
-    expect(sqlText(2)).toContain('wo."teamId" IS NOT NULL');
+    expect(sqlText(0)).toContain('site."organizationId"');
+    expect(sqlText(0)).toContain('GREATEST(COALESCE(wo."laborMinutes", 0), 0)');
+    expect(sqlText(1)).toContain('LEFT JOIN "User" assignee');
+    expect(sqlText(1)).toContain('wo."laborMinutes" > 0');
+    expect(sqlText(1)).toContain(`LIMIT`);
+    expect(LABOR_UTILIZATION_LIMIT).toBe(50);
   });
 
-  it("preserves DST-local date boundaries", async () => {
+  it("preserves a 23-hour spring DST reporting day", async () => {
     mocks.queryRaw.mockReset();
-    mocks.queryRaw
-      .mockResolvedValueOnce([{ completedCount: 0, recordedCount: 0, excludedMissingLabor: 0, totalMinutes: 0, personMinutes: 0, teamMinutes: 0, unassignedMinutes: 0 }])
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([]);
+    mocks.queryRaw.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
 
-    const result = await buildLaborUtilization({
+    const result = await buildLaborUtilizationDashboard({
       organizationId: "org-a",
       siteId: "site-a",
       timeZone: "Europe/Paris",
@@ -103,12 +164,13 @@ describe("labor utilization analytics", () => {
 
     expect(result.range.from).toBe("2026-03-28T23:00:00.000Z");
     expect(result.range.toExclusive).toBe("2026-03-29T22:00:00.000Z");
+    expect(result.businessDays).toBe(0);
   });
 
-  it("returns explicit empty semantics for a future-only range", async () => {
+  it("returns explicit empty semantics for a future-only window without querying", async () => {
     mocks.queryRaw.mockReset();
 
-    const result = await buildLaborUtilization({
+    const result = await buildLaborUtilizationDashboard({
       organizationId: "org-a",
       siteId: "site-a",
       timeZone: "UTC",
@@ -117,22 +179,35 @@ describe("labor utilization analytics", () => {
       now,
     });
 
-    expect(result).toMatchObject({ empty: true, totalMinutes: 0, captureCoveragePercent: null });
+    expect(result).toMatchObject({
+      empty: true,
+      completedWorkOrders: 0,
+      recordedWorkOrders: 0,
+      recordingCoveragePercent: null,
+      laborHours: 0,
+      unassignedSharePercent: null,
+      capacityMode: "RECORDED_ONLY",
+      utilizationPercent: null,
+      assignees: [],
+    });
     expect(mocks.queryRaw).not.toHaveBeenCalled();
   });
 
-  it("validates an optional asset inside the active tenant/site scope", async () => {
+  it("validates an optional asset in the active tenant/site scope", async () => {
     mocks.assetFindFirst.mockResolvedValue(null);
+    mocks.queryRaw.mockReset();
 
-    await expect(buildLaborUtilization({
-      organizationId: "org-a",
-      siteId: "site-a",
-      timeZone: "UTC",
-      from: "2026-07-01",
-      to: "2026-07-31",
-      assetId: "asset-other",
-      now,
-    })).rejects.toBeInstanceOf(LaborUtilizationError);
+    await expect(
+      buildLaborUtilizationDashboard({
+        organizationId: "org-a",
+        siteId: "site-a",
+        timeZone: "UTC",
+        from: "2026-07-01",
+        to: "2026-07-31",
+        assetId: "asset-other",
+        now,
+      }),
+    ).rejects.toBeInstanceOf(LaborUtilizationError);
     expect(mocks.queryRaw).not.toHaveBeenCalled();
   });
 });
