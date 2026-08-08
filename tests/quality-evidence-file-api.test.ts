@@ -64,7 +64,7 @@ describe("quality evidence file API", () => {
     });
     mocks.removeQualityEvidence.mockResolvedValue({
       evidence: { id: "evidence-1", removedAt: "2026-08-08T01:00:00.000Z" },
-      storageDeleted: true,
+      storageRetained: true,
     });
   });
 
@@ -86,7 +86,7 @@ describe("quality evidence file API", () => {
     });
   });
 
-  it("prevents viewers from removing evidence", async () => {
+  it("prevents viewers from withdrawing evidence", async () => {
     mocks.authenticateRequest.mockResolvedValue(auth("VIEWER"));
 
     const response = await DELETE(request("DELETE"), context);
@@ -95,12 +95,15 @@ describe("quality evidence file API", () => {
     expect(mocks.removeQualityEvidence).not.toHaveBeenCalled();
   });
 
-  it("lets quality managers remove evidence through the audited service", async () => {
+  it("lets quality managers withdraw evidence while the audited bytes remain retained", async () => {
     mocks.authenticateRequest.mockResolvedValue(auth("QUALITY_MANAGER"));
 
     const response = await DELETE(request("DELETE"), context);
 
     expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      data: { storageRetained: true },
+    });
     expect(mocks.removeQualityEvidence).toHaveBeenCalledWith({
       organizationId: "org-a",
       siteId: "site-a",
