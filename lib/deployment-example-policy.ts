@@ -19,6 +19,16 @@ function forbidPattern(content: string, pattern: RegExp, message: string) {
   if (pattern.test(content)) throw new DeploymentExamplePolicyError(message);
 }
 
+function composeService(compose: string, service: string) {
+  const marker = `  ${service}:\n`;
+  const start = compose.indexOf(marker);
+  if (start < 0) throw new DeploymentExamplePolicyError(`Compose service ${service} is missing`);
+  const bodyStart = start + marker.length;
+  const remainder = compose.slice(bodyStart);
+  const nextService = remainder.search(/\n  [A-Za-z0-9_-]+:\n|\nvolumes:\n/);
+  return nextService < 0 ? remainder : remainder.slice(0, nextService);
+}
+
 function assertNoCommittedSecrets(label: string, content: string) {
   const forbidden: Array<[RegExp, string]> = [
     [/postgres(?:ql)?:\/\/[^\s:$/{]+:[^\s@${}]+@/i, "literal PostgreSQL credentials"],
@@ -38,55 +48,59 @@ function assertNoCommittedSecrets(label: string, content: string) {
 }
 
 function assertCompose(compose: string) {
+  const db = composeService(compose, "db");
+  const migrate = composeService(compose, "migrate");
+  const app = composeService(compose, "app");
+
   requirePattern(
-    compose,
+    db,
     /POSTGRES_PASSWORD:\s*\$\{POSTGRES_PASSWORD:\?/,
     "Compose must require POSTGRES_PASSWORD from the external runtime environment",
   );
+  forbidPattern(db, /^\s{4}ports:/m, "Compose must not publish PostgreSQL on the host");
+
   requirePattern(
-    compose,
+    migrate,
     /DATABASE_URL:\s*\$\{DATABASE_URL:\?/,
-    "Compose must require DATABASE_URL from the external runtime environment",
+    "Compose migration service must require DATABASE_URL from the runtime environment",
   );
   requirePattern(
-    compose,
-    /OPENGMAO_BIND_ADDRESS:-127\.0\.0\.1/,
-    "Compose must bind to loopback by default instead of all host interfaces",
-  );
-  requirePattern(
-    compose,
-    /RATE_LIMIT_ENABLED:\s*\$\{RATE_LIMIT_ENABLED:-true\}/,
-    "Compose must keep application rate limiting enabled by default",
-  );
-  requirePattern(
-    compose,
+    migrate,
     /profiles:\s*\["migrate"\]/,
     "Compose migration execution must remain an explicit profile",
   );
   requirePattern(
-    compose,
+    migrate,
     /command:\s*\["npm",\s*"run",\s*"prisma:deploy"\]/,
     "Compose migration service must use the committed prisma:deploy workflow",
   );
-  requirePattern(
-    compose,
-    /opengmao_documents:\/app\/data/,
-    "Compose must persist local controlled-document storage",
-  );
-  requirePattern(
-    compose,
-    /no-new-privileges:true/,
-    "Compose services must use no-new-privileges",
-  );
-  requirePattern(compose, /cap_drop:\s*\n\s*- ALL/, "Compose services must drop Linux capabilities");
 
-  forbidPattern(compose, /privileged:\s*true/i, "Compose must never run privileged containers");
-  forbidPattern(compose, /network_mode:\s*host/i, "Compose must not use host networking");
-  forbidPattern(
-    compose,
-    /db:[\s\S]*?ports:\s*\n\s*-\s*["']?\d+:/,
-    "Compose must not publish PostgreSQL on the host",
+  requirePattern(
+    app,
+    /DATABASE_URL:\s*\$\{DATABASE_URL:\?/,
+    "Compose application must require DATABASE_URL from the runtime environment",
   );
+  requirePattern(
+    app,
+    /OPENGMAO_BIND_ADDRESS:-127\.0\.0\.1/,
+    "Compose must bind to loopback by default instead of all host interfaces",
+  );
+  requirePattern(
+    app,
+    /RATE_LIMIT_ENABLED:\s*\$\{RATE_LIMIT_ENABLED:-true\}/,
+    "Compose must keep application rate limiting enabled by default",
+  );
+  requirePattern(app, /opengmao_documents:\/app\/data/, "Compose must persist local controlled-document storage");
+
+  for (const [name, service] of [
+    ["migrate", migrate],
+    ["app", app],
+  ] as const) {
+    requirePattern(service, /no-new-privileges:true/, `Compose ${name} must use no-new-privileges`);
+    requirePattern(service, /cap_drop:\s*\n\s*- ALL/, `Compose ${name} must drop Linux capabilities`);
+    forbidPattern(service, /privileged:\s*true/i, `Compose ${name} must never run privileged`);
+    forbidPattern(service, /network_mode:\s*host/i, `Compose ${name} must not use host networking`);
+  }
 }
 
 function assertKubernetesApp(app: string) {
@@ -104,10 +118,18 @@ function assertKubernetesApp(app: string) {
   requirePattern(app, /runAsUser:\s*1001/, "Kubernetes pod must match the production image UID");
   requirePattern(app, /allowPrivilegeEscalation:\s*false/, "Kubernetes app must disable privilege escalation");
   requirePattern(app, /capabilities:\s*\n\s*drop:\s*\n\s*- ALL/, "Kubernetes app must drop Linux capabilities");
-  requirePattern(app, /secretKeyRef:\s*\n\s*name:\s*opengmao-runtime\s*\n\s*key:\s*DATABASE_URL/, "Kubernetes app must obtain DATABASE_URL from an external Secret");
+  requirePattern(
+    app,
+    /secretKeyRef:\s*\n\s*name:\s*opengmao-runtime\s*\n\s*key:\s*DATABASE_URL/,
+    "Kubernetes app must obtain DATABASE_URL from an external Secret",
+  );
   requirePattern(app, /livenessProbe:[\s\S]{0,180}path:\s*\/api\/health/, "Kubernetes liveness must use /api/health");
   requirePattern(app, /readinessProbe:[\s\S]{0,180}path:\s*\/api\/ready/, "Kubernetes readiness must use /api/ready");
-  requirePattern(app, /persistentVolumeClaim:\s*\n\s*claimName:\s*opengmao-documents/, "local-storage Kubernetes example must persist /app/data");
+  requirePattern(
+    app,
+    /persistentVolumeClaim:\s*\n\s*claimName:\s*opengmao-documents/,
+    "local-storage Kubernetes example must persist /app/data",
+  );
   requirePattern(app, /kind:\s*Service[\s\S]*?type:\s*ClusterIP/, "Kubernetes service must remain internal by default");
 }
 
@@ -125,7 +147,11 @@ function assertKubernetesMigration(migration: string) {
     /\.\/node_modules\/\.bin\/prisma[\s\S]{0,120}- migrate[\s\S]{0,120}- deploy/,
     "Kubernetes migration job must use prisma migrate deploy",
   );
-  requirePattern(migration, /secretKeyRef:\s*\n\s*name:\s*opengmao-runtime\s*\n\s*key:\s*DATABASE_URL/, "Kubernetes migration job must obtain DATABASE_URL from an external Secret");
+  requirePattern(
+    migration,
+    /secretKeyRef:\s*\n\s*name:\s*opengmao-runtime\s*\n\s*key:\s*DATABASE_URL/,
+    "Kubernetes migration job must obtain DATABASE_URL from an external Secret",
+  );
   requirePattern(migration, /automountServiceAccountToken:\s*false/, "Kubernetes migration job must disable service-account token mounting");
   requirePattern(migration, /runAsNonRoot:\s*true/, "Kubernetes migration job must run as non-root");
   requirePattern(migration, /readOnlyRootFilesystem:\s*true/, "Kubernetes migration job must use a read-only root filesystem");
