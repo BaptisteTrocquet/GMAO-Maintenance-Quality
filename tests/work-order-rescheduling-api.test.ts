@@ -1,23 +1,25 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({
-  authenticateRequest: vi.fn(),
-  workOrderFindFirst: vi.fn(),
-  workOrderUpdate: vi.fn(),
-  auditCreate: vi.fn(),
-}));
+const mocks = vi.hoisted(() => {
+  class WorkOrderRescheduleError extends Error {
+    constructor(public readonly code: string, message: string) {
+      super(message);
+    }
+  }
+  return {
+    authenticateRequest: vi.fn(),
+    rescheduleWorkOrder: vi.fn(),
+    WorkOrderRescheduleError,
+  };
+});
 
 vi.mock("@/lib/auth/request-auth", () => ({ authenticateRequest: mocks.authenticateRequest }));
-vi.mock("@/lib/db", () => ({
-  db: {
-    workOrder: { findFirst: mocks.workOrderFindFirst, update: mocks.workOrderUpdate },
-    organizationMembership: { findFirst: vi.fn() },
-    maintenanceTeam: { findFirst: vi.fn() },
-    auditLog: { create: mocks.auditCreate },
-  },
+vi.mock("@/lib/work-orders/reschedule", () => ({
+  rescheduleWorkOrder: mocks.rescheduleWorkOrder,
+  WorkOrderRescheduleError: mocks.WorkOrderRescheduleError,
 }));
 
-import { PATCH } from "@/app/api/work-orders/[workOrderId]/route";
+import { PATCH } from "@/app/api/work-orders/[workOrderId]/schedule/route";
 
 function auth(role: "MAINTENANCE_MANAGER" | "TECHNICIAN") {
   return {
@@ -34,36 +36,8 @@ function auth(role: "MAINTENANCE_MANAGER" | "TECHNICIAN") {
   };
 }
 
-function existing() {
-  return {
-    id: "wo-1",
-    number: "WO-000001",
-    siteId: "site-a",
-    assetId: null,
-    requesterId: "requester-1",
-    assigneeId: null,
-    teamId: null,
-    title: "Synthetic planned inspection",
-    description: null,
-    type: "INSPECTION",
-    status: "PLANNED",
-    priority: "NORMAL",
-    requestedAt: new Date("2026-08-01T08:00:00.000Z"),
-    plannedStart: new Date("2026-08-18T06:00:00.000Z"),
-    dueAt: new Date("2026-08-18T10:00:00.000Z"),
-    startedAt: null,
-    completedAt: null,
-    downtimeMinutes: null,
-    laborMinutes: null,
-    completionNote: null,
-    createdAt: new Date("2026-08-01T08:00:00.000Z"),
-    updatedAt: new Date("2026-08-01T08:00:00.000Z"),
-    checkItems: [],
-  };
-}
-
 function request() {
-  return new Request("http://localhost/api/work-orders/wo-1", {
+  return new Request("http://localhost/api/work-orders/wo-1/schedule", {
     method: "PATCH",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
@@ -88,62 +62,79 @@ describe("calendar work-order rescheduling API", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.authenticateRequest.mockResolvedValue(auth("MAINTENANCE_MANAGER"));
-    mocks.workOrderFindFirst.mockResolvedValue(existing());
-    mocks.workOrderUpdate.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({
-      ...existing(),
-      ...data,
-    }));
-    mocks.auditCreate.mockResolvedValue({ id: "audit-1" });
+    mocks.rescheduleWorkOrder.mockResolvedValue({
+      changed: true,
+      workOrder: { id: "wo-1", plannedStart: new Date("2026-08-19T06:00:00.000Z") },
+    });
   });
 
-  it("requires a tenant/site-scoped work order and audits successful planning changes", async () => {
+  it("requires work:manage and forwards tenant/site scope plus actor identity", async () => {
     const response = expectResponse(await PATCH(request(), context), 200);
 
-    expect(response.status).toBe(200);
-    expect(mocks.workOrderFindFirst).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: {
-          id: "wo-1",
-          siteId: "site-a",
-          site: { organizationId: "org-a", active: true },
-        },
-      }),
-    );
-    expect(mocks.workOrderUpdate).toHaveBeenCalledWith({
-      where: { id: "wo-1" },
-      data: expect.objectContaining({
-        plannedStart: new Date("2026-08-19T06:00:00.000Z"),
-        dueAt: new Date("2026-08-19T10:00:00.000Z"),
-      }),
+    expect(mocks.rescheduleWorkOrder).toHaveBeenCalledWith({
+      organizationId: "org-a",
+      siteId: "site-a",
+      workOrderId: "wo-1",
+      plannedStart: new Date("2026-08-19T06:00:00.000Z"),
+      dueAt: new Date("2026-08-19T10:00:00.000Z"),
+      actorId: "manager-1",
     });
-    expect(mocks.auditCreate).toHaveBeenCalledWith({
-      data: expect.objectContaining({
-        actorId: "manager-1",
-        entityType: "WorkOrder",
-        entityId: "wo-1",
-        action: "TRIAGED",
-        beforeJson: expect.any(String),
-        afterJson: expect.any(String),
-      }),
-    });
+    await expect(response.json()).resolves.toMatchObject({ data: { changed: true } });
   });
 
-  it("blocks technicians from calendar rescheduling", async () => {
+  it("blocks technicians from calendar rescheduling before the service is called", async () => {
     mocks.authenticateRequest.mockResolvedValue(auth("TECHNICIAN"));
 
     const response = expectResponse(await PATCH(request(), context), 403);
 
-    expect(response.status).toBe(403);
-    expect(mocks.workOrderUpdate).not.toHaveBeenCalled();
-    expect(mocks.auditCreate).not.toHaveBeenCalled();
+    expect(mocks.rescheduleWorkOrder).not.toHaveBeenCalled();
   });
 
-  it("returns an opaque 404 when the work order is outside the selected scope", async () => {
-    mocks.workOrderFindFirst.mockResolvedValue(null);
+  it("maps completed/cancelled work-order protection to a workflow conflict", async () => {
+    mocks.rescheduleWorkOrder.mockRejectedValue(
+      new mocks.WorkOrderRescheduleError(
+        "WORK_ORDER_NOT_RESCHEDULABLE",
+        "Completed or cancelled work orders cannot be rescheduled",
+      ),
+    );
+
+    const response = expectResponse(await PATCH(request(), context), 409);
+
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: "WORK_ORDER_NOT_RESCHEDULABLE" },
+    });
+  });
+
+  it("returns opaque 404 for work orders outside the selected scope", async () => {
+    mocks.rescheduleWorkOrder.mockRejectedValue(
+      new mocks.WorkOrderRescheduleError(
+        "WORK_ORDER_NOT_FOUND",
+        "Work order not found in site scope",
+      ),
+    );
 
     const response = expectResponse(await PATCH(request(), context), 404);
 
-    expect(response.status).toBe(404);
-    expect(mocks.workOrderUpdate).not.toHaveBeenCalled();
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: "WORK_ORDER_NOT_FOUND" },
+    });
+  });
+
+  it("rejects malformed JSON before authentication or writes", async () => {
+    const response = expectResponse(
+      await PATCH(
+        new Request("http://localhost/api/work-orders/wo-1/schedule", {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: "{not-json",
+        }),
+        context,
+      ),
+      400,
+    );
+
+    await expect(response.json()).resolves.toMatchObject({ error: { code: "INVALID_JSON" } });
+    expect(mocks.authenticateRequest).not.toHaveBeenCalled();
+    expect(mocks.rescheduleWorkOrder).not.toHaveBeenCalled();
   });
 });
