@@ -74,6 +74,34 @@ The connector deliberately returns non-2xx responses instead of automatically re
 
 Vendor-specific connector examples should build on this primitive rather than calling unrestricted `fetch` directly.
 
+## CSV import/export
+
+The first CSV interoperability surface is asset master data:
+
+```text
+GET  /api/integrations/csv/assets?organizationId=<org>&siteId=<site>
+POST /api/integrations/csv/assets?organizationId=<org>&siteId=<site>&mode=validate
+POST /api/integrations/csv/assets?organizationId=<org>&siteId=<site>&mode=upsert
+```
+
+Exports require `asset:read`; validation and imports require `asset:write`. Both authenticate against the organization and verify that the selected site belongs to that organization before any asset data is returned or mutated.
+
+Supported columns are:
+
+```text
+code,name,description,category,manufacturer,model,serialNumber,criticality,status,installedAt,commissionedAt,locationCode,parentAssetCode
+```
+
+Only `code` and `name` are required. Optional columns may be omitted entirely. When an optional nullable column is present, a blank cell clears that value during an upsert; when the column is absent, an existing value is preserved. `criticality` and `status` use the platform enums and dates use ISO-8601.
+
+`mode=validate` is a dry run. It performs CSV/schema validation, site-scoped location/parent resolution, duplicate detection and hierarchy-cycle detection, then reports how many rows would create or update assets without writing anything.
+
+`mode=upsert` runs only after the same validation succeeds. The batch is ordered parent-first and applied in one database transaction using `(siteId, code)` as the stable asset identity. Every changed asset receives an immutable audit entry and status transitions receive normal status-history records. A final import summary audit entry records row/create/update counts without storing the source CSV.
+
+CSV processing is bounded to 1 MB and 1,000 data rows. The parser supports quoted commas, escaped quotes, CRLF/LF and embedded newlines. Exports prefix spreadsheet-formula-looking user values before serialization to reduce CSV/Excel formula-injection risk.
+
+The CSV API never accepts IDs for cross-asset or location references. Human-stable `locationCode` and `parentAssetCode` values are resolved only inside the selected site, preventing cross-tenant reference injection.
+
 ## Existing webhook primitive
 
 Signed outbound webhooks are documented separately in `docs/WEBHOOKS.md`. Their existing DNS validation and IP-pinned HTTPS delivery are reused by the REST connector pattern so both outbound integration paths share the same public-network trust boundary.
