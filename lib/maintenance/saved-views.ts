@@ -5,10 +5,14 @@ import type { WorkOrderDueFilter } from "@/lib/maintenance/board";
 const ENTITY_TYPE = "MaintenanceSavedView";
 export const SAVED_VIEW_LIMIT = 25;
 
-export type SavedMaintenanceSurface = "KANBAN";
+export type SavedMaintenanceSurface = "KANBAN" | "CALENDAR";
 
 export type SavedKanbanConfig = {
   dueFilter: WorkOrderDueFilter;
+};
+
+export type SavedCalendarConfig = {
+  month: string | null;
 };
 
 export type SavedMaintenanceViewSnapshot = {
@@ -18,7 +22,7 @@ export type SavedMaintenanceViewSnapshot = {
   userId: string;
   surface: SavedMaintenanceSurface;
   name: string;
-  config: SavedKanbanConfig;
+  config: SavedKanbanConfig | SavedCalendarConfig;
   active: boolean;
   createdAt: string;
   updatedAt: string;
@@ -49,6 +53,25 @@ function validDueFilter(value: unknown): value is WorkOrderDueFilter {
   return DUE_FILTERS.includes(value as WorkOrderDueFilter);
 }
 
+function validMonth(value: unknown): value is string | null {
+  if (value === null) return true;
+  if (typeof value !== "string" || !/^\d{4}-\d{2}$/.test(value)) return false;
+  const [yearText, monthText] = value.split("-");
+  const year = Number(yearText);
+  const month = Number(monthText);
+  return year >= 1970 && year <= 9999 && month >= 1 && month <= 12;
+}
+
+function validConfig(
+  surface: SavedMaintenanceSurface,
+  config: SavedMaintenanceViewSnapshot["config"],
+) {
+  if (surface === "KANBAN") {
+    return "dueFilter" in config && validDueFilter(config.dueFilter);
+  }
+  return "month" in config && validMonth(config.month);
+}
+
 function parseSnapshot(value: string | null): SavedMaintenanceViewSnapshot | null {
   if (!value) return null;
   try {
@@ -58,10 +81,10 @@ function parseSnapshot(value: string | null): SavedMaintenanceViewSnapshot | nul
       typeof parsed.organizationId !== "string" ||
       typeof parsed.siteId !== "string" ||
       typeof parsed.userId !== "string" ||
-      parsed.surface !== "KANBAN" ||
+      (parsed.surface !== "KANBAN" && parsed.surface !== "CALENDAR") ||
       typeof parsed.name !== "string" ||
       !parsed.config ||
-      !validDueFilter(parsed.config.dueFilter) ||
+      !validConfig(parsed.surface, parsed.config) ||
       typeof parsed.active !== "boolean" ||
       typeof parsed.createdAt !== "string" ||
       typeof parsed.updatedAt !== "string"
@@ -77,6 +100,7 @@ function parseSnapshot(value: string | null): SavedMaintenanceViewSnapshot | nul
 function scopeWhere(input: { organizationId: string; siteId: string; userId: string }) {
   return {
     entityType: ENTITY_TYPE,
+    actorId: input.userId,
     AND: [
       { afterJson: { contains: `"organizationId":"${input.organizationId}"` } },
       { afterJson: { contains: `"siteId":"${input.siteId}"` } },
@@ -89,6 +113,7 @@ export async function listSavedMaintenanceViews(input: {
   organizationId: string;
   siteId: string;
   userId: string;
+  surface?: SavedMaintenanceSurface;
   includeInactive?: boolean;
 }) {
   const records = await db.auditLog.findMany({
@@ -111,7 +136,11 @@ export async function listSavedMaintenanceViews(input: {
   }
 
   return [...latest.values()]
-    .filter((view) => input.includeInactive || view.active)
+    .filter(
+      (view) =>
+        (input.includeInactive || view.active) &&
+        (!input.surface || view.surface === input.surface),
+    )
     .sort((left, right) => left.name.localeCompare(right.name));
 }
 
@@ -121,11 +150,14 @@ export async function createSavedMaintenanceView(input: {
   userId: string;
   name: string;
   surface: SavedMaintenanceSurface;
-  config: SavedKanbanConfig;
+  config: SavedMaintenanceViewSnapshot["config"];
 }) {
   const name = input.name.trim();
-  if (!name || name.length > 80 || input.surface !== "KANBAN" || !validDueFilter(input.config.dueFilter)) {
-    throw new SavedMaintenanceViewError("INVALID_VIEW", "Saved view name and filter configuration are invalid");
+  if (!name || name.length > 80 || !validConfig(input.surface, input.config)) {
+    throw new SavedMaintenanceViewError(
+      "INVALID_VIEW",
+      "Saved view name and filter configuration are invalid",
+    );
   }
 
   const active = await listSavedMaintenanceViews(input);
@@ -135,10 +167,16 @@ export async function createSavedMaintenanceView(input: {
       `A user can save at most ${SAVED_VIEW_LIMIT} active views per site`,
     );
   }
-  if (active.some((view) => view.name.toLocaleLowerCase() === name.toLocaleLowerCase())) {
+  if (
+    active.some(
+      (view) =>
+        view.surface === input.surface &&
+        view.name.toLocaleLowerCase() === name.toLocaleLowerCase(),
+    )
+  ) {
     throw new SavedMaintenanceViewError(
       "DUPLICATE_VIEW_NAME",
-      "A saved view with this name already exists for this site",
+      "A saved view with this name already exists for this planning surface",
     );
   }
 
@@ -174,11 +212,14 @@ export async function deleteSavedMaintenanceView(input: {
   userId: string;
   viewId: string;
 }) {
-  const current = (await listSavedMaintenanceViews({ ...input, includeInactive: true })).find(
-    (view) => view.id === input.viewId,
-  );
+  const current = (
+    await listSavedMaintenanceViews({ ...input, includeInactive: true })
+  ).find((view) => view.id === input.viewId);
   if (!current || !current.active) {
-    throw new SavedMaintenanceViewError("VIEW_NOT_FOUND", "Saved view not found in user/site scope");
+    throw new SavedMaintenanceViewError(
+      "VIEW_NOT_FOUND",
+      "Saved view not found in user/site scope",
+    );
   }
 
   const snapshot: SavedMaintenanceViewSnapshot = {
@@ -199,9 +240,17 @@ export async function deleteSavedMaintenanceView(input: {
   return snapshot;
 }
 
-export function savedKanbanHref(view: Pick<SavedMaintenanceViewSnapshot, "surface" | "config">) {
-  if (view.surface !== "KANBAN") return "/maintenance/kanban";
-  return view.config.dueFilter === "ALL"
-    ? "/maintenance/kanban"
-    : `/maintenance/kanban?due=${encodeURIComponent(view.config.dueFilter)}`;
+export function savedMaintenanceHref(
+  view: Pick<SavedMaintenanceViewSnapshot, "surface" | "config">,
+) {
+  if (view.surface === "KANBAN") {
+    const config = view.config as SavedKanbanConfig;
+    return config.dueFilter === "ALL"
+      ? "/maintenance/kanban"
+      : `/maintenance/kanban?due=${encodeURIComponent(config.dueFilter)}`;
+  }
+  const config = view.config as SavedCalendarConfig;
+  return config.month
+    ? `/maintenance/calendar?month=${encodeURIComponent(config.month)}`
+    : "/maintenance/calendar";
 }
