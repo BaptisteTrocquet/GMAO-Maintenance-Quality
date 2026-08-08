@@ -11,6 +11,7 @@ type Mttr = {
   mttrMinutes: number | null;
   mttrHours: number | null;
   empty: boolean;
+  insufficientData: boolean;
   from: string;
   to: string;
   generatedAt: string;
@@ -126,7 +127,11 @@ export default function MttrClient({
             <section className="card">
               <h2>Formula detail</h2>
               {data.empty ? (
-                <p className="muted">No completed corrective work with valid repair timestamps was found in this reporting window.</p>
+                <p className="muted">No completed corrective work was found in this reporting window.</p>
+              ) : data.insufficientData ? (
+                <p className="muted">
+                  {data.completedCorrective} completed corrective work order{data.completedCorrective === 1 ? " was" : "s were"} found, but none has a valid startedAt → completedAt interval. MTTR is therefore undefined rather than zero.
+                </p>
               ) : (
                 <dl className="detail-list">
                   <div><dt>Total repair minutes</dt><dd>{data.totalRepairMinutes.toFixed(1)}</dd></div>
