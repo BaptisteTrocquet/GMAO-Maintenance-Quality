@@ -37,12 +37,20 @@ function authorize(
 }
 
 function evidenceError(error: QualityEvidenceError) {
-  if (error.code === "QUALITY_EVENT_NOT_FOUND" || error.code === "EVIDENCE_NOT_FOUND") {
+  if (
+    error.code === "QUALITY_EVENT_NOT_FOUND" ||
+    error.code === "EVIDENCE_NOT_FOUND" ||
+    error.code === "CAPA_ACTION_NOT_FOUND"
+  ) {
     return apiError(404, error.code, error.message);
   }
   if (error.code === "FILE_TOO_LARGE") return apiError(413, error.code, error.message);
   if (error.code === "UNSUPPORTED_FILE_TYPE") return apiError(415, error.code, error.message);
-  if (error.code === "INVALID_FILE_METADATA" || error.code === "REVOKE_REASON_REQUIRED") {
+  if (
+    error.code === "INVALID_FILE_METADATA" ||
+    error.code === "REVOKE_REASON_REQUIRED" ||
+    error.code === "CAPA_ACTION_REQUIRED"
+  ) {
     return apiError(400, error.code, error.message);
   }
   return apiError(409, error.code, error.message);
