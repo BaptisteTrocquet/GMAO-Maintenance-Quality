@@ -23,12 +23,14 @@ jobs:
 
       - name: Generate baseline SQL
         run: |
-          mkdir -p generated
-          npx prisma migrate diff --from-empty --to-schema prisma/schema.prisma --script --output generated/migration.sql
+          mkdir -p generated/prisma/migrations/0_init
+          npx prisma migrate diff --from-empty --to-schema-datamodel prisma/schema.prisma --script --output generated/prisma/migrations/0_init/migration.sql
 
-      - name: Upload baseline SQL
+      - name: Upload generated baseline and lockfile
         uses: actions/upload-artifact@v4
         with:
-          name: prisma-baseline
-          path: generated/migration.sql
+          name: e0-generated-baseline
+          path: |
+            generated/prisma/migrations/0_init/migration.sql
+            package-lock.json
           if-no-files-found: error
