@@ -27,7 +27,7 @@ beforeEach(() => {
 });
 
 describe("personal dashboard", () => {
-  it("scopes work to the selected tenant/site and current user or their teams", async () => {
+  it("scopes work to the selected tenant/site, direct assignments, or unassigned team work", async () => {
     await buildPersonalDashboard({
       organizationId: "org-a",
       siteId: "site-a",
@@ -44,7 +44,10 @@ describe("personal dashboard", () => {
           status: { notIn: ["COMPLETED", "CANCELLED"] },
           OR: [
             { assigneeId: "user-a" },
-            { team: { members: { some: { userId: "user-a" } } } },
+            {
+              assigneeId: null,
+              team: { members: { some: { userId: "user-a" } } },
+            },
           ],
         },
       }),
@@ -56,7 +59,7 @@ describe("personal dashboard", () => {
       organizationId: "org-a",
       siteId: "site-a",
       userId: "user-a",
-      role: "MAINTENANCE_MANAGER",
+      role: "QUALITY_MANAGER",
       now,
     });
 
@@ -78,7 +81,7 @@ describe("personal dashboard", () => {
     );
   });
 
-  it("lets a technician see only their own pending document approvals", async () => {
+  it("does not query document approvals for a technician without document:approve", async () => {
     await buildPersonalDashboard({
       organizationId: "org-a",
       siteId: "site-a",
@@ -88,22 +91,8 @@ describe("personal dashboard", () => {
     });
 
     expect(mocks.workFindMany).toHaveBeenCalled();
-    expect(mocks.approvalCount).toHaveBeenCalledWith({
-      where: {
-        approverId: "tech-a",
-        decision: "PENDING",
-        revision: { document: { organizationId: "org-a" } },
-      },
-    });
-    expect(mocks.approvalFindMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: {
-          approverId: "tech-a",
-          decision: "PENDING",
-          revision: { document: { organizationId: "org-a" } },
-        },
-      }),
-    );
+    expect(mocks.approvalCount).not.toHaveBeenCalled();
+    expect(mocks.approvalFindMany).not.toHaveBeenCalled();
   });
 
   it("returns exact counters independently from the bounded top-work list", async () => {
@@ -120,7 +109,7 @@ describe("personal dashboard", () => {
       organizationId: "org-a",
       siteId: "site-a",
       userId: "user-a",
-      role: "MAINTENANCE_MANAGER",
+      role: "QUALITY_MANAGER",
       now,
     });
 
