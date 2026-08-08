@@ -88,7 +88,7 @@ describe("quality 8D API", () => {
     expect(mocks.saveEightDWorkspace).not.toHaveBeenCalled();
   });
 
-  it("saves structured D1-D8 authoring fields for quality managers", async () => {
+  it("saves only D1 fields while a new 8D is on D1", async () => {
     mocks.authenticateRequest.mockResolvedValue(auth("QUALITY_MANAGER"));
     const response = await PUT(
       new Request("http://localhost/api/quality/events/event-1/eight-d", {
@@ -98,28 +98,57 @@ describe("quality 8D API", () => {
           organizationId: "org-a",
           siteId: "site-a",
           team: [{ userId: "user-1", responsibility: "8D lead" }],
-          problemStatement: "Synthetic deviation.",
-          impactScope: "One synthetic lot.",
-          escapePoint: "Detection control missed fixture retention.",
-          validationNote: "Three verification runs passed.",
-          preventionSummary: "Standardize the control.",
-          systemicChanges: ["Update preventive checklist"],
-          recognitionNote: "Recognize the team.",
-          lessonsLearned: "Control fixture integrity directly.",
+          problemStatement: "Must not pre-edit D2.",
+          escapePoint: "Must not pre-edit D4.",
         }),
       }),
       context,
     );
     expectResponse(response, 200);
-    expect(mocks.saveEightDWorkspace).toHaveBeenCalledWith(expect.objectContaining({
+    expect(mocks.saveEightDWorkspace).toHaveBeenCalledWith({
       organizationId: "org-a",
       siteId: "site-a",
       eventId: "event-1",
+      team: [{ userId: "user-1", responsibility: "8D lead" }],
       actorId: "quality-1",
-      escapePoint: "Detection control missed fixture retention.",
-      validationNote: "Three verification runs passed.",
-      lessonsLearned: "Control fixture integrity directly.",
-    }));
+    });
+  });
+
+  it("does not let a later discipline rewrite frozen historical fields", async () => {
+    mocks.authenticateRequest.mockResolvedValue(auth("QUALITY_MANAGER"));
+    mocks.getEightDWorkspace.mockResolvedValue({
+      event: { status: "INVESTIGATING" },
+      eightD: { currentDiscipline: "D6", status: "IN_PROGRESS" },
+      capa: { status: "ACTIVE" },
+    });
+    mocks.saveEightDWorkspace.mockResolvedValue({ eventId: "event-1", currentDiscipline: "D6" });
+
+    const response = await PUT(
+      new Request("http://localhost/api/quality/events/event-1/eight-d", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          organizationId: "org-a",
+          siteId: "site-a",
+          team: [{ userId: "attacker", responsibility: "Rewrite D1" }],
+          problemStatement: "Rewrite D2",
+          escapePoint: "Rewrite D4",
+          validationNote: "Three objective verification runs passed.",
+          preventionSummary: "Pre-edit D7",
+          recognitionNote: "Pre-edit D8",
+        }),
+      }),
+      context,
+    );
+
+    expectResponse(response, 200);
+    expect(mocks.saveEightDWorkspace).toHaveBeenCalledWith({
+      organizationId: "org-a",
+      siteId: "site-a",
+      eventId: "event-1",
+      validationNote: "Three objective verification runs passed.",
+      actorId: "quality-1",
+    });
   });
 
   it("routes ADVANCE and ineffective-CAPA reset explicitly", async () => {
