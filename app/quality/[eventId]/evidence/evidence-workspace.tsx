@@ -129,25 +129,25 @@ export default function EvidenceWorkspace({
         { method: "DELETE" },
       );
       const body = (await response.json()) as {
-        data?: { storageDeleted?: boolean };
+        data?: { storageRetained?: boolean };
         error?: { message?: string };
       };
       if (!response.ok) {
-        throw new Error(body.error?.message ?? "Evidence removal failed");
+        throw new Error(body.error?.message ?? "Evidence withdrawal failed");
       }
       setEvidence((current) => current.filter((item) => item.id !== evidenceId));
       setFeedback({
-        kind: body.data?.storageDeleted === false ? "error" : "success",
+        kind: "success",
         message:
-          body.data?.storageDeleted === false
-            ? "Evidence was removed from the register, but storage cleanup needs attention."
-            : "Evidence removed from the active register and audited.",
+          body.data?.storageRetained === false
+            ? "Evidence withdrawn from active use; retention state requires review."
+            : "Evidence withdrawn from active use. The audited record and stored bytes are retained.",
       });
       router.refresh();
     } catch (error) {
       setFeedback({
         kind: "error",
-        message: error instanceof Error ? error.message : "Evidence removal failed",
+        message: error instanceof Error ? error.message : "Evidence withdrawal failed",
       });
     } finally {
       setRemovingId(null);
@@ -205,7 +205,7 @@ export default function EvidenceWorkspace({
                             disabled={removingId === item.id}
                             style={{ border: 0, padding: 0, background: "transparent", textDecoration: "underline", cursor: "pointer" }}
                           >
-                            {removingId === item.id ? "Removing…" : "Remove"}
+                            {removingId === item.id ? "Withdrawing…" : "Withdraw"}
                           </button>
                         </>
                       ) : null}
@@ -223,7 +223,7 @@ export default function EvidenceWorkspace({
       <section className="card">
         <h2>Upload evidence</h2>
         <p className="muted">
-          Files are stored by the configured storage adapter, checksummed with SHA-256 and registered immutably in the quality audit trail. Maximum size: 20 MB.
+          Files are stored by the configured storage adapter, checksummed with SHA-256 and registered immutably in the quality audit trail. Withdrawn evidence remains retained for historical traceability. Maximum size: 20 MB.
         </p>
         {closed ? (
           <p className="muted">This quality event is closed; its evidence register is read-only.</p>
