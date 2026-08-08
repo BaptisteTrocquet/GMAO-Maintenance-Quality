@@ -69,3 +69,18 @@ test("command palette shortcut toggles closed and clears the previous query", as
   await expect(page.getByRole("dialog", { name: "Command palette" })).toBeVisible();
   await expect(input).toHaveValue("");
 });
+
+test("command palette traps tab navigation inside the dialog", async ({ page }) => {
+  await page.goto("/");
+  await page.keyboard.press("Control+K");
+  const dialog = page.getByRole("dialog", { name: "Command palette" });
+  await expect(dialog).toBeVisible();
+
+  const closeButton = page.getByRole("button", { name: "Close command palette" });
+  await closeButton.focus();
+  await page.keyboard.press("Shift+Tab");
+  await expect(page.getByRole("option", { name: /Team workload/ })).toBeFocused();
+
+  await page.keyboard.press("Tab");
+  await expect(closeButton).toBeFocused();
+});
