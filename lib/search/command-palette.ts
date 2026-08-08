@@ -24,6 +24,13 @@ export const COMMAND_PALETTE_QUICK_ACTIONS: CommandPaletteItem[] = [
     badge: "ACTION",
   },
   {
+    key: "action:notifications",
+    label: "Notification center",
+    description: "Review prioritized operational alerts in the selected site",
+    href: "/notifications",
+    badge: "ACTION",
+  },
+  {
     key: "action:calendar",
     label: "Maintenance calendar",
     description: "Open monthly planning and rescheduling",
