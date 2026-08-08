@@ -8,7 +8,7 @@ type ReliabilityPayload = {
   timezone: string;
   range: { from: string | null; toExclusive: string };
   assetId: string | null;
-  mttr: { hours: number | null; sampleCount: number };
+  mttr: { hours: number | null; sampleCount: number; excludedIncomplete: number };
   mtbf: { hours: number | null; sampleCount: number; assetCount: number };
   definitions: { mttr: string; mtbf: string };
 };
@@ -105,14 +105,15 @@ export default function ReliabilityClient({
             <section className="card">
               <div className="muted">MTTR</div>
               <div className="title">{formatHours(data.mttr.hours)}</div>
-              <p>{data.mttr.sampleCount} completed corrective sample{data.mttr.sampleCount === 1 ? "" : "s"}</p>
+              <p>{data.mttr.sampleCount} valid completed corrective sample{data.mttr.sampleCount === 1 ? "" : "s"}</p>
+              <p className="muted">{data.mttr.excludedIncomplete} completed corrective record{data.mttr.excludedIncomplete === 1 ? "" : "s"} excluded for incomplete or invalid timestamps.</p>
               <p className="muted">{data.definitions.mttr}</p>
             </section>
             <section className="card">
-              <div className="muted">MTBF</div>
+              <div className="muted">MTBF proxy</div>
               <div className="title">{formatHours(data.mtbf.hours)}</div>
               <p>
-                {data.mtbf.sampleCount} failure interval{data.mtbf.sampleCount === 1 ? "" : "s"}
+                {data.mtbf.sampleCount} corrective-event interval{data.mtbf.sampleCount === 1 ? "" : "s"}
                 {data.mtbf.assetCount ? ` across ${data.mtbf.assetCount} asset${data.mtbf.assetCount === 1 ? "" : "s"}` : ""}
               </p>
               <p className="muted">{data.definitions.mtbf}</p>
