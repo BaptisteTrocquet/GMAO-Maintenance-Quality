@@ -112,6 +112,10 @@ export default async function MaintenanceWorkloadPage() {
             Rows are assigned to the named person first, then to a maintenance team, otherwise to Unassigned.
             Riskier rows are shown first using overdue, blocked, urgent and near-due work.
           </p>
+          <p className="muted" style={{ marginBottom: 0 }}>
+            These are workload counts, not capacity percentages. The data model does not yet define contractual hours,
+            shift capacity or availability, so this view deliberately avoids inventing utilization figures.
+          </p>
         </section>
       </div>
 
