@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { request as httpsRequest } from "node:https";
 import { db } from "@/lib/db";
+import { createRetryPolicy, type RetryOutcome } from "@/lib/integrations/retry-policy";
 import {
   resolvePublicWebhookTarget,
   signWebhookPayload,
@@ -12,8 +13,12 @@ import {
 } from "@/lib/webhooks/subscriptions";
 
 const DELIVERY_TIMEOUT_MS = 5_000;
-const MAX_ATTEMPTS = 5;
-const BACKOFF_MS = [60_000, 5 * 60_000, 30 * 60_000, 2 * 60 * 60_000, 8 * 60 * 60_000];
+const WEBHOOK_RETRY_POLICY = createRetryPolicy({
+  maxAttempts: 5,
+  delaysMs: [60_000, 5 * 60_000, 30 * 60_000, 2 * 60 * 60_000],
+  maxDelayMs: 8 * 60 * 60_000,
+  jitterRatio: 0,
+});
 
 export type WebhookEvent = {
   id: string;
@@ -26,7 +31,8 @@ type FailedDeliverySnapshot = {
   subscriptionId: string;
   event: WebhookEvent;
   attempt: number;
-  nextAttemptAt: string;
+  nextAttemptAt: string | null;
+  retryReason: string;
   statusCode: number | null;
   error: string | null;
 };
@@ -37,13 +43,18 @@ export function webhookDeliveryId(subscriptionId: string, sourceEventId: string)
     .digest("hex");
 }
 
+function retryAfterValue(value: string | string[] | undefined) {
+  if (Array.isArray(value)) return value[0] ?? null;
+  return value ?? null;
+}
+
 function postPinnedHttps(input: {
   subscription: WebhookSubscription;
   body: string;
   timestamp: string;
   signature: string;
 }) {
-  return new Promise<number>((resolve, reject) => {
+  return new Promise<{ statusCode: number; retryAfter: string | null }>((resolve, reject) => {
     void resolvePublicWebhookTarget(input.subscription.url)
       .then((target) => {
         const request = httpsRequest(
@@ -67,7 +78,10 @@ function postPinnedHttps(input: {
           },
           (response) => {
             response.resume();
-            resolve(response.statusCode ?? 0);
+            resolve({
+              statusCode: response.statusCode ?? 0,
+              retryAfter: retryAfterValue(response.headers["retry-after"]),
+            });
           },
         );
         request.setTimeout(DELIVERY_TIMEOUT_MS, () => {
@@ -106,18 +120,24 @@ export async function deliverWebhook(input: {
 
   let statusCode: number | null = null;
   let errorMessage: string | null = null;
+  let outcome: RetryOutcome = { kind: "network" };
   try {
-    statusCode = await postPinnedHttps({
+    const response = await postPinnedHttps({
       subscription: input.subscription,
       body,
       timestamp,
       signature,
     });
-    if (statusCode < 200 || statusCode >= 300) {
+    statusCode = response.statusCode;
+    if (statusCode >= 200 && statusCode < 300) {
+      outcome = { kind: "success" };
+    } else {
       errorMessage = `Webhook endpoint returned HTTP ${statusCode}`;
+      outcome = { kind: "http", status: statusCode, retryAfter: response.retryAfter };
     }
-  } catch (error) {
-    errorMessage = error instanceof Error ? error.message : "Webhook delivery failed";
+  } catch {
+    errorMessage = "Webhook delivery failed";
+    outcome = { kind: "network" };
   }
 
   if (!errorMessage) {
@@ -140,12 +160,19 @@ export async function deliverWebhook(input: {
     return { delivered: true, deliveryId, attempt, statusCode };
   }
 
-  const nextAttemptAt = new Date(now.getTime() + BACKOFF_MS[Math.min(attempt - 1, BACKOFF_MS.length - 1)]);
+  const retryDecision = WEBHOOK_RETRY_POLICY.decide({
+    attempt,
+    idempotent: true,
+    outcome,
+    now,
+  });
+  const nextAttemptAt = retryDecision.retry ? retryDecision.nextAttemptAt : null;
   const snapshot: FailedDeliverySnapshot = {
     subscriptionId: input.subscription.id,
     event: input.event,
     attempt,
-    nextAttemptAt: nextAttemptAt.toISOString(),
+    nextAttemptAt: nextAttemptAt?.toISOString() ?? null,
+    retryReason: retryDecision.reason,
     statusCode,
     error: errorMessage,
   };
@@ -159,7 +186,15 @@ export async function deliverWebhook(input: {
       createdAt: now,
     },
   });
-  return { delivered: false, deliveryId, attempt, statusCode, nextAttemptAt, error: errorMessage };
+  return {
+    delivered: false,
+    deliveryId,
+    attempt,
+    statusCode,
+    nextAttemptAt,
+    retryReason: retryDecision.reason,
+    error: errorMessage,
+  };
 }
 
 export async function retryFailedWebhookDeliveries(input: {
@@ -192,7 +227,8 @@ export async function retryFailedWebhookDeliveries(input: {
       continue;
     }
     if (
-      snapshot.attempt >= MAX_ATTEMPTS ||
+      snapshot.attempt >= WEBHOOK_RETRY_POLICY.maxAttempts ||
+      !snapshot.nextAttemptAt ||
       new Date(snapshot.nextAttemptAt).getTime() > now.getTime()
     ) {
       continue;
