@@ -120,3 +120,23 @@ export function buildSchedulePatch(input: {
     }).toISOString(),
   } as Record<WorkOrderScheduleField, string>;
 }
+
+export function buildWorkOrderRescheduleRequest(input: {
+  workOrderId: string;
+  organizationId: string;
+  siteId: string;
+  field: WorkOrderScheduleField;
+  instant: Date;
+  targetDateKey: string;
+  timeZone: string;
+}) {
+  return {
+    url: `/api/work-orders/${encodeURIComponent(input.workOrderId)}`,
+    method: "PATCH" as const,
+    body: {
+      organizationId: input.organizationId,
+      siteId: input.siteId,
+      ...buildSchedulePatch(input),
+    },
+  };
+}
