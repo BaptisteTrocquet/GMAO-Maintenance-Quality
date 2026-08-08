@@ -60,6 +60,25 @@ npm run prisma:deploy
 
 Do not use `prisma db push` as the normal project migration path.
 
+## Browser E2E tests
+
+The browser harness uses Playwright with Chromium against a production Next.js build and the synthetic seeded PostgreSQL database.
+
+Install the browser once on a development machine:
+
+```bash
+npx playwright install chromium
+```
+
+With PostgreSQL bootstrapped, build and run the browser suite:
+
+```bash
+npm run build
+npm run test:e2e
+```
+
+Playwright starts `npm run start` automatically. CI installs Chromium with its Linux system dependencies and retains traces/screenshots on failure.
+
 ## Roadmap
 
 - [x] Core data model
