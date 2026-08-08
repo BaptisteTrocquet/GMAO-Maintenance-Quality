@@ -84,6 +84,54 @@ describe("quality evidence registry", () => {
     });
   });
 
+  it("binds CAPA action evidence only to an action from the same quality event", async () => {
+    const capa = {
+      organizationId: "org-a",
+      siteId: "site-a",
+      actions: [{ id: "action-1" }, { id: "action-2" }],
+    };
+    mocks.auditFindFirst
+      .mockResolvedValueOnce({ afterJson: JSON.stringify(event) })
+      .mockResolvedValueOnce({ afterJson: JSON.stringify(capa) });
+
+    const evidence = await addQualityEvidence({
+      ...baseInput,
+      category: "CAPA_ACTION",
+      relatedActionId: "action-2",
+    });
+
+    expect(evidence).toMatchObject({
+      category: "CAPA_ACTION",
+      relatedActionId: "action-2",
+    });
+
+    vi.clearAllMocks();
+    mocks.transaction.mockImplementation(
+      async (callback: (transaction: typeof tx) => Promise<unknown>) => callback(tx),
+    );
+    mocks.auditFindFirst
+      .mockResolvedValueOnce({ afterJson: JSON.stringify(event) })
+      .mockResolvedValueOnce({ afterJson: JSON.stringify(capa) });
+
+    await expect(
+      addQualityEvidence({
+        ...baseInput,
+        category: "CAPA_ACTION",
+        relatedActionId: "foreign-action",
+      }),
+    ).rejects.toMatchObject({ code: "CAPA_ACTION_NOT_FOUND" });
+    expect(mocks.auditCreate).not.toHaveBeenCalled();
+  });
+
+  it("requires a CAPA action ID when evidence is categorized for a CAPA action", async () => {
+    mocks.auditFindFirst.mockResolvedValueOnce({ afterJson: JSON.stringify(event) });
+
+    await expect(
+      addQualityEvidence({ ...baseInput, category: "CAPA_ACTION", relatedActionId: null }),
+    ).rejects.toMatchObject({ code: "CAPA_ACTION_REQUIRED" });
+    expect(mocks.auditCreate).not.toHaveBeenCalled();
+  });
+
   it("rejects evidence changes after the quality event is closed", async () => {
     mocks.auditFindFirst.mockResolvedValueOnce({
       afterJson: JSON.stringify({ ...event, status: "CLOSED" }),
