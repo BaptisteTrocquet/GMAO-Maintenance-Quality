@@ -38,15 +38,22 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
 
-      - name: Install dependencies
-        run: npm install --no-audit --no-fund
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
 
       - name: Generate Prisma client
         run: npm run prisma:generate
 
-      - name: Apply schema to disposable database
-        run: npx prisma db push
+      - name: Apply versioned database migrations
+        run: npm run prisma:migrate:deploy
+
+      - name: Verify migration history
+        run: npm run prisma:migrate:status
+
+      - name: Verify migrated database matches Prisma schema
+        run: npm run prisma:migrate:drift
 
       - name: Seed synthetic demo data
         run: npm run prisma:seed
