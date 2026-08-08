@@ -12,6 +12,10 @@ import {
   shiftCalendarMonth,
   UNSCHEDULED_WORK_ORDER_LIMIT,
 } from "@/lib/maintenance/planning-calendar";
+import {
+  CalendarDayDropZone,
+  RescheduleControls,
+} from "./calendar-rescheduling";
 
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
@@ -149,6 +153,11 @@ export default async function MaintenanceCalendarPage({
     (sum, day) => sum + day.items.filter((item) => item.due).length,
     0,
   );
+  const moveContext = {
+    organizationId,
+    siteId,
+    timeZone: site.organization.timezone,
+  };
 
   return (
     <>
@@ -194,7 +203,7 @@ export default async function MaintenanceCalendarPage({
           </Link>
         </div>
         <p className="muted" style={{ marginBottom: 0 }}>
-          Planned starts and due dates are rendered in the organization timezone. Date changes continue to use the existing permission-checked work-order API; drag-and-drop rescheduling is intentionally a separate story.
+          Drag a work-order handle onto another day, or use the date field and Move button. Both paths use the existing permission-checked, audited work-order API. Existing local start times are preserved across timezone and DST changes; due dates move by the same local-day delta.
         </p>
         {truncated ? (
           <p className="muted" role="status" style={{ marginBottom: 0 }}>
@@ -233,10 +242,11 @@ export default async function MaintenanceCalendarPage({
             }}
           >
             {calendar.map((day) => (
-              <section
+              <CalendarDayDropZone
                 key={day.dateKey}
-                className="card"
-                aria-label={day.dateKey}
+                {...moveContext}
+                dateKey={day.dateKey}
+                label={`${day.dateKey}, ${day.items.length} work-order marker${day.items.length === 1 ? "" : "s"}`}
                 style={{
                   minHeight: 180,
                   padding: 10,
@@ -290,10 +300,20 @@ export default async function MaintenanceCalendarPage({
                         {item.due ? <span className="badge">DUE {item.dueTime}</span> : null}
                         <span className="badge">{statusLabel(item.status)}</span>
                       </div>
+                      <RescheduleControls
+                        {...moveContext}
+                        disabled={item.status === "COMPLETED" || item.status === "CANCELLED"}
+                        workOrder={{
+                          id: item.id,
+                          number: item.number,
+                          plannedStart: item.plannedStart?.toISOString() ?? null,
+                          dueAt: item.dueAt?.toISOString() ?? null,
+                        }}
+                      />
                     </article>
                   ))}
                 </div>
-              </section>
+              </CalendarDayDropZone>
             ))}
           </div>
         </div>
@@ -318,6 +338,7 @@ export default async function MaintenanceCalendarPage({
               <th>Asset</th>
               <th>Owner</th>
               <th>Due</th>
+              <th>Planning</th>
             </tr>
           </thead>
           <tbody>
@@ -333,10 +354,21 @@ export default async function MaintenanceCalendarPage({
                 <td>{workOrder.asset?.code ?? "—"}</td>
                 <td>{workOrder.assignee?.displayName ?? workOrder.team?.name ?? "Unassigned"}</td>
                 <td>{workOrder.dueAt ? workOrder.dueAt.toISOString().slice(0, 10) : "—"}</td>
+                <td>
+                  <RescheduleControls
+                    {...moveContext}
+                    workOrder={{
+                      id: workOrder.id,
+                      number: workOrder.number,
+                      plannedStart: null,
+                      dueAt: workOrder.dueAt?.toISOString() ?? null,
+                    }}
+                  />
+                </td>
               </tr>
             ))}
             {visibleUnscheduled.length === 0 ? (
-              <tr><td colSpan={6}>No unscheduled open work orders.</td></tr>
+              <tr><td colSpan={7}>No unscheduled open work orders.</td></tr>
             ) : null}
           </tbody>
         </table>
