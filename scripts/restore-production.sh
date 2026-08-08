@@ -107,6 +107,17 @@ if [ "$database_schema" = "all" ]; then
       --command="SELECT count(*) FROM pg_catalog.pg_tables WHERE schemaname NOT IN ('pg_catalog', 'information_schema');" \
       | tr -d '[:space:]'
   )"
+  target_extra_schema_count="$(
+    psql \
+      --dbname="$pg_database_url" \
+      --tuples-only \
+      --no-align \
+      --set=ON_ERROR_STOP=1 \
+      --command="SELECT count(*) FROM pg_catalog.pg_namespace WHERE nspname NOT IN ('pg_catalog', 'information_schema', 'public') AND nspname !~ '^pg_toast';" \
+      | tr -d '[:space:]'
+  )"
+  [ "$target_extra_schema_count" = "0" ] || \
+    fail "target database contains non-system schemas; restore requires a pristine isolated database"
 else
   target_table_count="$(
     psql \
@@ -167,8 +178,23 @@ if [ "$storage_provider" = "local" ]; then
   chmod -R u+rwX,go-rwx "$storage_stage"
 fi
 
+# pg_dump includes CREATE SCHEMA for the application schema. A fresh PostgreSQL
+# database normally already has `public`, so remove only the verified-empty schema.
+# RESTRICT is intentional: if any object exists, PostgreSQL refuses the drop.
+if [ "$database_schema" = "all" ]; then
+  psql \
+    --dbname="$pg_database_url" \
+    --set=ON_ERROR_STOP=1 \
+    --command='DROP SCHEMA IF EXISTS public RESTRICT;' >/dev/null
+else
+  psql \
+    --dbname="$pg_database_url" \
+    --set=ON_ERROR_STOP=1 \
+    --command="DROP SCHEMA IF EXISTS \"$database_schema\" RESTRICT;" >/dev/null
+fi
+
 # The target must be isolated and empty. --single-transaction makes the PostgreSQL
-# restore atomic: a failed pg_restore does not leave a partially restored schema.
+# restore atomic: a failed pg_restore does not leave partially restored application data.
 pg_restore \
   --dbname="$pg_database_url" \
   --exit-on-error \
