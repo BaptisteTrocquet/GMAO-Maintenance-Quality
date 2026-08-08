@@ -42,6 +42,19 @@ jobs:
       - name: Install dependencies
         run: npm install --no-audit --no-fund
 
+      - name: Generate reproducibility baseline
+        run: |
+          mkdir -p generated
+          cp package-lock.json generated/package-lock.json
+          npx prisma migrate diff --from-empty --to-schema prisma/schema.prisma --script > generated/00000000000000_init.sql
+
+      - name: Upload reproducibility baseline
+        uses: actions/upload-artifact@v4
+        with:
+          name: e0-reproducibility-baseline
+          path: generated/
+          if-no-files-found: error
+
       - name: Generate Prisma client
         run: npm run prisma:generate
 
