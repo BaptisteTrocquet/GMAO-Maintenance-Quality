@@ -41,7 +41,7 @@ const reopenSchema = z.object({
   action: z.literal("REOPEN"),
 });
 
-const patchSchema = z.disatedUnion("action", [
+const patchSchema = z.discriminatedUnion("action", [
   containmentSchema,
   investigationSchema,
   closeSchema,
