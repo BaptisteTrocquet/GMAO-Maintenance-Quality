@@ -43,7 +43,7 @@ export default async function QualityPage() {
         </div>
       </div>
 
-      <div className="grid grid-3">
+      <div className="grid asset-summary-grid">
         <section className="card">
           <div className="muted">Open</div>
           <div className="title">{counts.OPEN}</div>
