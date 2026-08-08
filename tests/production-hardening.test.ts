@@ -25,7 +25,18 @@ trustedProxyHops: parseInteger(env.RATE_LIMIT_TRUST_PROXY_HOPS, 0, 0, 10),
 return "ip:unidentified";
 `,
     nextConfig: `const nextConfig = { output: "standalone" };`,
-    ciWorkflow: `permissions:\n  contents: read\n`,
+    ciWorkflow: `
+permissions:
+  contents: read
+steps:
+  - name: Scan production image
+    uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+    with:
+      image-ref: gmao-maintenance-quality:ci
+      exit-code: "1"
+      severity: "CRITICAL"
+      version: "v0.73.0"
+`,
   };
 }
 
@@ -82,12 +93,33 @@ describe("production hardening policy", () => {
       "RATE_LIMIT_TRUST_PROXY_HOPS, 0,",
       "RATE_LIMIT_TRUST_PROXY_HOPS, 1,",
     );
-    input.ciWorkflow = "permissions: write-all\n";
+    input.ciWorkflow = input.ciWorkflow.replace("permissions:\n  contents: read", "permissions: write-all");
 
     expect(validateProductionHardening(input)).toEqual(
       expect.arrayContaining([
         "rate limiting must default to trusting zero proxy hops",
         "CI workflow must keep repository contents permission read-only",
+      ]),
+    );
+  });
+
+  it("requires an immutable Trivy action and scanner version that fail on critical findings", () => {
+    const input = compliant();
+    input.ciWorkflow = input.ciWorkflow
+      .replace(
+        "aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25",
+        "aquasecurity/trivy-action@v0.36.0",
+      )
+      .replace('exit-code: "1"', 'exit-code: "0"')
+      .replace('severity: "CRITICAL"', 'severity: "HIGH"')
+      .replace('version: "v0.73.0"', 'version: "latest"');
+
+    expect(validateProductionHardening(input)).toEqual(
+      expect.arrayContaining([
+        "CI must pin the Trivy action to the approved immutable commit",
+        "CI must pin Trivy scanner version v0.73.0",
+        "CI vulnerability scan must include CRITICAL severity",
+        "CI vulnerability scan must fail on matching vulnerabilities",
       ]),
     );
   });
