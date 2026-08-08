@@ -8,7 +8,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     services:
       postgres:
@@ -42,6 +42,9 @@ jobs:
       - name: Install dependencies
         run: npm install --no-audit --no-fund
 
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
       - name: Generate Prisma client
         run: npm run prisma:generate
 
@@ -62,6 +65,9 @@ jobs:
 
       - name: Unit tests
         run: npm run test
+
+      - name: Browser E2E smoke test
+        run: npm run test:e2e
 
       - name: Build TypeScript SDK
         run: npm run sdk:build
