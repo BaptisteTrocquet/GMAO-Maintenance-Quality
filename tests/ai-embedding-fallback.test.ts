@@ -114,8 +114,8 @@ describe("embedding provider fallback", () => {
     ).rejects.toMatchObject({ name: "ControlledDocumentSearchError", code: "INVALID_REQUEST" });
 
     const deniedScope: MembershipScope = {
-      role: "REQUESTER",
-      active: true,
+      role: "VIEWER",
+      active: false,
       allSites: false,
       siteIds: [],
     };
