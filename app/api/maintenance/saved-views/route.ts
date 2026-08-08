@@ -30,7 +30,7 @@ function authorize(scope: Parameters<typeof assertSitePermission>[0], siteId: st
   }
 }
 
-export async function GET(request: Request) {
+export async function GET(request: Request): Promise<Response> {
   const url = new URL(request.url);
   const parsed = scopeSchema.safeParse({
     organizationId: url.searchParams.get("organizationId"),
@@ -54,7 +54,7 @@ export async function GET(request: Request) {
   );
 }
 
-export async function POST(request: Request) {
+export async function POST(request: Request): Promise<Response> {
   let body: unknown;
   try {
     body = await request.json();
