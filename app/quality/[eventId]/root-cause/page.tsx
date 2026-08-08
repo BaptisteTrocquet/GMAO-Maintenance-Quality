@@ -57,6 +57,7 @@ export default async function RootCausePage({
         organizationId={organizationId}
         siteId={siteId}
         eventId={eventId}
+        eventStatus={qualityEvent.status}
         initialAnalysis={analysis}
       />
 
