@@ -112,7 +112,7 @@ describe("work order triage API", () => {
     });
   });
 
-  it("lets a manager set priority, category, assignee and planning dates", async () => {
+  it("lets a manager set priority, category, assignee and planning dates with an audit event", async () => {
     mocks.membershipFindFirst.mockResolvedValue({ id: "membership-1" });
     const response = await PATCH(
       request({
@@ -135,19 +135,34 @@ describe("work order triage API", () => {
         priority: "HIGH",
         type: "SAFETY",
         assigneeId: "tech-1",
+        plannedStart: new Date("2026-08-08T08:00:00.000Z"),
+        dueAt: new Date("2026-08-08T12:00:00.000Z"),
+      }),
+    });
+    expect(mocks.auditCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        actorId: "manager-1",
+        entityType: "WorkOrder",
+        entityId: "wo-1",
+        action: "TRIAGED",
       }),
     });
   });
 
-  it("blocks a technician from triage and assignment fields", async () => {
+  it("blocks a technician from calendar rescheduling fields without writing or auditing", async () => {
     mocks.authenticateRequest.mockResolvedValue(auth("TECHNICIAN"));
     const response = await PATCH(
-      request({ organizationId: "org-a", siteId: "site-a", priority: "HIGH" }),
+      request({
+        organizationId: "org-a",
+        siteId: "site-a",
+        plannedStart: "2026-08-09T08:00:00.000Z",
+      }),
       params,
     );
 
     await expectStatus(response, 403);
     expect(mocks.workOrderUpdate).not.toHaveBeenCalled();
+    expect(mocks.auditCreate).not.toHaveBeenCalled();
   });
 
   it("lets the assigned technician start a planned work order", async () => {
