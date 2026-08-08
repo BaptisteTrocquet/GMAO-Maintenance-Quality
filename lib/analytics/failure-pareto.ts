@@ -1,6 +1,10 @@
 import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
-import { resolveAnalyticsDateRange } from "@/lib/analytics/date-range";
+import {
+  localDateStartUtc,
+  resolveAnalyticsDateRange,
+  shiftCalendarDate,
+} from "@/lib/analytics/date-range";
 
 export const FAILURE_PARETO_LIMIT = 25;
 export const FAILURE_PARETO_MAX_RANGE_DAYS = 731;
@@ -57,7 +61,11 @@ export async function buildFailurePareto(input: {
     throw new Error("Failure Pareto requires a bounded reporting range");
   }
 
-  if (range.toExclusive.getTime() - range.from.getTime() > (FAILURE_PARETO_MAX_RANGE_DAYS + 1) * 86_400_000) {
+  const maxToExclusive = localDateStartUtc(
+    shiftCalendarDate(input.from, FAILURE_PARETO_MAX_RANGE_DAYS),
+    input.timeZone,
+  );
+  if (range.toExclusive.getTime() > maxToExclusive.getTime()) {
     throw new FailureParetoError(
       "RANGE_TOO_LARGE",
       `Failure Pareto is limited to ${FAILURE_PARETO_MAX_RANGE_DAYS} local calendar days per request`,
