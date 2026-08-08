@@ -7,9 +7,12 @@ The abstractions live in:
 - `lib/ai/embedding-provider.ts`
 - `lib/ai/vector-store.ts`
 
-The repository-provided durable baseline lives in:
+Repository-provided optional/durable adapters live in:
 
-- `lib/ai/postgres-vector-store.ts`
+- `lib/ai/openai-embedding-provider.ts` — optional server-side OpenAI embeddings adapter;
+- `lib/ai/postgres-vector-store.ts` — durable native PostgreSQL vector-store baseline.
+
+OpenAI embedding configuration and transport safety are documented in `docs/AI_OPENAI_EMBEDDINGS.md`.
 
 They remain deliberately separate from semantic-search policy. Controlled-document semantic search decides **which controlled effective documents may be retrieved** and authorizes the caller before embedding or vector-store access.
 
@@ -38,6 +41,14 @@ Inputs are bounded to 128 items, 100,000 characters per item and 500,000 text ch
 Provider metadata is projected to safe fields only. Adapter-specific API keys, endpoints and diagnostics are never exposed by `list()` or `get()`.
 
 As with the LLM contract, tenant context is **not authorization**. A caller must already be authenticated and authorized before text is sent to an embedding provider.
+
+### Optional OpenAI adapter
+
+`createOpenAiEmbeddingProviderFromEnv()` supplies the first repository-provided enabled embedding adapter when OpenAI embedding configuration is present. With no OpenAI embedding configuration it returns the normal disabled provider, so AI remains optional.
+
+The adapter uses the fixed OpenAI `/v1/embeddings` endpoint, float encoding and stable response indexes to map vectors back to OpenGMAO input IDs. It does not expose a configurable provider URL; alternate/local providers should implement the same `EmbeddingProvider` interface instead of receiving an OpenAI API key through a mutable endpoint.
+
+See `docs/AI_OPENAI_EMBEDDINGS.md` for environment variables, response limits and secret-handling details.
 
 ## Vector store
 
@@ -111,7 +122,7 @@ The repository still does not create embeddings automatically for every existing
 
 ## Tests
 
-`tests/embedding-provider.test.ts` verifies:
+`tests/embedding-provider.test.ts` verifies the provider-neutral registry contract:
 
 - tenant-scoped provider routing;
 - model overrides and safe metadata;
@@ -121,6 +132,17 @@ The repository still does not create embeddings automatically for every existing
 - provider error redaction;
 - timeout/cancellation;
 - disabled-provider behavior.
+
+`tests/openai-embedding-provider.test.ts` verifies the optional OpenAI adapter without live network calls:
+
+- disabled and partial environment configuration;
+- batched request shape and fixed endpoint;
+- response-index mapping to stable input IDs;
+- optional dimensions;
+- malformed response rejection;
+- HTTP/API-key error redaction;
+- response-size bounds;
+- AbortSignal propagation.
 
 `tests/vector-store.test.ts` verifies:
 
