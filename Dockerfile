@@ -25,16 +25,28 @@ COPY . .
 RUN npm run prisma:generate \
   && npm run build
 
-FROM builder AS migration
+# Migration tooling is a production release artifact, but Prisma CLI is a
+# development dependency in the application package. Reclassify only Prisma
+# inside this build stage, then prune every unrelated development dependency.
+# This keeps test/build tooling such as Vitest and esbuild out of the runtime.
+FROM deps AS migration-deps
+
+RUN node -e 'const fs=require("node:fs"); const p=JSON.parse(fs.readFileSync("package.json","utf8")); const prisma=p.devDependencies?.prisma; if (!prisma) throw new Error("prisma devDependency is required"); p.dependencies={...p.dependencies,prisma}; delete p.devDependencies.prisma; fs.writeFileSync("package.json",JSON.stringify(p,null,2)+"\n");' \
+  && npm prune --omit=dev --no-audit --no-fund \
+  && test -x ./node_modules/.bin/prisma
+
+FROM base AS migration
 
 ENV NODE_ENV=production \
-    HOME=/tmp \
-    GMAO_DOCKER_BUILDER=
+    HOME=/tmp
 
 RUN groupadd --system --gid 1001 nodejs \
   && useradd --system --uid 1001 --gid nodejs --home-dir /tmp --shell /usr/sbin/nologin nextjs \
   && rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack /opt/yarn-v* \
   && rm -f /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack /usr/local/bin/yarn /usr/local/bin/yarnpkg /usr/local/bin/pnpm /usr/local/bin/pnpx
+
+COPY --from=migration-deps --chown=nextjs:nodejs /app/node_modules ./node_modules
+COPY --chown=nextjs:nodejs prisma ./prisma
 
 USER nextjs
 
