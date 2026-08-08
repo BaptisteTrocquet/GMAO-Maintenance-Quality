@@ -42,14 +42,14 @@ async function patchSchedule(
     timeZone: context.timeZone,
   });
 
-  const response = await fetch(`/api/work-orders/${workOrder.id}`, {
+  const response = await fetch(`/api/work-orders/${workOrder.id}/schedule`, {
     method: "PATCH",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       organizationId: context.organizationId,
       siteId: context.siteId,
       plannedStart: schedule.plannedStart.toISOString(),
-      ...(schedule.dueAt ? { dueAt: schedule.dueAt.toISOString() } : {}),
+      dueAt: schedule.dueAt?.toISOString() ?? null,
     }),
   });
   const body = (await response.json()) as { error?: { message?: string } };
