@@ -8,11 +8,13 @@ export function RootCauseWorkspace({
   organizationId,
   siteId,
   eventId,
+  eventStatus,
   initialAnalysis,
 }: {
   organizationId: string;
   siteId: string;
   eventId: string;
+  eventStatus: string;
   initialAnalysis: RootCauseAnalysisSnapshot | null;
 }) {
   const router = useRouter();
@@ -27,6 +29,8 @@ export function RootCauseWorkspace({
   const [message, setMessage] = useState<string | null>(null);
 
   const completed = initialAnalysis?.status === "COMPLETED";
+  const investigating = eventStatus === "INVESTIGATING";
+  const editable = investigating && !completed && !pending;
 
   function compactWhys() {
     const answers = fiveWhys.map((answer) => answer.trim());
@@ -61,6 +65,11 @@ export function RootCauseWorkspace({
   }
 
   async function run(action: "SAVE" | "COMPLETE" | "REOPEN") {
+    if (!investigating) {
+      setMessage("Start or reopen the event investigation before editing root-cause analysis.");
+      return;
+    }
+
     setPending(true);
     setMessage(null);
     try {
@@ -105,13 +114,17 @@ export function RootCauseWorkspace({
         {completed ? <span className="badge">COMPLETED</span> : <span className="badge">DRAFT</span>}
       </div>
 
+      {!investigating ? (
+        <p className="muted">This workspace is read-only until the quality event is INVESTIGATING.</p>
+      ) : null}
+
       <label className="form-field">
         <span>Problem statement</span>
         <textarea
           value={problemStatement}
           onChange={(event) => setProblemStatement(event.target.value)}
           rows={4}
-          disabled={completed || pending}
+          disabled={!editable}
           placeholder="Describe the specific problem being investigated."
         />
       </label>
@@ -128,7 +141,7 @@ export function RootCauseWorkspace({
                 setFiveWhys(next);
               }}
               rows={3}
-              disabled={completed || pending}
+              disabled={!editable}
               placeholder={index === 0 ? "Why did the problem occur?" : "Why did the previous cause occur?"}
             />
           </label>
@@ -141,22 +154,22 @@ export function RootCauseWorkspace({
           value={rootCauseConclusion}
           onChange={(event) => setRootCauseConclusion(event.target.value)}
           rows={4}
-          disabled={completed || pending}
+          disabled={!editable}
           placeholder="State the verified root-cause conclusion."
         />
       </label>
 
       <div className="workflow-actions">
         {completed ? (
-          <button type="button" onClick={() => void run("REOPEN")} disabled={pending}>
+          <button type="button" onClick={() => void run("REOPEN")} disabled={pending || !investigating}>
             Reopen analysis
           </button>
         ) : (
           <>
-            <button type="button" onClick={() => void run("SAVE")} disabled={pending}>
+            <button type="button" onClick={() => void run("SAVE")} disabled={!editable}>
               Save draft
             </button>
-            <button type="button" onClick={() => void run("COMPLETE")} disabled={pending}>
+            <button type="button" onClick={() => void run("COMPLETE")} disabled={!editable}>
               Complete 5 Why
             </button>
           </>
