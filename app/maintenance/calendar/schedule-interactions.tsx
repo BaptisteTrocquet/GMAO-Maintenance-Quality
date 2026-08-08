@@ -14,6 +14,7 @@ type ScheduleDragPayload = {
   workOrderId: string;
   field: WorkOrderScheduleField;
   instant: string | null;
+  dueAt: string | null;
   sourceDateKey: string | null;
 };
 
@@ -30,6 +31,7 @@ function parseDragPayload(value: string): ScheduleDragPayload | null {
       typeof parsed.workOrderId !== "string" ||
       (parsed.field !== "plannedStart" && parsed.field !== "dueAt") ||
       !(parsed.instant === null || typeof parsed.instant === "string") ||
+      !(parsed.dueAt === null || typeof parsed.dueAt === "string") ||
       !(parsed.sourceDateKey === null || typeof parsed.sourceDateKey === "string")
     ) {
       return null;
@@ -48,6 +50,7 @@ async function patchSchedule(
   const schedulePatch = buildSchedulePatch({
     field: payload.field,
     instant: payload.instant ? new Date(payload.instant) : null,
+    dueAt: payload.dueAt ? new Date(payload.dueAt) : null,
     targetDateKey,
     timeZone: scope.timeZone,
   });
@@ -75,12 +78,14 @@ export function ScheduleMarker({
   workOrderId,
   field,
   instant,
+  dueAt,
   sourceDateKey,
   label,
 }: ScopeProps & {
   workOrderId: string;
   field: WorkOrderScheduleField;
   instant: string | null;
+  dueAt?: string | null;
   sourceDateKey: string | null;
   label: string;
 }) {
@@ -93,6 +98,7 @@ export function ScheduleMarker({
     workOrderId,
     field,
     instant,
+    dueAt: dueAt ?? null,
     sourceDateKey,
   };
 
