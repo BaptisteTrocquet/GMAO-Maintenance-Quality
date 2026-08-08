@@ -10,6 +10,7 @@ const PARTITION_HEADER = "x-opengmao-offline-partition";
 const SOURCE_HEADER = "x-opengmao-offline-source";
 const CACHED_AT_HEADER = "x-opengmao-offline-cached-at";
 const MAX_READ_AGE_MS = 24 * 60 * 60 * 1000;
+const PARTITION_PATTERN = /^[a-f0-9]{32}$/;
 
 self.addEventListener("install", () => {
   self.skipWaiting();
@@ -47,18 +48,13 @@ function technicianReadRequest(request) {
   }
   if (!url.searchParams.get("organizationId") || !url.searchParams.get("siteId")) return null;
 
-  return { url };
-}
+  // The first authenticated read goes directly to the API. The API returns this
+  // opaque partition only after auth + permission checks, and subsequent reads
+  // echo it back so the service worker can safely select a cache namespace.
+  const partition = request.headers.get(PARTITION_HEADER) ?? "";
+  if (!PARTITION_PATTERN.test(partition)) return null;
 
-async function bearerPartition(request) {
-  const authorization = request.headers.get("authorization") ?? "";
-  if (!authorization.startsWith("Bearer ")) return "";
-  const token = authorization.slice("Bearer ".length).trim();
-  if (!token) return "";
-
-  const bytes = new TextEncoder().encode(`opengmao-offline-read:${token}`);
-  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
-  return Array.from(digest.slice(0, 16), (value) => value.toString(16).padStart(2, "0")).join("");
+  return { partition, url };
 }
 
 function cacheKey(url) {
@@ -117,23 +113,19 @@ function offlineMiss() {
 }
 
 async function technicianReadNetworkFirst(request, match) {
-  const derivedPartition = await bearerPartition(request);
-  if (!derivedPartition) return fetch(request);
-
-  const suppliedPartition = request.headers.get(PARTITION_HEADER) ?? "";
-  if (suppliedPartition && suppliedPartition !== derivedPartition) {
-    // A client cannot select another session's cache namespace.
-    return fetch(request);
-  }
-
-  const cache = await caches.open(`${READ_CACHE_PREFIX}${derivedPartition}`);
+  const cache = await caches.open(`${READ_CACHE_PREFIX}${match.partition}`);
   const key = cacheKey(match.url);
 
   try {
     const response = await fetch(request);
     const contentType = response.headers.get("content-type") ?? "";
+    const confirmedPartition = response.headers.get(PARTITION_HEADER) ?? "";
 
-    if (response.ok && contentType.includes("application/json")) {
+    if (
+      response.ok &&
+      contentType.includes("application/json") &&
+      confirmedPartition === match.partition
+    ) {
       const cachedAt = new Date().toISOString();
       const stamped = cloneWithHeaders(response, {
         [CACHED_AT_HEADER]: cachedAt,
