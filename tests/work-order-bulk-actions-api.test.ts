@@ -19,6 +19,7 @@ vi.mock("@/lib/work-orders/bulk-actions", async (importOriginal) => {
 });
 
 import { GET, POST } from "@/app/api/work-orders/bulk-actions/route";
+import { BulkWorkOrderError } from "@/lib/work-orders/bulk-actions";
 
 function auth(role: "MAINTENANCE_MANAGER" | "TECHNICIAN") {
   return {
@@ -98,6 +99,25 @@ describe("work-order bulk actions API", () => {
       workOrderIds: ["wo-1", "wo-2"],
       operation: { type: "SET_PRIORITY", priority: "HIGH" },
       actorId: "manager-1",
+    });
+  });
+
+  it("returns a conflict when any selected work order is locked for bulk editing", async () => {
+    mocks.bulkTriage.mockRejectedValue(
+      new BulkWorkOrderError(
+        "WORK_ORDER_NOT_EDITABLE",
+        "Completed or cancelled work orders cannot be changed by bulk actions",
+      ),
+    );
+
+    const response = await POST(postRequest(payload));
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      error: {
+        code: "WORK_ORDER_NOT_EDITABLE",
+        message: "Completed or cancelled work orders cannot be changed by bulk actions",
+      },
     });
   });
 
