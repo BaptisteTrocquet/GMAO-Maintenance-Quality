@@ -1,4 +1,4 @@
-import type { Priority, WorkOrderStatus } from "@prisma/client";
+import { Prisma, type Priority, type WorkOrderStatus } from "@prisma/client";
 
 export const WORK_ORDER_BOARD_STATUSES = [
   "REQUESTED",
@@ -8,6 +8,16 @@ export const WORK_ORDER_BOARD_STATUSES = [
   "BLOCKED",
   "COMPLETED",
 ] as const satisfies readonly WorkOrderStatus[];
+
+const ACTIVE_BOARD_STATUSES = [
+  "REQUESTED",
+  "APPROVED",
+  "PLANNED",
+  "IN_PROGRESS",
+  "BLOCKED",
+] as const satisfies readonly WorkOrderStatus[];
+
+export const WORK_ORDER_BOARD_LIMIT = 500;
 
 export type WorkOrderBoardStatus = (typeof WORK_ORDER_BOARD_STATUSES)[number];
 export type WorkOrderDueFilter = "ALL" | "OVERDUE" | "DUE_7_DAYS" | "NO_DUE_DATE";
@@ -32,6 +42,43 @@ const PRIORITY_RANK: Record<Priority, number> = {
   NORMAL: 2,
   LOW: 3,
 };
+
+export function buildWorkOrderBoardWhere(input: {
+  organizationId: string;
+  siteId: string;
+  dueFilter: WorkOrderDueFilter;
+  now: Date;
+}): Prisma.WorkOrderWhereInput {
+  const scope: Prisma.WorkOrderWhereInput = {
+    siteId: input.siteId,
+    site: { organizationId: input.organizationId, active: true },
+  };
+
+  if (input.dueFilter === "OVERDUE") {
+    return {
+      ...scope,
+      status: { in: [...ACTIVE_BOARD_STATUSES] },
+      dueAt: { lt: input.now },
+    };
+  }
+
+  if (input.dueFilter === "DUE_7_DAYS") {
+    return {
+      ...scope,
+      status: { in: [...ACTIVE_BOARD_STATUSES] },
+      dueAt: {
+        gte: input.now,
+        lte: new Date(input.now.getTime() + 7 * 24 * 60 * 60 * 1000),
+      },
+    };
+  }
+
+  return {
+    ...scope,
+    status: { in: [...WORK_ORDER_BOARD_STATUSES] },
+    ...(input.dueFilter === "NO_DUE_DATE" ? { dueAt: null } : {}),
+  };
+}
 
 export function isWorkOrderOverdue(item: Pick<WorkOrderBoardItem, "status" | "dueAt">, now: Date) {
   return (
