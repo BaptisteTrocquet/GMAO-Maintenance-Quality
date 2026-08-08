@@ -29,7 +29,7 @@ describe("notification center", () => {
     mocks.getReorderAlerts.mockResolvedValue([]);
   });
 
-  it("does not query inventory for a viewer without inventory:read", async () => {
+  it("only queries notification domains granted to the current role", async () => {
     await buildNotificationCenter({
       organizationId: "org-a",
       siteId: "site-a",
@@ -38,11 +38,11 @@ describe("notification center", () => {
     });
 
     expect(mocks.workOrderFindMany).toHaveBeenCalled();
-    expect(mocks.reminderFindMany).toHaveBeenCalled();
+    expect(mocks.reminderFindMany).not.toHaveBeenCalled();
     expect(mocks.getReorderAlerts).not.toHaveBeenCalled();
   });
 
-  it("scopes active work and reminders to the selected site and organization", async () => {
+  it("scopes active work, reminders and inventory signals to the selected site and organization", async () => {
     await buildNotificationCenter({
       organizationId: "org-a",
       siteId: "site-a",
@@ -104,7 +104,41 @@ describe("notification center", () => {
     });
 
     expect(items.filter((item) => item.href === "/maintenance/wo-1")).toHaveLength(1);
-    expect(items[0]).toMatchObject({ kind: "WORK_DUE_SOON", key: "work:wo-1:due" });
+    expect(items[0]).toMatchObject({
+      kind: "WORK_DUE_SOON",
+      key: "work:wo-1:due",
+      dismissible: false,
+      reminderId: null,
+    });
+  });
+
+  it("exposes standalone maintenance reminders as dismissible notifications", async () => {
+    mocks.reminderFindMany.mockResolvedValue([
+      {
+        id: "reminder-1",
+        title: "WO-050 · Synthetic preventive inspection",
+        assetCode: "ASSET-050",
+        dueAt: new Date("2026-08-20T10:00:00.000Z"),
+        remindAt: now,
+        workOrderId: "wo-50",
+      },
+    ]);
+
+    const items = await buildNotificationCenter({
+      organizationId: "org-a",
+      siteId: "site-a",
+      role: "MAINTENANCE_MANAGER",
+      now,
+    });
+
+    expect(items).toEqual([
+      expect.objectContaining({
+        kind: "MAINTENANCE_REMINDER",
+        reminderId: "reminder-1",
+        dismissible: true,
+        href: "/maintenance/wo-50",
+      }),
+    ]);
   });
 
   it("sorts critical overdue and out-of-stock signals ahead of warnings", async () => {
