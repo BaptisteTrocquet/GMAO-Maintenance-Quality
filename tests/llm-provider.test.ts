@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   createDisabledLlmProvider,
-  LlmProviderError,
   LlmProviderRegistry,
   type LlmProvider,
   type LlmProviderGenerateInput,
+  type LlmProviderGenerateResult,
 } from "@/lib/ai/llm-provider";
 
 function provider(overrides: Partial<LlmProvider> = {}): LlmProvider {
@@ -104,11 +104,11 @@ describe("LLM provider abstraction", () => {
 
   it("rejects duplicate or malformed provider registrations", () => {
     expect(() => new LlmProviderRegistry([provider(), provider()])).toThrowError(
-      expect.objectContaining<LlmProviderError>({ code: "INVALID_PROVIDER" }),
+      expect.objectContaining({ code: "INVALID_PROVIDER" }),
     );
     expect(() =>
       new LlmProviderRegistry([provider({ id: "OpenAI With Spaces" })]),
-    ).toThrowError(expect.objectContaining<LlmProviderError>({ code: "INVALID_PROVIDER" }));
+    ).toThrowError(expect.objectContaining({ code: "INVALID_PROVIDER" }));
   });
 
   it("fails closed when AI is disabled and never invokes the disabled adapter", async () => {
@@ -166,7 +166,9 @@ describe("LLM provider abstraction", () => {
 
   it("enforces a deadline even when a provider ignores the abort signal", async () => {
     const adapter = provider({
-      generate: vi.fn(() => new Promise(() => undefined)),
+      generate: vi.fn(
+        () => new Promise<LlmProviderGenerateResult>(() => undefined),
+      ),
     });
     const registry = new LlmProviderRegistry([adapter]);
 
@@ -215,7 +217,7 @@ describe("LLM provider abstraction", () => {
   it("rejects malformed provider responses instead of trusting adapter output", async () => {
     const registry = new LlmProviderRegistry([
       provider({
-        generate: vi.fn(async () => ({
+        generate: vi.fn(async (): Promise<LlmProviderGenerateResult> => ({
           text: "ok",
           finishReason: "stop",
           usage: { inputTokens: -1 },
