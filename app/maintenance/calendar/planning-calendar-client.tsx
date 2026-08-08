@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useMemo, useState, type DragEvent } from "react";
 import { useRouter } from "next/navigation";
-import { localDateKey, rescheduleWorkOrderDates } from "@/lib/maintenance/calendar-reschedule";
+import { localDateKey } from "@/lib/maintenance/calendar-reschedule";
 
 type CalendarItem = {
   id: string;
@@ -103,24 +103,16 @@ export default function PlanningCalendarClient({
       return;
     }
 
-    const dates = rescheduleWorkOrderDates({
-      plannedStart: workOrder.plannedStart ? new Date(workOrder.plannedStart) : null,
-      dueAt: workOrder.dueAt ? new Date(workOrder.dueAt) : null,
-      targetDateKey,
-      timeZone,
-    });
-
     setBusyId(workOrderId);
     setError(null);
     try {
-      const response = await fetch(`/api/work-orders/${workOrderId}`, {
+      const response = await fetch(`/api/work-orders/${workOrderId}/reschedule`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           organizationId,
           siteId,
-          plannedStart: dates.plannedStart.toISOString(),
-          ...(dates.dueAt ? { dueAt: dates.dueAt.toISOString() } : {}),
+          targetDate: targetDateKey,
         }),
       });
       const body = (await response.json()) as { error?: { message?: string } };
