@@ -113,8 +113,8 @@ describe("global search", () => {
       where: {
         entityType: "QualityEvent",
         AND: [
-          { afterJson: { contains: '\"organizationId\":\"org-a\"' } },
-          { afterJson: { contains: '\"siteId\":\"site-a\"' } },
+          { afterJson: { contains: '"organizationId":"org-a"' } },
+          { afterJson: { contains: '"siteId":"site-a"' } },
         ],
       },
       orderBy: { createdAt: "desc" },
