@@ -8,6 +8,7 @@ import {
   WORK_ORDER_BOARD_LIMIT,
   type WorkOrderDueFilter,
 } from "@/lib/maintenance/board";
+import SavedViewControls from "../saved-view-controls";
 import WorkOrderCard from "./work-order-card";
 
 const FILTERS: Array<{ value: WorkOrderDueFilter; label: string }> = [
@@ -155,6 +156,15 @@ export default async function WorkOrderKanbanPage({
           </p>
         ) : null}
       </section>
+
+      <div className="section">
+        <SavedViewControls
+          organizationId={organizationId}
+          siteId={siteId}
+          surface="KANBAN"
+          currentConfig={{ dueFilter: selectedFilter }}
+        />
+      </div>
 
       <section className="section" aria-label="Work-order Kanban board">
         <div
