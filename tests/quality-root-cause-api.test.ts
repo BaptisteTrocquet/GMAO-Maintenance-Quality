@@ -147,6 +147,21 @@ describe("quality RCA API", () => {
     });
   });
 
+  it("rejects malformed JSON without invoking authentication or the RCA service", async () => {
+    const response = await PUT(
+      new Request("http://localhost/api/quality/events/event-1/rca", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: "{not-valid-json",
+      }),
+      context,
+    );
+
+    expectStatus(response, 400);
+    expect(mocks.authenticateRequest).not.toHaveBeenCalled();
+    expect(mocks.saveQualityRca).not.toHaveBeenCalled();
+  });
+
   it("lets quality managers finalize RCA explicitly", async () => {
     mocks.authenticateRequest.mockResolvedValue(auth("QUALITY_MANAGER"));
 
