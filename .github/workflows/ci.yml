@@ -99,3 +99,49 @@ jobs:
           test -w /app/data/documents &&
           test ! -e /app/.env &&
           test "$NODE_ENV" = "production"'
+
+      - name: Verify production health probes
+        shell: bash
+        run: |
+          set -euo pipefail
+          container_name="gmao-health-ci"
+          cleanup() {
+            docker rm --force "$container_name" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          docker run --detach \
+            --name "$container_name" \
+            --network host \
+            --health-interval=1s \
+            --health-timeout=3s \
+            --health-start-period=1s \
+            --health-retries=10 \
+            --env DATABASE_URL="postgresql://opengmao:opengmao@127.0.0.1:5432/opengmao?schema=public" \
+            gmao-maintenance-quality:ci
+
+          for attempt in {1..30}; do
+            if node -e "fetch('http://127.0.0.1:3000/api/health').then(async (response) => { const body = await response.json(); if (response.status !== 200 || body?.data?.status !== 'ok') process.exit(1); }).catch(() => process.exit(1));"; then
+              break
+            fi
+            if [ "$attempt" -eq 30 ]; then
+              docker logs "$container_name"
+              exit 1
+            fi
+            sleep 1
+          done
+
+          node -e "fetch('http://127.0.0.1:3000/api/ready').then(async (response) => { const body = await response.json(); if (response.status !== 200 || body?.data?.status !== 'ready' || body?.data?.checks?.database !== 'reachable') process.exit(1); }).catch(() => process.exit(1));"
+
+          for attempt in {1..15}; do
+            status="$(docker inspect --format '{{.State.Health.Status}}' "$container_name")"
+            if [ "$status" = "healthy" ]; then
+              break
+            fi
+            if [ "$attempt" -eq 15 ]; then
+              docker inspect "$container_name"
+              docker logs "$container_name"
+              exit 1
+            fi
+            sleep 1
+          done
