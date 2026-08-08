@@ -14,6 +14,9 @@ type PmCompliance = {
   from: string;
   to: string;
   generatedAt: string;
+  timeZone: string;
+  fromDay: string;
+  throughDay: string;
 };
 
 type ApiResponse = {
@@ -21,28 +24,23 @@ type ApiResponse = {
   error?: { message?: string };
 };
 
-function yyyyMmDd(value: Date) {
-  return value.toISOString().slice(0, 10);
-}
-
-function toExclusiveUtcDate(day: string) {
-  const start = new Date(`${day}T00:00:00.000Z`);
-  return new Date(start.getTime() + 24 * 60 * 60 * 1000).toISOString();
-}
-
 export default function PmComplianceClient({
   organizationId,
   siteId,
   assets,
+  timeZone,
+  defaultFrom,
+  defaultThrough,
 }: {
   organizationId: string;
   siteId: string;
   assets: AssetOption[];
+  timeZone: string;
+  defaultFrom: string;
+  defaultThrough: string;
 }) {
-  const today = new Date();
-  const thirtyDaysAgo = new Date(today.getTime() - 29 * 24 * 60 * 60 * 1000);
-  const [fromDay, setFromDay] = useState(yyyyMmDd(thirtyDaysAgo));
-  const [throughDay, setThroughDay] = useState(yyyyMmDd(today));
+  const [fromDay, setFromDay] = useState(defaultFrom);
+  const [throughDay, setThroughDay] = useState(defaultThrough);
   const [assetId, setAssetId] = useState("");
   const [data, setData] = useState<PmCompliance | null>(null);
   const [loading, setLoading] = useState(false);
@@ -55,8 +53,8 @@ export default function PmComplianceClient({
       const params = new URLSearchParams({
         organizationId,
         siteId,
-        from: new Date(`${fromDay}T00:00:00.000Z`).toISOString(),
-        to: toExclusiveUtcDate(throughDay),
+        from: fromDay,
+        to: throughDay,
       });
       if (assetId) params.set("assetId", assetId);
 
@@ -88,11 +86,11 @@ export default function PmComplianceClient({
       <section className="card">
         <form onSubmit={submit} style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "end" }}>
           <label>
-            <span className="muted">From (UTC)</span>
+            <span className="muted">From</span>
             <input type="date" value={fromDay} onChange={(event) => setFromDay(event.target.value)} required />
           </label>
           <label>
-            <span className="muted">Through (UTC)</span>
+            <span className="muted">Through</span>
             <input type="date" value={throughDay} onChange={(event) => setThroughDay(event.target.value)} required />
           </label>
           <label>
@@ -107,7 +105,7 @@ export default function PmComplianceClient({
           <button type="submit" disabled={loading}>{loading ? "Refreshing…" : "Apply"}</button>
         </form>
         <p className="muted" style={{ marginBottom: 0 }}>
-          Definition: non-cancelled PREVENTIVE work orders due in the selected UTC window. Future due dates are excluded. A PM is compliant only when completed on or before its due date.
+          Calendar dates use {timeZone}. Definition: non-cancelled PREVENTIVE work orders due in the selected local-date window. Future due dates are excluded. A PM is compliant only when completed on or before its due date.
         </p>
       </section>
 
@@ -137,8 +135,10 @@ export default function PmComplianceClient({
             <section className="card">
               <h2>Reporting window</h2>
               <dl className="detail-list">
-                <div><dt>From</dt><dd>{data.from}</dd></div>
-                <div><dt>To (exclusive)</dt><dd>{data.to}</dd></div>
+                <div><dt>Calendar</dt><dd>{data.fromDay} through {data.throughDay}</dd></div>
+                <div><dt>Timezone</dt><dd>{data.timeZone}</dd></div>
+                <div><dt>Resolved start (UTC)</dt><dd>{data.from}</dd></div>
+                <div><dt>Effective end (UTC)</dt><dd>{data.to}</dd></div>
                 <div><dt>Generated</dt><dd>{data.generatedAt}</dd></div>
               </dl>
             </section>
