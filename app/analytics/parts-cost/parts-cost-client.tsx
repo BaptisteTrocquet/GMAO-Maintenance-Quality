@@ -12,7 +12,6 @@ type PartsCostPayload = {
   lineCount: number;
   pricedLineCount: number;
   unpricedLineCount: number;
-  quantity: number;
   costAmount: number;
   averageCostPerPricedLine: number | null;
   incompleteCost: boolean;
@@ -21,7 +20,6 @@ type PartsCostPayload = {
     lineCount: number;
     pricedLineCount: number;
     unpricedLineCount: number;
-    quantity: number;
     costAmount: number;
   }>;
   topParts: Array<{
