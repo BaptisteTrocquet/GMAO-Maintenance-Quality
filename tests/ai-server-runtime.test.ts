@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   AiRuntimeConfigurationError,
   createServerAssetContextAssistant,
+  createServerControlledDocumentSemanticSearch,
+  createServerEmbeddingRegistry,
   createServerLlmRegistry,
+  SERVER_EMBEDDING_PROVIDER_ID,
   SERVER_LLM_PROVIDER_ID,
 } from "@/lib/ai/server-runtime";
 
@@ -20,39 +23,76 @@ describe("server AI runtime", () => {
     });
   });
 
-  it("composes the resilient Asset Context Assistant even when the provider is disabled", () => {
-    const assistant = createServerAssetContextAssistant({});
+  it("registers the OpenAI embedding provider in disabled mode when no model is configured", () => {
+    const registry = createServerEmbeddingRegistry({});
 
-    expect(assistant).toEqual({ ask: expect.any(Function) });
+    expect(SERVER_EMBEDDING_PROVIDER_ID).toBe("openai");
+    expect(registry.get("openai")).toEqual({
+      id: "openai",
+      displayName: "OpenAI embeddings",
+      enabled: false,
+      defaultModel: null,
+      dimensions: null,
+    });
   });
 
-  it("registers the configured OpenAI provider without exposing its shared API key", () => {
+  it("composes resilient AI read features even when their providers are disabled", () => {
+    const assistant = createServerAssetContextAssistant({});
+    const semanticSearch = createServerControlledDocumentSemanticSearch({});
+
+    expect(assistant).toEqual({ ask: expect.any(Function) });
+    expect(semanticSearch).toEqual({ search: expect.any(Function) });
+  });
+
+  it("registers configured OpenAI providers without exposing the shared API key", () => {
     const secret = "synthetic-server-runtime-key";
-    const registry = createServerLlmRegistry({
+    const llmRegistry = createServerLlmRegistry({
       OPENAI_API_KEY: secret,
       OPENAI_LLM_MODEL: "operator-model",
     });
+    const embeddingRegistry = createServerEmbeddingRegistry({
+      OPENAI_API_KEY: secret,
+      OPENAI_EMBEDDING_MODEL: "operator-embedding-model",
+      OPENAI_EMBEDDING_DIMENSIONS: "1536",
+    });
 
-    expect(registry.get("openai")).toEqual({
+    expect(llmRegistry.get("openai")).toEqual({
       id: "openai",
       displayName: "OpenAI Responses",
       enabled: true,
       defaultModel: "operator-model",
       capabilities: { streaming: false, structuredOutput: false, toolCalling: false },
     });
-    expect(JSON.stringify(registry.list())).not.toContain(secret);
+    expect(embeddingRegistry.get("openai")).toEqual({
+      id: "openai",
+      displayName: "OpenAI embeddings",
+      enabled: true,
+      defaultModel: "operator-embedding-model",
+      dimensions: 1536,
+    });
+    expect(JSON.stringify(llmRegistry.list())).not.toContain(secret);
+    expect(JSON.stringify(embeddingRegistry.list())).not.toContain(secret);
   });
 
   it("wraps deployment configuration errors without exposing the underlying secret-bearing message", () => {
-    let caught: unknown;
+    let llmError: unknown;
     try {
       createServerLlmRegistry({ OPENAI_LLM_MODEL: "operator-model" });
     } catch (error) {
-      caught = error;
+      llmError = error;
     }
 
-    expect(caught).toBeInstanceOf(AiRuntimeConfigurationError);
-    expect(caught).toMatchObject({ message: "AI runtime configuration is invalid" });
-    expect(String(caught)).not.toContain("OPENAI_API_KEY");
+    let embeddingError: unknown;
+    try {
+      createServerEmbeddingRegistry({ OPENAI_EMBEDDING_MODEL: "operator-embedding-model" });
+    } catch (error) {
+      embeddingError = error;
+    }
+
+    for (const caught of [llmError, embeddingError]) {
+      expect(caught).toBeInstanceOf(AiRuntimeConfigurationError);
+      expect(caught).toMatchObject({ message: "AI runtime configuration is invalid" });
+      expect(String(caught)).not.toContain("OPENAI_API_KEY");
+    }
   });
 });
