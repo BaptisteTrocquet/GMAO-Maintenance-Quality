@@ -126,6 +126,13 @@ export async function buildPmCompliance(input: {
       AND wo."dueAt" IS NOT NULL
       AND wo."dueAt" >= ${input.from}
       AND wo."dueAt" < ${effectiveTo}
+      AND EXISTS (
+        SELECT 1
+        FROM "AuditLog" generated
+        WHERE generated."entityType" = 'WorkOrder'
+          AND generated."entityId" = wo."id"
+          AND generated."action" = 'PREVENTIVE_GENERATED'
+      )
       ${assetFilter}
   `);
 
