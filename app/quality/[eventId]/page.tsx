@@ -62,7 +62,9 @@ export default async function QualityEventDetailPage({
         <div>
           <Link className="muted" href="/quality">← Quality</Link>
           <div className="title">{qualityEvent.eventNumber} · {qualityEvent.title}</div>
-          <div className="muted">Detected {formatDate(qualityEvent.detectedAt)}</div>
+          <div className="muted">
+            Detected {formatDate(qualityEvent.detectedAt)} · <Link href={`/quality/${eventId}/rca`}>Root-cause analysis</Link>
+          </div>
         </div>
         <div className="asset-status">
           <span className="badge">{qualityEvent.type}</span>
@@ -134,6 +136,7 @@ export default async function QualityEventDetailPage({
           <dl className="detail-list">
             <div><dt>Closed</dt><dd>{formatDate(qualityEvent.closedAt)}</dd></div>
           </dl>
+          <p><Link href={`/quality/${eventId}/rca`}>Open structured RCA workspace →</Link></p>
         </section>
       </div>
 
