@@ -12,6 +12,7 @@ import {
   shiftCalendarMonth,
   UNSCHEDULED_WORK_ORDER_LIMIT,
 } from "@/lib/maintenance/planning-calendar";
+import SavedViewControls from "../saved-view-controls";
 import PlanningCalendarClient from "./planning-calendar-client";
 
 function monthLabel(year: number, month: number) {
@@ -231,6 +232,15 @@ export default async function MaintenanceCalendarPage({
           </p>
         ) : null}
       </section>
+
+      <div className="section">
+        <SavedViewControls
+          organizationId={organizationId}
+          siteId={siteId}
+          surface="CALENDAR"
+          currentConfig={{ month: month.key }}
+        />
+      </div>
 
       <PlanningCalendarClient
         organizationId={organizationId}
