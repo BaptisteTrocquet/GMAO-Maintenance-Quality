@@ -21,6 +21,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
             <div className="brand">OpenGMAO</div>
             <nav className="nav">
               <Link href="/">Dashboard</Link>
+              <Link href="/notifications">Notifications</Link>
               <Link href="/search">Search</Link>
               <Link href="/assets">Assets</Link>
               <Link href="/maintenance">Maintenance</Link>
