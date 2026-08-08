@@ -3,9 +3,23 @@ import { headers } from "next/headers";
 import { notFound } from "next/navigation";
 import { db } from "@/lib/db";
 import { getQualityEvent, listQualityEventTimeline } from "@/lib/quality/events";
+import {
+  getRootCauseWorkspace,
+  listRootCauseTimeline,
+  type IshikawaCategory,
+} from "@/lib/quality/root-cause";
 
 type QualityTimeline = NonNullable<Awaited<ReturnType<typeof listQualityEventTimeline>>>;
 type QualityTimelineEntry = QualityTimeline[number];
+
+const ishikawaCategories: Array<{ key: IshikawaCategory; label: string }> = [
+  { key: "PEOPLE", label: "People" },
+  { key: "METHOD", label: "Method" },
+  { key: "MACHINE", label: "Machine" },
+  { key: "MATERIAL", label: "Material" },
+  { key: "MEASUREMENT", label: "Measurement" },
+  { key: "ENVIRONMENT", label: "Environment" },
+];
 
 function formatDate(value: string | Date | null | undefined) {
   if (!value) return "—";
@@ -43,7 +57,15 @@ export default async function QualityEventDetailPage({
 
   const qualityEvent = await getQualityEvent({ organizationId, siteId, eventId });
   if (!qualityEvent) notFound();
-  const timeline = (await listQualityEventTimeline({ organizationId, siteId, eventId })) ?? [];
+
+  const [timeline, rootCauseWorkspace, rootCauseTimeline] = await Promise.all([
+    listQualityEventTimeline({ organizationId, siteId, eventId }),
+    getRootCauseWorkspace({ organizationId, siteId, eventId }),
+    listRootCauseTimeline({ organizationId, siteId, eventId }),
+  ]);
+  const qualityTimeline = timeline ?? [];
+  const rootCause = rootCauseWorkspace?.rootCause ?? null;
+  const rootCauseAudit = rootCauseTimeline ?? [];
 
   const userIds = [qualityEvent.detectedById, qualityEvent.containment?.ownerId].filter(
     (value): value is string => Boolean(value),
@@ -138,10 +160,112 @@ export default async function QualityEventDetailPage({
       </div>
 
       <section className="card section">
-        <h2>Quality event timeline</h2>
-        {timeline.length ? (
+        <div className="header asset-header">
+          <div>
+            <h2>Root-cause analysis</h2>
+            <div className="muted">Structured 5 Why and Ishikawa investigation workspace.</div>
+          </div>
+          <div className="asset-status">
+            {rootCause ? (
+              <>
+                <span className="badge">{rootCause.method}</span>
+                <span className="badge">{rootCause.status}</span>
+              </>
+            ) : null}
+            <Link className="table-link" href={`/quality/${eventId}/root-cause`}>
+              Open workspace →
+            </Link>
+          </div>
+        </div>
+
+        {rootCause ? (
+          <>
+            <h3>Problem statement</h3>
+            <p>{rootCause.problemStatement}</p>
+
+            {rootCause.fiveWhys.length ? (
+              <div className="responsive-table section">
+                <h3>5 Why</h3>
+                <table className="table">
+                  <thead>
+                    <tr><th>Step</th><th>Question</th><th>Answer</th></tr>
+                  </thead>
+                  <tbody>
+                    {rootCause.fiveWhys.map((step) => (
+                      <tr key={step.sequence}>
+                        <td>{step.sequence}</td>
+                        <td>{step.prompt}</td>
+                        <td>{step.answer}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : null}
+
+            {rootCause.ishikawa.length ? (
+              <div className="section">
+                <h3>Ishikawa</h3>
+                <div className="grid grid-2">
+                  {ishikawaCategories.map((category) => {
+                    const causes = rootCause.ishikawa.filter(
+                      (cause) => cause.category === category.key,
+                    );
+                    if (!causes.length) return null;
+                    return (
+                      <section className="card" key={category.key}>
+                        <strong>{category.label}</strong>
+                        <div className="stack-list">
+                          {causes.map((cause, index) => (
+                            <div key={`${category.key}-${index}-${cause.cause}`}>
+                              <span>{cause.cause}</span>
+                              {cause.evidence ? <span className="muted"> · Evidence: {cause.evidence}</span> : null}
+                            </div>
+                          ))}
+                        </div>
+                      </section>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
+
+            <div className="section">
+              <h3>Root-cause summary</h3>
+              <p>{rootCause.rootCauseSummary ?? "Root cause has not been summarized yet."}</p>
+              <div className="muted">
+                Updated {formatDate(rootCause.updatedAt)}
+                {rootCause.confirmedAt ? ` · Confirmed ${formatDate(rootCause.confirmedAt)}` : ""}
+              </div>
+            </div>
+          </>
+        ) : (
+          <p className="muted">
+            No root-cause workspace has been recorded. Start the event investigation before adding 5 Why or Ishikawa analysis.
+          </p>
+        )}
+      </section>
+
+      {rootCauseAudit.length ? (
+        <section className="card section">
+          <h2>Root-cause audit trail</h2>
           <ol className="timeline">
-            {timeline.map((entry) => {
+            {rootCauseAudit.map((entry) => (
+              <li key={entry.id}>
+                <time>{formatDate(entry.createdAt)}</time>
+                <strong>{entry.action}</strong>
+                <span>{entry.actorName}{entry.after?.rootCauseSummary ? ` · ${entry.after.rootCauseSummary}` : ""}</span>
+              </li>
+            ))}
+          </ol>
+        </section>
+      ) : null}
+
+      <section className="card section">
+        <h2>Quality event timeline</h2>
+        {qualityTimeline.length ? (
+          <ol className="timeline">
+            {qualityTimeline.map((entry) => {
               const detail = timelineDetail(entry);
               return (
                 <li key={entry.id}>
