@@ -48,6 +48,7 @@ export default async function LaborUtilizationPage() {
         </div>
         <div className="asset-status">
           <Link className="table-link" href="/analytics/reliability">Reliability</Link>
+          <Link className="table-link" href="/analytics/labor-utilization/capacity">Capacity baseline</Link>
         </div>
       </div>
 
