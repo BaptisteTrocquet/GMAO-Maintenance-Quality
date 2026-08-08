@@ -1,6 +1,6 @@
 export const WORK_ORDER_COMPLETION_ATTESTATION_VERSION = "work-completion-v1";
 export const WORK_ORDER_COMPLETION_ATTESTATION =
-  "I confirm that the recorded work, checklist, and completion note are accurate to the best of my knowledge.";
+  "I confirm that the recorded work, checklist, and closure details are accurate to the best of my knowledge.";
 
 export type WorkOrderCompletionSignature = {
   method: "TYPED_NAME";
