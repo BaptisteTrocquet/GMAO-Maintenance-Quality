@@ -8,6 +8,7 @@ import {
   WORK_ORDER_BOARD_LIMIT,
   type WorkOrderDueFilter,
 } from "@/lib/maintenance/board";
+import SavedKanbanViews from "./saved-kanban-views";
 import WorkOrderCard from "./work-order-card";
 
 const FILTERS: Array<{ value: WorkOrderDueFilter; label: string }> = [
@@ -18,7 +19,7 @@ const FILTERS: Array<{ value: WorkOrderDueFilter; label: string }> = [
 ];
 
 function dueFilter(value: string | undefined): WorkOrderDueFilter {
-  return FILTERS.some((filter) => filter.value === value) ? (value as WorkOrderDueFilter) : "ALL";
+  return FILTERS.some((filter) => filter.value === value ? true : false) ? (value as WorkOrderDueFilter) : "ALL";
 }
 
 function statusLabel(value: string) {
@@ -149,6 +150,11 @@ export default async function WorkOrderKanbanPage({
         <div className="muted" style={{ marginTop: 10 }}>
           {overdueCount} overdue · {dueSoonCount} due within 7 days · {noDueCount} without due date
         </div>
+        <SavedKanbanViews
+          organizationId={organizationId}
+          siteId={siteId}
+          selectedDueFilter={selectedFilter}
+        />
         {truncated ? (
           <p className="muted" role="status" style={{ marginBottom: 0, marginTop: 10 }}>
             This board is bounded to {WORK_ORDER_BOARD_LIMIT} matching work orders for predictable rendering. Narrow the due filter to focus the list.
