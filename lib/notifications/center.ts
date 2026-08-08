@@ -3,9 +3,9 @@ import { db } from "@/lib/db";
 import { getReorderAlerts } from "@/lib/inventory/reorder";
 import { listActiveMaintenanceReminders } from "@/lib/maintenance/reminders";
 import { can } from "@/lib/permissions";
-import { listQualityEvents } from "@/lib/quality/events";
 
 export const NOTIFICATION_CENTER_LIMIT = 80;
+export const NOTIFICATION_QUALITY_SCAN_LIMIT = 500;
 const WORK_ORDER_LIMIT = 30;
 
 export type NotificationCenterKind =
@@ -28,8 +28,75 @@ export type NotificationCenterItem = {
   sourceId: string;
 };
 
+type QualityNotificationSnapshot = {
+  id: string;
+  eventNumber: string;
+  organizationId: string;
+  siteId: string;
+  type: string;
+  severity: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+  status: "OPEN" | "CONTAINED" | "INVESTIGATING" | "CLOSED";
+  title: string;
+  updatedAt: string;
+};
+
 function severityRank(value: NotificationCenterSeverity) {
   return value === "CRITICAL" ? 0 : value === "HIGH" ? 1 : 2;
+}
+
+function parseQualityNotification(value: string | null): QualityNotificationSnapshot | null {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value) as Partial<QualityNotificationSnapshot>;
+    if (
+      typeof parsed.id !== "string" ||
+      typeof parsed.eventNumber !== "string" ||
+      typeof parsed.organizationId !== "string" ||
+      typeof parsed.siteId !== "string" ||
+      typeof parsed.type !== "string" ||
+      typeof parsed.title !== "string" ||
+      typeof parsed.updatedAt !== "string" ||
+      (parsed.severity !== "LOW" &&
+        parsed.severity !== "MEDIUM" &&
+        parsed.severity !== "HIGH" &&
+        parsed.severity !== "CRITICAL") ||
+      (parsed.status !== "OPEN" &&
+        parsed.status !== "CONTAINED" &&
+        parsed.status !== "INVESTIGATING" &&
+        parsed.status !== "CLOSED")
+    ) {
+      return null;
+    }
+    return parsed as QualityNotificationSnapshot;
+  } catch {
+    return null;
+  }
+}
+
+async function listRecentQualityNotifications(input: {
+  organizationId: string;
+  siteId: string;
+}) {
+  const marker = `"organizationId":"${input.organizationId}","siteId":"${input.siteId}"`;
+  const logs = await db.auditLog.findMany({
+    where: { entityType: "QualityEvent", afterJson: { contains: marker } },
+    orderBy: { createdAt: "desc" },
+    take: NOTIFICATION_QUALITY_SCAN_LIMIT,
+    select: { entityId: true, afterJson: true },
+  });
+
+  const latest = new Map<string, QualityNotificationSnapshot>();
+  for (const log of logs) {
+    if (latest.has(log.entityId)) continue;
+    const snapshot = parseQualityNotification(log.afterJson);
+    if (snapshot) latest.set(log.entityId, snapshot);
+  }
+
+  return [...latest.values()].filter(
+    (event) =>
+      event.status !== "CLOSED" &&
+      (event.severity === "HIGH" || event.severity === "CRITICAL"),
+  );
 }
 
 export async function buildNotificationCenter(input: {
@@ -71,7 +138,7 @@ export async function buildNotificationCenter(input: {
       ? getReorderAlerts({ organizationId: input.organizationId, siteId: input.siteId })
       : Promise.resolve([]),
     can(input.role, "quality:read")
-      ? listQualityEvents({ organizationId: input.organizationId, siteId: input.siteId })
+      ? listRecentQualityNotifications({ organizationId: input.organizationId, siteId: input.siteId })
       : Promise.resolve([]),
   ]);
 
@@ -97,7 +164,12 @@ export async function buildNotificationCenter(input: {
     items.push({
       id: `overdue:${workOrder.id}`,
       kind: "OVERDUE_WORK_ORDER",
-      severity: workOrder.priority === "URGENT" ? "CRITICAL" : workOrder.priority === "HIGH" ? "HIGH" : "NORMAL",
+      severity:
+        workOrder.priority === "URGENT"
+          ? "CRITICAL"
+          : workOrder.priority === "HIGH"
+            ? "HIGH"
+            : "NORMAL",
       title: `${workOrder.number} · ${workOrder.title}`,
       detail: `Overdue since ${workOrder.dueAt.toISOString()} · ${owner}`,
       href: `/maintenance/${workOrder.id}`,
@@ -122,9 +194,6 @@ export async function buildNotificationCenter(input: {
   }
 
   for (const event of qualityEvents) {
-    if (event.status === "CLOSED" || (event.severity !== "HIGH" && event.severity !== "CRITICAL")) {
-      continue;
-    }
     items.push({
       id: `quality:${event.id}`,
       kind: "QUALITY_ALERT",
