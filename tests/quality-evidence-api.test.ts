@@ -38,6 +38,12 @@ function auth(role: "VIEWER" | "QUALITY_MANAGER" | "TECHNICIAN") {
   };
 }
 
+function requireResponse(response: Response | undefined) {
+  expect(response).toBeDefined();
+  if (!response) throw new Error("expected response");
+  return response;
+}
+
 const context = { params: Promise.resolve({ eventId: "event-1" }) };
 
 function scopedUrl() {
@@ -68,7 +74,7 @@ describe("quality evidence collection API", () => {
 
   it("lets quality readers list evidence in site scope", async () => {
     mocks.authenticateRequest.mockResolvedValue(auth("VIEWER"));
-    const response = await GET(new Request(scopedUrl()), context);
+    const response = requireResponse(await GET(new Request(scopedUrl()), context));
 
     expect(response.status).toBe(200);
     expect(mocks.listQualityEvidence).toHaveBeenCalledWith({
@@ -81,7 +87,7 @@ describe("quality evidence collection API", () => {
   it("blocks non-managers from uploading evidence", async () => {
     for (const role of ["VIEWER", "TECHNICIAN"] as const) {
       mocks.authenticateRequest.mockResolvedValue(auth(role));
-      const response = await POST(uploadRequest(), context);
+      const response = requireResponse(await POST(uploadRequest(), context));
       expect(response.status).toBe(403);
     }
     expect(mocks.attachQualityEvidence).not.toHaveBeenCalled();
@@ -89,7 +95,7 @@ describe("quality evidence collection API", () => {
 
   it("uploads multipart evidence for a quality manager", async () => {
     mocks.authenticateRequest.mockResolvedValue(auth("QUALITY_MANAGER"));
-    const response = await POST(uploadRequest(), context);
+    const response = requireResponse(await POST(uploadRequest(), context));
 
     expect(response.status).toBe(201);
     expect(mocks.attachQualityEvidence).toHaveBeenCalledWith(
@@ -114,14 +120,16 @@ describe("quality evidence collection API", () => {
       new mocks.QualityEvidenceError("EVENT_CLOSED", "Closed event"),
     );
 
-    const response = await POST(uploadRequest(), context);
+    const response = requireResponse(await POST(uploadRequest(), context));
     expect(response.status).toBe(409);
   });
 
   it("requires explicit organization and site scope", async () => {
-    const response = await GET(
-      new Request("http://localhost/api/quality/events/event-1/evidence?organizationId=org-a"),
-      context,
+    const response = requireResponse(
+      await GET(
+        new Request("http://localhost/api/quality/events/event-1/evidence?organizationId=org-a"),
+        context,
+      ),
     );
     expect(response.status).toBe(400);
     expect(mocks.authenticateRequest).not.toHaveBeenCalled();
