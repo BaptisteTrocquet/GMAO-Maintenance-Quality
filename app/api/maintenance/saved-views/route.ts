@@ -49,7 +49,9 @@ function savedViewError(error: unknown) {
 
 async function authorize(request: Request, organizationId: string, siteId: string) {
   const auth = await authenticateRequest(request, organizationId);
-  if ("error" in auth) return auth.error;
+  if ("error" in auth) {
+    return auth.error ?? apiError(401, "UNAUTHENTICATED", "Authentication required");
+  }
 
   try {
     assertSitePermission(auth.tenant.scope, siteId, "work:read");
