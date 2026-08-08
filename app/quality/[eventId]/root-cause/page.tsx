@@ -48,6 +48,7 @@ export default async function RootCausePage({
           <span className="badge">{qualityEvent.status}</span>
           <span className="badge">{workspace.rootCause?.status ?? "NOT STARTED"}</span>
           {workspace.rootCause ? <span className="badge">{workspace.rootCause.method}</span> : null}
+          <Link className="table-link" href={`/quality/${eventId}/capa`}>CAPA →</Link>
         </div>
       </div>
 
