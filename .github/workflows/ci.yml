@@ -64,6 +64,9 @@ jobs:
       - name: Database integration smoke check
         run: npm run test:db
 
+      - name: Analytics realistic-volume benchmark
+        run: npm run test:analytics:perf
+
       - name: Typecheck
         run: npm run typecheck
 
