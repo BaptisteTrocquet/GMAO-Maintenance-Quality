@@ -31,7 +31,7 @@ describe("backlog analytics", () => {
     mocks.findMany.mockResolvedValue([]);
   });
 
-  it("calculates open, overdue, unplanned, urgent and aging buckets from open work only", async () => {
+  it("calculates open, overdue, due-soon, unplanned, urgent and aging KPIs from open work only", async () => {
     mocks.count
       .mockResolvedValueOnce(2)
       .mockResolvedValueOnce(3)
@@ -44,7 +44,8 @@ describe("backlog analytics", () => {
       .mockResolvedValueOnce(9)
       .mockResolvedValueOnce(10)
       .mockResolvedValueOnce(11)
-      .mockResolvedValueOnce(12);
+      .mockResolvedValueOnce(12)
+      .mockResolvedValueOnce(13);
 
     const result = await buildBacklogDashboard(baseInput);
 
@@ -58,13 +59,14 @@ describe("backlog analytics", () => {
       BLOCKED: 1,
     });
     expect(result.overdue).toBe(6);
-    expect(result.unplanned).toBe(7);
-    expect(result.urgent).toBe(8);
+    expect(result.dueSoon).toBe(7);
+    expect(result.unplanned).toBe(8);
+    expect(result.urgent).toBe(9);
     expect(result.aging).toEqual({
-      DAYS_0_6: 9,
-      DAYS_7_29: 10,
-      DAYS_30_89: 11,
-      DAYS_90_PLUS: 12,
+      DAYS_0_6: 10,
+      DAYS_7_29: 11,
+      DAYS_30_89: 12,
+      DAYS_90_PLUS: 13,
     });
     expect(result.empty).toBe(false);
   });
@@ -97,15 +99,25 @@ describe("backlog analytics", () => {
     expect(result.empty).toBe(true);
     expect(result.totalOpen).toBe(0);
     expect(result.overdue).toBe(0);
+    expect(result.dueSoon).toBe(0);
     expect(result.unplanned).toBe(0);
     expect(result.urgent).toBe(0);
     expect(result.oldest).toEqual([]);
   });
 
+  it("uses the local calendar for the seven-day due-soon window", async () => {
+    await buildBacklogDashboard(baseInput);
+
+    expect(mocks.count.mock.calls[6]?.[0].where.dueAt).toEqual({
+      gte: now,
+      lt: new Date("2026-08-14T22:00:00.000Z"),
+    });
+  });
+
   it("uses exact non-overlapping local-calendar aging boundaries and excludes future timestamps", async () => {
     await buildBacklogDashboard(baseInput);
 
-    const agingCalls = mocks.count.mock.calls.slice(8, 12).map(([input]) => input.where.requestedAt);
+    const agingCalls = mocks.count.mock.calls.slice(9, 13).map(([input]) => input.where.requestedAt);
     expect(agingCalls[0]).toEqual({
       gte: new Date("2026-08-01T22:00:00.000Z"),
       lte: now,
