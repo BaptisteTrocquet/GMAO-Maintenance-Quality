@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   AiRuntimeConfigurationError,
+  createServerAssetContextAssistant,
   createServerLlmRegistry,
   SERVER_LLM_PROVIDER_ID,
 } from "@/lib/ai/server-runtime";
@@ -17,6 +18,12 @@ describe("server AI runtime", () => {
       defaultModel: null,
       capabilities: { streaming: false, structuredOutput: false, toolCalling: false },
     });
+  });
+
+  it("composes the resilient Asset Context Assistant even when the provider is disabled", () => {
+    const assistant = createServerAssetContextAssistant({});
+
+    expect(assistant).toEqual({ ask: expect.any(Function) });
   });
 
   it("registers the configured OpenAI provider without exposing its shared API key", () => {
