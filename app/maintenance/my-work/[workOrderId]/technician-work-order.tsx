@@ -19,6 +19,11 @@ import {
   projectTechnicianWrites,
   type TechnicianQueuedWrite,
 } from "@/lib/pwa/technician-write-queue-client";
+import {
+  WORK_ORDER_COMPLETION_ATTESTATION,
+  signatureNameMatchesIdentity,
+  type WorkOrderCompletionSignature,
+} from "@/lib/work-orders/completion-signature";
 
 type WorkOrderStatus =
   | "REQUESTED"
@@ -54,6 +59,12 @@ type TechnicianWorkOrderData = {
   assignee: { id: string; displayName: string } | null;
   team: { id: string; name: string } | null;
   checkItems: CheckItem[];
+};
+
+type TechnicianDetailData = {
+  workOrder: TechnicianWorkOrderData;
+  signer: { id: string; displayName: string };
+  completionSignature: WorkOrderCompletionSignature | null;
 };
 
 type ApiResponse<T> = {
@@ -116,6 +127,10 @@ export default function TechnicianWorkOrder({
   offlinePartition: string;
 }) {
   const [workOrder, setWorkOrder] = useState<TechnicianWorkOrderData | null>(null);
+  const [signer, setSigner] = useState<{ id: string; displayName: string } | null>(null);
+  const [completionSignature, setCompletionSignature] = useState<WorkOrderCompletionSignature | null>(null);
+  const [signatureName, setSignatureName] = useState("");
+  const [signatureAttested, setSignatureAttested] = useState(false);
   const [laborMinutes, setLaborMinutes] = useState("0");
   const [downtimeMinutes, setDowntimeMinutes] = useState("0");
   const [completionNote, setCompletionNote] = useState("");
@@ -161,7 +176,7 @@ export default function TechnicianWorkOrder({
       `/api/work-orders/technician/${encodeURIComponent(workOrderId)}?${query.toString()}`,
       { cache: "no-store" },
     );
-    const body = (await response.json()) as ApiResponse<{ workOrder: TechnicianWorkOrderData }>;
+    const body = (await response.json()) as ApiResponse<TechnicianDetailData>;
     if (!response.ok || !body.data) {
       throw new Error(body.error?.message ?? "Unable to load the current server work order");
     }
@@ -190,7 +205,7 @@ export default function TechnicianWorkOrder({
     const endpoint = `/api/work-orders/technician/${encodeURIComponent(workOrderId)}?${query.toString()}`;
     try {
       const response = await fetchTechnicianRead(endpoint, cachePartition);
-      const body = (await response.json()) as ApiResponse<{ workOrder: TechnicianWorkOrderData }>;
+      const body = (await response.json()) as ApiResponse<TechnicianDetailData>;
       if (!response.ok || !body.data) {
         throw new Error(body.error?.message ?? "Unable to load technician work order");
       }
@@ -203,6 +218,8 @@ export default function TechnicianWorkOrder({
         setCachePartition(activePartition);
       }
 
+      setSigner(body.data.signer);
+      setCompletionSignature(body.data.completionSignature);
       let next = body.data.workOrder;
       if (isTechnicianQueuePartition(activePartition)) {
         const queued = await listTechnicianWrites(activePartition);
@@ -218,6 +235,10 @@ export default function TechnicianWorkOrder({
         setServerConflictWorkOrder(null);
       }
       applyWorkOrder(next);
+      if (body.data.workOrder.status === "COMPLETED" && body.data.completionSignature) {
+        setSignatureName("");
+        setSignatureAttested(false);
+      }
 
       const fromCache = response.headers.get(OFFLINE_SOURCE_HEADER) === "cache";
       setOfflineRead(fromCache);
@@ -321,6 +342,9 @@ export default function TechnicianWorkOrder({
   const queueAvailable = isTechnicianQueuePartition(cachePartition);
   const queueMode = (!online || offlineRead) && queueAvailable;
   const writesDisabled = ((!online || offlineRead) && !queueAvailable) || Boolean(conflictWrite);
+  const signatureMatches = signer
+    ? signatureNameMatchesIdentity(signatureName, signer.displayName)
+    : false;
 
   function executionPayload() {
     return {
@@ -334,6 +358,22 @@ export default function TechnicianWorkOrder({
         completed: item.completed,
         note: item.note,
       })),
+    };
+  }
+
+  function transitionPayload(status: WorkOrderStatus) {
+    return {
+      organizationId,
+      siteId,
+      status,
+      ...(status === "COMPLETED"
+        ? {
+            completionSignature: {
+              signerName: signatureName,
+              attested: signatureAttested,
+            },
+          }
+        : {}),
     };
   }
 
@@ -389,14 +429,14 @@ export default function TechnicianWorkOrder({
           workOrderId: workOrder.id,
           kind: "transition",
           endpoint: `/api/work-orders/${encodeURIComponent(workOrder.id)}`,
-          body: { organizationId, siteId, status },
+          body: transitionPayload(status),
         });
         setRetryAt("");
         await refreshQueueCount();
         setWorkOrder((current) => current ? { ...current, status } : current);
         setMessage(
           status === "COMPLETED"
-            ? "Completion queued. It will sync after reconnection."
+            ? "Signed completion queued. It becomes authoritative after authenticated sync."
             : `Status ${status} queued for sync after reconnection.`,
         );
         return;
@@ -406,18 +446,14 @@ export default function TechnicianWorkOrder({
         const saved = await saveExecution(false);
         if (!saved) return;
       }
-      await patchJson(`/api/work-orders/${encodeURIComponent(workOrder.id)}`, {
-        organizationId,
-        siteId,
-        status,
-      });
+      await patchJson(`/api/work-orders/${encodeURIComponent(workOrder.id)}`, transitionPayload(status));
       setMessage(
         status === "IN_PROGRESS"
           ? workOrder.status === "BLOCKED" ? "Work resumed." : "Work started."
           : status === "BLOCKED"
             ? "Work order blocked."
             : status === "COMPLETED"
-              ? "Work order completed."
+              ? "Work order completed and signed."
               : "Status updated.",
       );
       await load();
@@ -480,7 +516,12 @@ export default function TechnicianWorkOrder({
 
   const active = workOrder.status === "IN_PROGRESS" || workOrder.status === "BLOCKED";
   const allChecklistComplete = checkItems.every((item) => item.completed);
-  const canComplete = workOrder.status === "IN_PROGRESS" && allChecklistComplete && completionNote.trim().length > 0;
+  const canComplete =
+    workOrder.status === "IN_PROGRESS" &&
+    allChecklistComplete &&
+    completionNote.trim().length > 0 &&
+    signatureAttested &&
+    signatureMatches;
   const cameraDisabled = !online || offlineRead || workOrder.status === "CANCELLED" || workOrder.status === "COMPLETED";
   const cameraDisabledReason = !online || offlineRead
     ? "Photo uploads still require a network connection. Structured maintenance changes can be queued offline."
@@ -620,6 +661,27 @@ export default function TechnicianWorkOrder({
         </Link>
       </section>
 
+      {workOrder.status === "COMPLETED" ? (
+        <section className="card" data-testid="completion-signature" style={{ display: "grid", gap: 8 }}>
+          <h2 style={{ margin: 0 }}>{completionSignature ? "Completion signature" : "Signature pending"}</h2>
+          {completionSignature ? (
+            <>
+              <strong>Signed by {completionSignature.signedByName}</strong>
+              <span>Typed signature: {completionSignature.capturedName}</span>
+              <span>Signed {formatDate(completionSignature.signedAt)}</span>
+              <span className="muted">Authenticated typed-name signature · {WORK_ORDER_COMPLETION_ATTESTATION}</span>
+            </>
+          ) : queuedWrites > 0 ? (
+            <>
+              <strong>{signatureName || signer?.displayName || "Technician"}</strong>
+              <span className="muted">This signed completion is queued locally. The server identity and timestamp are added only after authenticated sync succeeds.</span>
+            </>
+          ) : (
+            <span className="muted">No typed completion signature is available for this legacy completion record.</span>
+          )}
+        </section>
+      ) : null}
+
       <section className="card" style={{ display: "grid", gap: 12 }}>
         <h2 style={{ margin: 0 }}>Work controls</h2>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
@@ -634,7 +696,7 @@ export default function TechnicianWorkOrder({
                 {queueMode ? "Queue block" : "Block work"}
               </button>
               <button type="button" disabled={busy || writesDisabled || !canComplete} onClick={() => void transition("COMPLETED")} style={buttonStyle}>
-                {queueMode ? "Queue completion" : "Complete work"}
+                {queueMode ? "Queue signed completion" : "Complete and sign"}
               </button>
             </>
           ) : null}
@@ -651,7 +713,7 @@ export default function TechnicianWorkOrder({
         {queueMode && !conflictWrite ? (
           <p className="muted">Status changes are queued in order and replayed after reconnection.</p>
         ) : workOrder.status === "IN_PROGRESS" && !canComplete ? (
-          <p className="muted">Complete every checklist item and add a completion note before closing.</p>
+          <p className="muted">Complete every checklist item, add a completion note, then type and attest your signature before closing.</p>
         ) : null}
       </section>
 
@@ -722,6 +784,42 @@ export default function TechnicianWorkOrder({
               style={{ minHeight: 120, padding: 10 }}
             />
           </label>
+
+          <div style={{ display: "grid", gap: 10, paddingTop: 6 }} data-testid="signature-capture">
+            <h3 style={{ margin: 0 }}>Completion signature</h3>
+            <p className="muted" style={{ margin: 0 }}>
+              Authenticated signer: <strong>{signer?.displayName ?? "Loading identity…"}</strong>. Type your name manually; it must match this account.
+            </p>
+            <label style={{ display: "grid", gap: 6 }}>
+              <span>Type your name to sign</span>
+              <input
+                value={signatureName}
+                disabled={writesDisabled || !signer}
+                onChange={(event) => setSignatureName(event.target.value)}
+                autoComplete="off"
+                maxLength={120}
+                placeholder={signer?.displayName ?? "Your authenticated name"}
+                style={{ minHeight: 44, padding: 10 }}
+              />
+            </label>
+            {signatureName && !signatureMatches ? (
+              <p role="status" style={{ margin: 0 }}>Typed signature must match {signer?.displayName}.</p>
+            ) : null}
+            <label style={{ display: "flex", gap: 10, alignItems: "flex-start", minHeight: 44 }}>
+              <input
+                type="checkbox"
+                checked={signatureAttested}
+                disabled={writesDisabled || !signatureMatches}
+                onChange={(event) => setSignatureAttested(event.target.checked)}
+              />
+              <span>{WORK_ORDER_COMPLETION_ATTESTATION}</span>
+            </label>
+            <p className="muted" style={{ margin: 0 }}>
+              {queueMode
+                ? "Offline: the signed intent remains local until replay. The authenticated server identity and timestamp are recorded only after sync succeeds."
+                : "The server binds this signature to your authenticated account and records the authoritative signing time in the audit trail."}
+            </p>
+          </div>
 
           <button type="button" disabled={busy || writesDisabled} onClick={() => void save()} style={buttonStyle}>
             {busy ? "Saving…" : queueMode ? "Queue progress" : "Save progress"}
