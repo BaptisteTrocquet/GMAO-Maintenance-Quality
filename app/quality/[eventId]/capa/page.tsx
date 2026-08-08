@@ -39,6 +39,7 @@ export default async function CapaPage({
         organizationId,
         active: true,
         user: { active: true },
+        OR: [{ allSites: true }, { siteMemberships: { some: { siteId } } }],
       },
       select: {
         userId: true,
