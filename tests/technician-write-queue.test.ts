@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  isRetryableTechnicianWriteStatus,
   isTechnicianQueuePartition,
   projectTechnicianWrites,
+  technicianRetryDelayMs,
   type TechnicianQueuedWrite,
 } from "@/lib/pwa/technician-write-queue-client";
 
@@ -16,6 +18,9 @@ function queuedWrite(
     endpoint: "/api/work-orders/wo-1",
     sequence: 1,
     createdAt: "2026-08-08T06:00:00.000Z",
+    attempts: 0,
+    lastAttemptAt: null,
+    nextAttemptAt: null,
     lastError: null,
     ...overrides,
   };
@@ -27,6 +32,23 @@ describe("technician offline write queue", () => {
     expect(isTechnicianQueuePartition("A".repeat(32))).toBe(false);
     expect(isTechnicianQueuePartition("a".repeat(31))).toBe(false);
     expect(isTechnicianQueuePartition("session-token".padEnd(32, "x"))).toBe(false);
+  });
+
+  it("uses bounded exponential retry delays for temporary sync failures", () => {
+    expect(technicianRetryDelayMs(1)).toBe(1_000);
+    expect(technicianRetryDelayMs(2)).toBe(2_000);
+    expect(technicianRetryDelayMs(3)).toBe(4_000);
+    expect(technicianRetryDelayMs(6)).toBe(30_000);
+    expect(technicianRetryDelayMs(20)).toBe(30_000);
+  });
+
+  it("retries only transient HTTP statuses", () => {
+    for (const status of [408, 425, 429, 500, 502, 503, 504]) {
+      expect(isRetryableTechnicianWriteStatus(status)).toBe(true);
+    }
+    for (const status of [400, 401, 403, 404, 409, 422]) {
+      expect(isRetryableTechnicianWriteStatus(status)).toBe(false);
+    }
   });
 
   it("projects queued execution and status writes by monotone sequence", () => {
