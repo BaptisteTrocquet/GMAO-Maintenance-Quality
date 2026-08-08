@@ -88,6 +88,31 @@ describe("global search API", () => {
     expect(mocks.searchGlobal).not.toHaveBeenCalled();
   });
 
+  it("allows all-site membership without relying on a category permission", async () => {
+    mocks.authenticateRequest.mockResolvedValue(
+      auth({ role: "QUALITY_MANAGER", allSites: true, siteIds: [] }),
+    );
+
+    const response = await GET(request("audit", "site-b"));
+
+    expect(response.status).toBe(200);
+    expect(mocks.searchGlobal).toHaveBeenCalledWith({
+      organizationId: "org-a",
+      siteId: "site-b",
+      role: "QUALITY_MANAGER",
+      query: "audit",
+    });
+  });
+
+  it("normalizes whitespace before invoking the search engine", async () => {
+    const response = await GET(request("  pump   seal  "));
+
+    expect(response.status).toBe(200);
+    expect(mocks.searchGlobal).toHaveBeenCalledWith(
+      expect.objectContaining({ query: "pump seal" }),
+    );
+  });
+
   it("preserves an authentication error without invoking search", async () => {
     mocks.authenticateRequest.mockResolvedValue({
       error: new Response(JSON.stringify({ error: { code: "UNAUTHENTICATED" } }), {
