@@ -118,6 +118,22 @@ describe("labor capacity baselines", () => {
     expect(mocks.auditCreate).not.toHaveBeenCalled();
   });
 
+  it("queries raw AuditLog JSON without escaped quote literals", async () => {
+    await listLaborCapacityProfiles({ organizationId: "org-a", siteId: "site-a" });
+
+    expect(mocks.auditFindMany).toHaveBeenCalledWith({
+      where: {
+        entityType: "LaborCapacityProfile",
+        AND: [
+          { afterJson: { contains: '"organizationId":"org-a"' } },
+          { afterJson: { contains: '"siteId":"site-a"' } },
+        ],
+      },
+      orderBy: { createdAt: "asc" },
+      select: { entityId: true, afterJson: true },
+    });
+  });
+
   it("returns only the latest active profile for currently eligible users", async () => {
     mocks.auditFindMany.mockResolvedValue([
       {
