@@ -6,11 +6,12 @@ import { authenticateRequest } from "@/lib/auth/request-auth";
 import { db } from "@/lib/db";
 import { can } from "@/lib/permissions";
 
+const timestampSchema = z.string().datetime({ offset: true });
 const querySchema = z.object({
   organizationId: z.string().min(1),
   siteId: z.string().min(1),
-  from: z.coerce.date(),
-  to: z.coerce.date(),
+  from: timestampSchema,
+  to: timestampSchema,
   assetId: z.string().min(1).optional(),
 });
 
@@ -24,7 +25,12 @@ export async function GET(request: Request): Promise<Response> {
     assetId: url.searchParams.get("assetId") || undefined,
   });
   if (!parsed.success) {
-    return apiError(400, "INVALID_QUERY", "organizationId, siteId, from and to are required", parsed.error.flatten());
+    return apiError(
+      400,
+      "INVALID_QUERY",
+      "organizationId, siteId, from and to are required; dates must be ISO timestamps with an offset",
+      parsed.error.flatten(),
+    );
   }
 
   const auth = await authenticateRequest(request, parsed.data.organizationId);
@@ -55,8 +61,8 @@ export async function GET(request: Request): Promise<Response> {
       await buildPmCompliance({
         organizationId: parsed.data.organizationId,
         siteId: parsed.data.siteId,
-        from: parsed.data.from,
-        to: parsed.data.to,
+        from: new Date(parsed.data.from),
+        to: new Date(parsed.data.to),
         assetId: parsed.data.assetId,
       }),
     );
