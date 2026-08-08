@@ -3,6 +3,7 @@ import { headers } from "next/headers";
 import { notFound } from "next/navigation";
 import { db } from "@/lib/db";
 import { getQualityEvent, listQualityEventTimeline } from "@/lib/quality/events";
+import { getRootCauseAnalysis } from "@/lib/quality/root-cause";
 
 type QualityTimeline = NonNullable<Awaited<ReturnType<typeof listQualityEventTimeline>>>;
 type QualityTimelineEntry = QualityTimeline[number];
@@ -43,7 +44,10 @@ export default async function QualityEventDetailPage({
 
   const qualityEvent = await getQualityEvent({ organizationId, siteId, eventId });
   if (!qualityEvent) notFound();
-  const timeline = (await listQualityEventTimeline({ organizationId, siteId, eventId })) ?? [];
+  const [timeline, rootCause] = await Promise.all([
+    listQualityEventTimeline({ organizationId, siteId, eventId }),
+    getRootCauseAnalysis({ organizationId, siteId, eventId }),
+  ]);
 
   const userIds = [qualityEvent.detectedById, qualityEvent.containment?.ownerId].filter(
     (value): value is string => Boolean(value),
@@ -126,6 +130,18 @@ export default async function QualityEventDetailPage({
           ) : (
             <p className="muted">Immediate containment has not been recorded.</p>
           )}
+        </section>
+
+        <section className="card">
+          <h2>Root-cause analysis</h2>
+          <p>
+            {rootCause
+              ? `${rootCause.status} · ${rootCause.fiveWhys.length}/5 Why answers · version ${rootCause.version}`
+              : "Root-cause analysis has not been started."}
+          </p>
+          <Link className="table-link" href={`/quality/${eventId}/root-cause`}>
+            Open root-cause workspace →
+          </Link>
         </section>
 
         <section className="card">
