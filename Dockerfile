@@ -16,7 +16,8 @@ RUN npm ci --no-audit --no-fund
 
 FROM base AS builder
 
-ENV NODE_ENV=production
+ENV NODE_ENV=production \
+    GMAO_DOCKER_BUILDER=1
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
