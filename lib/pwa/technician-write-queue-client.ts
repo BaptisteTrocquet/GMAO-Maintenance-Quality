@@ -9,6 +9,7 @@ export type TechnicianQueuedWrite = {
   kind: TechnicianQueuedWriteKind;
   endpoint: string;
   body: Record<string, unknown>;
+  sequence: number;
   createdAt: string;
   lastError: string | null;
 };
@@ -94,14 +95,27 @@ export async function enqueueTechnicianWrite(input: {
   const operation: TechnicianQueuedWrite = {
     ...input,
     id: crypto.randomUUID(),
+    sequence: 0,
     createdAt: new Date().toISOString(),
     lastError: null,
   };
 
   await withStore<void>("readwrite", (store, done, fail) => {
-    const request = store.add(operation);
-    request.onsuccess = () => done(undefined);
-    request.onerror = () => fail(request.error ?? new Error("Unable to enqueue offline write"));
+    // Read/write transactions on one object store are serialized by IndexedDB,
+    // so assigning max(sequence)+1 here provides a stable order across tabs.
+    const existingRequest = store.getAll();
+    existingRequest.onerror = () =>
+      fail(existingRequest.error ?? new Error("Unable to order offline write"));
+    existingRequest.onsuccess = () => {
+      const existing = existingRequest.result as TechnicianQueuedWrite[];
+      operation.sequence = existing.reduce(
+        (maximum, item) => Math.max(maximum, Number.isFinite(item.sequence) ? item.sequence : 0),
+        0,
+      ) + 1;
+      const addRequest = store.add(operation);
+      addRequest.onsuccess = () => done(undefined);
+      addRequest.onerror = () => fail(addRequest.error ?? new Error("Unable to enqueue offline write"));
+    };
   });
   return operation;
 }
@@ -117,7 +131,7 @@ export async function listTechnicianWrites(partition: string, workOrderId?: stri
             item.partition === partition &&
             (!workOrderId || item.workOrderId === workOrderId),
         )
-        .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+        .sort((a, b) => a.sequence - b.sequence);
       done(writes);
     };
     request.onerror = () => fail(request.error ?? new Error("Unable to read offline write queue"));
@@ -159,7 +173,7 @@ export function projectTechnicianWrites<T extends {
     checkItems: workOrder.checkItems.map((item) => ({ ...item })),
   } as T;
 
-  for (const write of writes) {
+  for (const write of [...writes].sort((a, b) => a.sequence - b.sequence)) {
     if (write.workOrderId !== workOrder.id) continue;
     if (write.kind === "execution") {
       if (typeof write.body.laborMinutes === "number") projected.laborMinutes = write.body.laborMinutes;
