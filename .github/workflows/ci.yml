@@ -187,7 +187,7 @@ jobs:
           test ! -e /app/.env &&
           test "$NODE_ENV" = "production"'
 
-      - name: Verify production health probes and metrics
+      - name: Verify production health probes, metrics and rate limiting
         shell: bash
         run: |
           set -euo pipefail
@@ -205,6 +205,8 @@ jobs:
             --health-start-period=1s \
             --health-retries=10 \
             --env DATABASE_URL="postgresql://opengmao:opengmao@127.0.0.1:5432/opengmao?schema=public" \
+            --env RATE_LIMIT_ENABLED="true" \
+            --env RATE_LIMIT_DEFAULT_PER_MINUTE="2" \
             gmao-maintenance-quality:ci
 
           for attempt in {1..30}; do
@@ -221,6 +223,8 @@ jobs:
           node -e "fetch('http://127.0.0.1:3000/api/ready').then(async (response) => { const body = await response.json(); if (response.status !== 200 || body?.data?.status !== 'ready' || body?.data?.checks?.database !== 'reachable') process.exit(1); }).catch(() => process.exit(1));"
 
           node -e "fetch('http://127.0.0.1:3000/api/metrics').then(async (response) => { const body = await response.text(); const contentType = response.headers.get('content-type') ?? ''; if (response.status !== 200 || !contentType.startsWith('text/plain; version=0.0.4') || !body.includes('opengmao_database_ready 1') || !body.includes('opengmao_process_uptime_seconds') || !body.includes('opengmao_metrics_scrapes_total 1') || !body.includes('opengmao_readiness_checks_total{result=\"success\"} 1')) process.exit(1); }).catch(() => process.exit(1));"
+
+          node -e "(async () => { const url = 'http://127.0.0.1:3000/api/auth/session'; for (let i = 0; i < 2; i += 1) { const response = await fetch(url); if (response.status === 429) process.exit(1); const limit = response.headers.get('ratelimit-limit'); if (limit !== '2') process.exit(1); } const blocked = await fetch(url); const body = await blocked.json(); if (blocked.status !== 429 || body?.error?.code !== 'RATE_LIMITED' || !blocked.headers.get('retry-after') || blocked.headers.get('ratelimit-remaining') !== '0') process.exit(1); })().catch(() => process.exit(1));"
 
           for attempt in {1..15}; do
             status="$(docker inspect --format '{{.State.Health.Status}}' "$container_name")"
