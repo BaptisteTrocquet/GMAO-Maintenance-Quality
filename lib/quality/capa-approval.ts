@@ -20,6 +20,11 @@ type RootCauseState = {
   status: "DRAFT" | "CONFIRMED";
 };
 
+type DraftAudit = {
+  action: string;
+  actorId: string | null;
+};
+
 export class CapaApprovalError extends Error {
   constructor(
     public readonly code:
@@ -100,6 +105,25 @@ async function serializable<T>(work: (tx: Prisma.TransactionClient) => Promise<T
   throw lastError;
 }
 
+function currentDraftAuthors(logs: DraftAudit[]) {
+  let cycleStart = 0;
+  for (let index = 0; index < logs.length; index += 1) {
+    if (logs[index].action === "CAPA_REOPENED_INEFFECTIVE") {
+      cycleStart = index + 1;
+    }
+  }
+
+  return new Set(
+    logs
+      .slice(cycleStart)
+      .filter(
+        (log) =>
+          log.action === "CAPA_DRAFT_CREATED" || log.action === "CAPA_DRAFT_UPDATED",
+      )
+      .flatMap((log) => (log.actorId ? [log.actorId] : [])),
+  );
+}
+
 export async function approveCapa(input: {
   organizationId: string;
   siteId: string;
@@ -164,21 +188,25 @@ export async function approveCapa(input: {
       );
     }
 
-    const draftEdits = await tx.auditLog.findMany({
+    const draftHistory = await tx.auditLog.findMany({
       where: {
         entityType: CAPA_ENTITY,
         entityId: input.eventId,
-        action: { in: ["CAPA_DRAFT_CREATED", "CAPA_DRAFT_UPDATED"] },
+        action: {
+          in: [
+            "CAPA_DRAFT_CREATED",
+            "CAPA_DRAFT_UPDATED",
+            "CAPA_REOPENED_INEFFECTIVE",
+          ],
+        },
       },
-      select: { actorId: true },
+      orderBy: { createdAt: "asc" },
+      select: { action: true, actorId: true },
     });
-    const draftAuthors = new Set(
-      draftEdits.flatMap((edit) => (edit.actorId ? [edit.actorId] : [])),
-    );
-    if (draftAuthors.has(input.approverId)) {
+    if (currentDraftAuthors(draftHistory).has(input.approverId)) {
       throw new CapaApprovalError(
         "CAPA_SELF_APPROVAL_NOT_ALLOWED",
-        "A user who authored or edited the CAPA draft cannot approve it",
+        "A user who authored or edited the current CAPA draft cannot approve it",
       );
     }
 
