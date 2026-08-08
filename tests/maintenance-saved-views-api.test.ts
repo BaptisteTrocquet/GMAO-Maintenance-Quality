@@ -49,6 +49,7 @@ function expectResponse(response: Response | undefined) {
 describe("saved work-order views API", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.assertSitePermission.mockReset();
     mocks.authenticateRequest.mockResolvedValue({
       session: { user: { id: "user-a" } },
       tenant: { scope },
