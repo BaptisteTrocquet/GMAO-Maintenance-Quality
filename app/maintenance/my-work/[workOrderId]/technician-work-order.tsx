@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import WorkOrderCameraAttachments from "@/app/maintenance/[workOrderId]/work-order-camera-attachments";
 import {
   fetchTechnicianRead,
@@ -9,6 +9,13 @@ import {
   OFFLINE_CACHED_AT_HEADER,
   OFFLINE_SOURCE_HEADER,
 } from "@/lib/pwa/technician-read-cache-client";
+import {
+  enqueueTechnicianWrite,
+  flushTechnicianWrites,
+  isTechnicianQueuePartition,
+  listTechnicianWrites,
+  projectTechnicianWrites,
+} from "@/lib/pwa/technician-write-queue-client";
 
 type WorkOrderStatus =
   | "REQUESTED"
@@ -95,6 +102,9 @@ export default function TechnicianWorkOrder({
   const [checkItems, setCheckItems] = useState<CheckItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const syncingRef = useRef(false);
+  const [queuedWrites, setQueuedWrites] = useState(0);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [offlineRead, setOfflineRead] = useState(false);
@@ -113,6 +123,14 @@ export default function TechnicianWorkOrder({
     };
   }, []);
 
+  const applyWorkOrder = useCallback((next: TechnicianWorkOrderData) => {
+    setWorkOrder(next);
+    setLaborMinutes(String(next.laborMinutes ?? 0));
+    setDowntimeMinutes(String(next.downtimeMinutes ?? 0));
+    setCompletionNote(next.completionNote ?? "");
+    setCheckItems(next.checkItems);
+  }, []);
+
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
@@ -126,16 +144,23 @@ export default function TechnicianWorkOrder({
       }
 
       const confirmedPartition = response.headers.get(OFFLINE_PARTITION_HEADER) ?? "";
-      if (isOfflineReadPartition(confirmedPartition) && confirmedPartition !== cachePartition) {
-        setCachePartition(confirmedPartition);
+      const activePartition = isOfflineReadPartition(confirmedPartition)
+        ? confirmedPartition
+        : cachePartition;
+      if (activePartition !== cachePartition && isOfflineReadPartition(activePartition)) {
+        setCachePartition(activePartition);
       }
 
-      const next = body.data.workOrder;
-      setWorkOrder(next);
-      setLaborMinutes(String(next.laborMinutes ?? 0));
-      setDowntimeMinutes(String(next.downtimeMinutes ?? 0));
-      setCompletionNote(next.completionNote ?? "");
-      setCheckItems(next.checkItems);
+      let next = body.data.workOrder;
+      if (isTechnicianQueuePartition(activePartition)) {
+        const queued = await listTechnicianWrites(activePartition);
+        setQueuedWrites(queued.length);
+        next = projectTechnicianWrites(next, queued) as TechnicianWorkOrderData;
+      } else {
+        setQueuedWrites(0);
+      }
+      applyWorkOrder(next);
+
       const fromCache = response.headers.get(OFFLINE_SOURCE_HEADER) === "cache";
       setOfflineRead(fromCache);
       setCachedAt(fromCache ? response.headers.get(OFFLINE_CACHED_AT_HEADER) ?? "" : "");
@@ -144,11 +169,53 @@ export default function TechnicianWorkOrder({
     } finally {
       setLoading(false);
     }
-  }, [cachePartition, organizationId, siteId, workOrderId]);
+  }, [applyWorkOrder, cachePartition, organizationId, siteId, workOrderId]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  const refreshQueueCount = useCallback(async () => {
+    if (!isTechnicianQueuePartition(cachePartition)) {
+      setQueuedWrites(0);
+      return 0;
+    }
+    const queued = await listTechnicianWrites(cachePartition);
+    setQueuedWrites(queued.length);
+    return queued.length;
+  }, [cachePartition]);
+
+  const syncQueue = useCallback(async () => {
+    if (!online || !isTechnicianQueuePartition(cachePartition) || syncingRef.current) return;
+    syncingRef.current = true;
+    setSyncing(true);
+    setError("");
+    try {
+      const result = await flushTechnicianWrites(cachePartition);
+      setQueuedWrites(result.remaining);
+      if (result.blocked) {
+        setError(`Queued change needs attention: ${result.message ?? "server rejected the change"}`);
+        return;
+      }
+      if (result.synced > 0) {
+        setMessage(`${result.synced} queued change${result.synced === 1 ? "" : "s"} synced.`);
+        await load();
+      }
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to sync queued work");
+    } finally {
+      syncingRef.current = false;
+      setSyncing(false);
+    }
+  }, [cachePartition, load, online]);
+
+  useEffect(() => {
+    if (!online || !isTechnicianQueuePartition(cachePartition)) return;
+    void (async () => {
+      const count = await refreshQueueCount();
+      if (count > 0) void syncQueue();
+    })();
+  }, [cachePartition, online, refreshQueueCount, syncQueue]);
 
   async function patchJson<T>(url: string, body: Record<string, unknown>) {
     const response = await fetch(url, {
@@ -163,23 +230,50 @@ export default function TechnicianWorkOrder({
     return result.data;
   }
 
-  const writesDisabled = !online || offlineRead;
+  const queueAvailable = isTechnicianQueuePartition(cachePartition);
+  const queueMode = (!online || offlineRead) && queueAvailable;
+  const writesDisabled = (!online || offlineRead) && !queueAvailable;
+
+  function executionPayload() {
+    return {
+      organizationId,
+      siteId,
+      laborMinutes: Math.max(0, Number.parseInt(laborMinutes || "0", 10) || 0),
+      downtimeMinutes: Math.max(0, Number.parseInt(downtimeMinutes || "0", 10) || 0),
+      completionNote,
+      checklistUpdates: checkItems.map((item) => ({
+        id: item.id,
+        completed: item.completed,
+        note: item.note,
+      })),
+    };
+  }
+
+  async function queueExecution() {
+    if (!workOrder || !queueAvailable) return false;
+    await enqueueTechnicianWrite({
+      partition: cachePartition,
+      organizationId,
+      siteId,
+      workOrderId: workOrder.id,
+      kind: "execution",
+      endpoint: `/api/work-orders/${encodeURIComponent(workOrder.id)}/execution`,
+      body: executionPayload(),
+    });
+    await refreshQueueCount();
+    return true;
+  }
 
   async function saveExecution(showSuccess = true) {
-    if (writesDisabled || !workOrder || !["IN_PROGRESS", "BLOCKED"].includes(workOrder.status)) return false;
+    if (!workOrder || !["IN_PROGRESS", "BLOCKED"].includes(workOrder.status)) return false;
     try {
-      await patchJson(`/api/work-orders/${encodeURIComponent(workOrder.id)}/execution`, {
-        organizationId,
-        siteId,
-        laborMinutes: Math.max(0, Number.parseInt(laborMinutes || "0", 10) || 0),
-        downtimeMinutes: Math.max(0, Number.parseInt(downtimeMinutes || "0", 10) || 0),
-        completionNote,
-        checklistUpdates: checkItems.map((item) => ({
-          id: item.id,
-          completed: item.completed,
-          note: item.note,
-        })),
-      });
+      if (queueMode) {
+        const queued = await queueExecution();
+        if (queued && showSuccess) setMessage("Progress queued for sync when the connection returns.");
+        return queued;
+      }
+
+      await patchJson(`/api/work-orders/${encodeURIComponent(workOrder.id)}/execution`, executionPayload());
       if (showSuccess) setMessage("Progress saved.");
       return true;
     } catch (reason) {
@@ -194,6 +288,30 @@ export default function TechnicianWorkOrder({
     setError("");
     setMessage("");
     try {
+      if (queueMode) {
+        if (status === "COMPLETED") {
+          const saved = await queueExecution();
+          if (!saved) return;
+        }
+        await enqueueTechnicianWrite({
+          partition: cachePartition,
+          organizationId,
+          siteId,
+          workOrderId: workOrder.id,
+          kind: "transition",
+          endpoint: `/api/work-orders/${encodeURIComponent(workOrder.id)}`,
+          body: { organizationId, siteId, status },
+        });
+        await refreshQueueCount();
+        setWorkOrder((current) => current ? { ...current, status } : current);
+        setMessage(
+          status === "COMPLETED"
+            ? "Completion queued. It will sync after reconnection."
+            : `Status ${status} queued for sync after reconnection.`,
+        );
+        return;
+      }
+
       if (status === "COMPLETED") {
         const saved = await saveExecution(false);
         if (!saved) return;
@@ -227,7 +345,7 @@ export default function TechnicianWorkOrder({
     setMessage("");
     try {
       const saved = await saveExecution(true);
-      if (saved) await load();
+      if (saved && !queueMode) await load();
     } finally {
       setBusy(false);
     }
@@ -249,9 +367,9 @@ export default function TechnicianWorkOrder({
   const active = workOrder.status === "IN_PROGRESS" || workOrder.status === "BLOCKED";
   const allChecklistComplete = checkItems.every((item) => item.completed);
   const canComplete = workOrder.status === "IN_PROGRESS" && allChecklistComplete && completionNote.trim().length > 0;
-  const cameraDisabled = writesDisabled || workOrder.status === "CANCELLED" || workOrder.status === "COMPLETED";
-  const cameraDisabledReason = writesDisabled
-    ? "Photo uploads require a network connection. Offline write queuing is not enabled yet."
+  const cameraDisabled = !online || offlineRead || workOrder.status === "CANCELLED" || workOrder.status === "COMPLETED";
+  const cameraDisabledReason = !online || offlineRead
+    ? "Photo uploads still require a network connection. Structured maintenance changes can be queued offline."
     : workOrder.status === "COMPLETED"
       ? "Photos are disabled for completed work orders."
       : workOrder.status === "CANCELLED"
@@ -260,25 +378,44 @@ export default function TechnicianWorkOrder({
 
   return (
     <div style={{ display: "grid", gap: 14 }}>
-      <section className="card" style={{ display: "flex", gap: 10, justifyContent: "space-between", alignItems: "center", flexWrap: "wrap" }}>
-        <div>
-          <strong aria-live="polite">{offlineRead ? cacheLabel(cachedAt) : online ? "Live" : "Offline"}</strong>
-          <div className="muted">
-            {writesDisabled
-              ? "Read-only mode. Reconnect and refresh before recording maintenance work."
-              : cachePartition
-                ? "This work order is cached after successful online reads."
-                : "Offline cache is armed after the first authenticated online read."}
+      <section className="card" style={{ display: "grid", gap: 10 }}>
+        <div style={{ display: "flex", gap: 10, justifyContent: "space-between", alignItems: "center", flexWrap: "wrap" }}>
+          <div>
+            <strong aria-live="polite">{offlineRead ? cacheLabel(cachedAt) : online ? "Live" : "Offline"}</strong>
+            <div className="muted">
+              {queueMode
+                ? "Offline edits are stored on this device and sync automatically when the connection returns."
+                : writesDisabled
+                  ? "Offline data is read-only until an authenticated queue partition is available."
+                  : queuedWrites > 0
+                    ? "Queued maintenance changes are waiting to sync."
+                    : "This work order supports cached reads and queued structured edits offline."}
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            {queuedWrites > 0 ? (
+              <span className="badge" data-testid="queued-write-count">
+                {queuedWrites} queued
+              </span>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => void syncQueue()}
+              disabled={!online || syncing || queuedWrites === 0}
+              style={buttonStyle}
+            >
+              {syncing ? "Syncing…" : "Sync queued changes"}
+            </button>
+            <button
+              type="button"
+              onClick={() => void load()}
+              disabled={loading || busy || syncing}
+              style={buttonStyle}
+            >
+              {loading ? "Refreshing…" : "Refresh work order"}
+            </button>
           </div>
         </div>
-        <button
-          type="button"
-          onClick={() => void load()}
-          disabled={loading || busy}
-          style={buttonStyle}
-        >
-          {loading ? "Refreshing…" : "Refresh work order"}
-        </button>
       </section>
 
       <section className="card" style={{ display: "grid", gap: 12 }}>
@@ -307,30 +444,30 @@ export default function TechnicianWorkOrder({
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
           {(workOrder.status === "APPROVED" || workOrder.status === "PLANNED") ? (
             <button type="button" disabled={busy || writesDisabled} onClick={() => void transition("IN_PROGRESS")} style={buttonStyle}>
-              {busy ? "Starting…" : "Start work"}
+              {busy ? "Starting…" : queueMode ? "Queue start" : "Start work"}
             </button>
           ) : null}
           {workOrder.status === "IN_PROGRESS" ? (
             <>
               <button type="button" disabled={busy || writesDisabled} onClick={() => void transition("BLOCKED")} style={buttonStyle}>
-                Block work
+                {queueMode ? "Queue block" : "Block work"}
               </button>
               <button type="button" disabled={busy || writesDisabled || !canComplete} onClick={() => void transition("COMPLETED")} style={buttonStyle}>
-                Complete work
+                {queueMode ? "Queue completion" : "Complete work"}
               </button>
             </>
           ) : null}
           {workOrder.status === "BLOCKED" ? (
             <button type="button" disabled={busy || writesDisabled} onClick={() => void transition("IN_PROGRESS")} style={buttonStyle}>
-              Resume work
+              {queueMode ? "Queue resume" : "Resume work"}
             </button>
           ) : null}
         </div>
         {workOrder.status === "REQUESTED" ? <p className="muted">Waiting for approval before work can start.</p> : null}
-        {workOrder.status === "COMPLETED" ? <p className="muted">This work order is completed.</p> : null}
+        {workOrder.status === "COMPLETED" ? <p className="muted">This work order is completed or queued for completion.</p> : null}
         {workOrder.status === "CANCELLED" ? <p className="muted">This work order is cancelled.</p> : null}
-        {writesDisabled ? (
-          <p className="muted">Offline read cache is active. Status changes are intentionally disabled.</p>
+        {queueMode ? (
+          <p className="muted">Status changes are queued in order and replayed after reconnection.</p>
         ) : workOrder.status === "IN_PROGRESS" && !canComplete ? (
           <p className="muted">Complete every checklist item and add a completion note before closing.</p>
         ) : null}
@@ -405,7 +542,7 @@ export default function TechnicianWorkOrder({
           </label>
 
           <button type="button" disabled={busy || writesDisabled} onClick={() => void save()} style={buttonStyle}>
-            {busy ? "Saving…" : "Save progress"}
+            {busy ? "Saving…" : queueMode ? "Queue progress" : "Save progress"}
           </button>
         </section>
       ) : null}
