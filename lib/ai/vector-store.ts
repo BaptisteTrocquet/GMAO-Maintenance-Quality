@@ -137,7 +137,11 @@ function validateAdapter(adapter: VectorStoreAdapter) {
 function normalizeScope(scope: VectorStoreScope) {
   const organizationId = scope.organizationId.trim();
   const siteId = scope.siteId?.trim() || null;
-  if (!organizationId || organizationId.length > MAX_ID_LENGTH || /[\u0000\r\n]/.test(organizationId)) {
+  if (
+    !organizationId ||
+    organizationId.length > MAX_ID_LENGTH ||
+    /[\u0000\r\n]/.test(organizationId)
+  ) {
     throw new VectorStoreError("INVALID_REQUEST", "Vector store organization scope is invalid");
   }
   if (siteId && (siteId.length > MAX_ID_LENGTH || /[\u0000\r\n]/.test(siteId))) {
@@ -164,10 +168,14 @@ function normalizeDimensions(value: number) {
   return value;
 }
 
-function normalizeId(id: string, label: string) {
-  const value = id.trim();
+function normalizeId(
+  id: unknown,
+  label: string,
+  code: "INVALID_REQUEST" | "INVALID_RESPONSE" = "INVALID_REQUEST",
+) {
+  const value = typeof id === "string" ? id.trim() : "";
   if (!value || value.length > MAX_ID_LENGTH || /[\u0000\r\n]/.test(value)) {
-    throw new VectorStoreError("INVALID_REQUEST", `${label} is invalid`);
+    throw new VectorStoreError(code, `${label} is invalid`);
   }
   return value;
 }
@@ -176,7 +184,7 @@ function normalizeVector(vector: readonly number[], dimensions: number) {
   if (
     !Array.isArray(vector) ||
     vector.length !== dimensions ||
-    vector.some((value) => !Number.isFinite(value))
+    vector.some((value: number) => !Number.isFinite(value))
   ) {
     throw new VectorStoreError("INVALID_REQUEST", "Vector has invalid dimensions or values");
   }
@@ -191,6 +199,7 @@ function normalizeMetadata(
   if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
     throw new VectorStoreError(code, "Vector metadata must be a flat object");
   }
+
   const entries = Object.entries(metadata);
   if (entries.length > MAX_METADATA_KEYS) {
     throw new VectorStoreError(code, `Vector metadata cannot exceed ${MAX_METADATA_KEYS} keys`);
@@ -298,10 +307,11 @@ export class ScopedVectorStore {
     signal?: AbortSignal;
   }) {
     this.assertEnabled();
+    const timeoutMs = normalizeTimeout(input.timeoutMs);
     try {
       return await invokeWithDeadline({
         operation: input.operation,
-        timeoutMs: normalizeTimeout(input.timeoutMs),
+        timeoutMs,
         signal: input.signal,
       });
     } catch (error) {
@@ -326,7 +336,11 @@ export class ScopedVectorStore {
     const scope = normalizeScope(input.scope);
     const namespace = normalizeNamespace(input.namespace);
     const dimensions = normalizeDimensions(input.dimensions);
-    if (!Array.isArray(input.records) || input.records.length < 1 || input.records.length > MAX_UPSERT_RECORDS) {
+    if (
+      !Array.isArray(input.records) ||
+      input.records.length < 1 ||
+      input.records.length > MAX_UPSERT_RECORDS
+    ) {
       throw new VectorStoreError(
         "INVALID_REQUEST",
         `Vector upsert must contain between 1 and ${MAX_UPSERT_RECORDS} records`,
@@ -352,7 +366,8 @@ export class ScopedVectorStore {
     const result = await this.invoke({
       timeoutMs: input.timeoutMs,
       signal: input.signal,
-      operation: (signal) => this.adapter.upsert({ scope, namespace, dimensions, records, signal }),
+      operation: (signal) =>
+        this.adapter.upsert({ scope, namespace, dimensions, records, signal }),
     });
     if (
       !result ||
@@ -388,7 +403,8 @@ export class ScopedVectorStore {
     const result = await this.invoke({
       timeoutMs: input.timeoutMs,
       signal: input.signal,
-      operation: (signal) => this.adapter.delete({ scope, namespace, ids: Object.freeze(ids), signal }),
+      operation: (signal) =>
+        this.adapter.delete({ scope, namespace, ids: Object.freeze(ids), signal }),
     });
     if (
       !result ||
@@ -435,11 +451,11 @@ export class ScopedVectorStore {
     }
 
     const seen = new Set<string>();
-    return result.map((hit) => {
+    return result.map((hit: VectorStoreQueryHit) => {
       if (!hit || typeof hit !== "object") {
         throw new VectorStoreError("INVALID_RESPONSE", "Vector store returned an invalid result");
       }
-      const id = normalizeId(hit.id, "Vector result id");
+      const id = normalizeId(hit.id, "Vector result id", "INVALID_RESPONSE");
       if (seen.has(id)) {
         throw new VectorStoreError("INVALID_RESPONSE", "Vector store returned duplicate result ids");
       }
@@ -447,16 +463,25 @@ export class ScopedVectorStore {
       if (!Number.isFinite(hit.score)) {
         throw new VectorStoreError("INVALID_RESPONSE", "Vector store returned an invalid score");
       }
+
       const hitOrganizationId = typeof hit.organizationId === "string" ? hit.organizationId : "";
-      const hitSiteId = hit.siteId === null || typeof hit.siteId === "string" ? hit.siteId : undefined;
+      const hitSiteId =
+        hit.siteId === null || typeof hit.siteId === "string" ? hit.siteId : undefined;
       if (hitOrganizationId !== scope.organizationId || hitSiteId !== scope.siteId) {
         throw new VectorStoreError(
           "TENANT_SCOPE_MISMATCH",
           "Vector store returned a result outside the requested tenant scope",
         );
       }
+
       const metadata = normalizeMetadata(hit.metadata, "INVALID_RESPONSE");
-      return { id, score: hit.score, organizationId: scope.organizationId, siteId: scope.siteId, metadata: { ...metadata } };
+      return {
+        id,
+        score: hit.score,
+        organizationId: scope.organizationId,
+        siteId: scope.siteId,
+        metadata: { ...metadata },
+      };
     });
   }
 }
