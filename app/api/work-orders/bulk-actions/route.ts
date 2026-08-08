@@ -44,6 +44,8 @@ function bulkError(error: BulkWorkOrderError) {
     case "EMPTY_SELECTION":
     case "BATCH_TOO_LARGE":
       return apiError(400, error.code, error.message);
+    case "WORK_ORDER_NOT_EDITABLE":
+      return apiError(409, error.code, error.message);
     case "WORK_ORDER_SCOPE_MISMATCH":
     case "ASSIGNEE_NOT_FOUND":
     case "TEAM_NOT_FOUND":
