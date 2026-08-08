@@ -3,7 +3,10 @@ import { AccessDeniedError, assertSitePermission } from "@/lib/access-control";
 import { apiData, apiError } from "@/lib/api-response";
 import { authenticateRequest } from "@/lib/auth/request-auth";
 import {
-  approveCapa,
+  approveCapaWithSeparation,
+  CapaApprovalError,
+} from "@/lib/quality/capa-approval";
+import {
   CapaError,
   completeCapaAction,
   getCapaWorkspace,
@@ -33,7 +36,10 @@ const saveSchema = scopeSchema.extend({
   actions: z.array(actionSchema).max(100),
 });
 
-const approveSchema = scopeSchema.extend({ action: z.literal("APPROVE") });
+const approveSchema = scopeSchema.extend({
+  action: z.literal("APPROVE"),
+  approvalNote: z.string().trim().max(5000).nullable().optional(),
+});
 const completeActionSchema = scopeSchema.extend({
   action: z.literal("COMPLETE_ACTION"),
   actionId: z.string().uuid(),
@@ -68,7 +74,20 @@ function authorize(
   }
 }
 
-function capaError(error: CapaError) {
+function workflowError(error: CapaError | CapaApprovalError) {
+  if (error instanceof CapaApprovalError) {
+    const status =
+      error.code === "QUALITY_EVENT_NOT_FOUND" ||
+      error.code === "CAPA_NOT_FOUND" ||
+      error.code === "ACTION_OWNER_NOT_FOUND"
+        ? 404
+        : error.code === "CAPA_APPROVER_NOT_ALLOWED" ||
+            error.code === "CAPA_SELF_APPROVAL_NOT_ALLOWED"
+          ? 403
+          : 409;
+    return apiError(status, error.code, error.message);
+  }
+
   const status =
     error.code === "QUALITY_EVENT_NOT_FOUND" ||
     error.code === "CAPA_NOT_FOUND" ||
@@ -142,11 +161,12 @@ export async function PATCH(
 
     if (parsed.data.action === "APPROVE") {
       return apiData(
-        await approveCapa({
+        await approveCapaWithSeparation({
           organizationId: parsed.data.organizationId,
           siteId: parsed.data.siteId,
           eventId,
-          actorId: auth.session.user.id,
+          approverId: auth.session.user.id,
+          approvalNote: parsed.data.approvalNote,
         }),
       );
     }
@@ -186,7 +206,9 @@ export async function PATCH(
       }),
     );
   } catch (error) {
-    if (error instanceof CapaError) return capaError(error);
+    if (error instanceof CapaError || error instanceof CapaApprovalError) {
+      return workflowError(error);
+    }
     throw error;
   }
 }
