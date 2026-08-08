@@ -46,7 +46,7 @@ jobs:
         run: |
           mkdir -p generated
           cp package-lock.json generated/package-lock.json
-          npx prisma migrate diff --from-empty --to-schema prisma/schema.prisma --script > generated/00000000000000_init.sql
+          npx prisma migrate diff --from-empty --to-schema-datamodel prisma/schema.prisma --script > generated/00000000000000_init.sql
 
       - name: Upload reproducibility baseline
         uses: actions/upload-artifact@v4
