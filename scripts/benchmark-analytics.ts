@@ -1,110 +1,222 @@
 import { performance } from "node:perf_hooks";
+import { db } from "../lib/db";
 import { buildBacklogDashboard } from "../lib/analytics/backlog";
 import { buildDowntimeDashboard } from "../lib/analytics/downtime";
 import { buildFailurePareto } from "../lib/analytics/failure-pareto";
+import { buildPartsCostDashboard } from "../lib/analytics/parts-cost";
+import { buildPmCompliance } from "../lib/analytics/pm-compliance";
 import { buildReliabilityDashboard } from "../lib/analytics/reliability";
-import { db } from "../lib/db";
+import { localDateStartUtc, shiftCalendarDate } from "../lib/analytics/date-range";
 import {
-  ANALYTICS_BENCHMARK_ASSET_COUNT,
-  ANALYTICS_BENCHMARK_FROM,
-  ANALYTICS_BENCHMARK_NOW,
-  ANALYTICS_BENCHMARK_TO,
-  ANALYTICS_BENCHMARK_WORK_ORDER_COUNT,
-  clearAnalyticsBenchmarkFixture,
-  createAnalyticsBenchmarkFixture,
-} from "./analytics-benchmark-fixture";
+  ANALYTICS_BENCHMARK,
+  buildAnalyticsBenchmarkFixture,
+} from "../tests/fixtures/analytics-benchmark";
 
-const QUERY_BUDGET_MS = 5_000;
-const TOTAL_QUERY_BUDGET_MS = 15_000;
+const BATCH_SIZE = 1_000;
+const SAMPLE_COUNT = 3;
 
-async function timed<T>(label: string, work: () => Promise<T>) {
-  const start = performance.now();
-  const result = await work();
-  const durationMs = performance.now() - start;
-  if (durationMs > QUERY_BUDGET_MS) {
-    throw new Error(`${label} exceeded ${QUERY_BUDGET_MS}ms benchmark budget: ${durationMs.toFixed(1)}ms`);
+const budgetsMs = {
+  backlog: 5_000,
+  pmCompliance: 5_000,
+  reliability: 5_000,
+  downtime: 5_000,
+  failurePareto: 5_000,
+  partsCost: 5_000,
+} as const;
+
+type BenchmarkName = keyof typeof budgetsMs;
+type BenchmarkResult = {
+  name: BenchmarkName;
+  medianMs: number;
+  samplesMs: number[];
+  budgetMs: number;
+};
+
+function chunks<T>(items: T[]) {
+  const result: T[][] = [];
+  for (let index = 0; index < items.length; index += BATCH_SIZE) {
+    result.push(items.slice(index, index + BATCH_SIZE));
   }
-  return { result, durationMs };
+  return result;
+}
+
+async function resetFixture() {
+  await db.auditLog.deleteMany({
+    where: {
+      entityType: "WorkOrder",
+      entityId: { startsWith: "benchmark-e9-wo-" },
+    },
+  });
+  await db.organization.deleteMany({
+    where: {
+      OR: [
+        { id: ANALYTICS_BENCHMARK.organizationId },
+        { slug: ANALYTICS_BENCHMARK.organizationSlug },
+      ],
+    },
+  });
+}
+
+async function seedFixture() {
+  const fixture = buildAnalyticsBenchmarkFixture();
+
+  await resetFixture();
+  await db.organization.create({
+    data: {
+      id: ANALYTICS_BENCHMARK.organizationId,
+      slug: ANALYTICS_BENCHMARK.organizationSlug,
+      name: "Synthetic Analytics Benchmark",
+      timezone: ANALYTICS_BENCHMARK.timezone,
+      locale: "en",
+    },
+  });
+  await db.site.create({
+    data: {
+      id: ANALYTICS_BENCHMARK.siteId,
+      organizationId: ANALYTICS_BENCHMARK.organizationId,
+      code: ANALYTICS_BENCHMARK.siteCode,
+      name: "Synthetic Benchmark Site",
+      description: "Disposable deterministic fixture for analytics performance checks.",
+    },
+  });
+
+  await db.asset.createMany({ data: fixture.assets });
+  await db.part.createMany({ data: fixture.parts });
+  for (const batch of chunks(fixture.workOrders)) {
+    await db.workOrder.createMany({ data: batch });
+  }
+  for (const batch of chunks(fixture.preventiveAuditLogs)) {
+    await db.auditLog.createMany({ data: batch });
+  }
+  for (const batch of chunks(fixture.consumptions)) {
+    await db.workOrderPartConsumption.createMany({ data: batch });
+  }
+
+  await db.$executeRawUnsafe('ANALYZE "WorkOrder"');
+  await db.$executeRawUnsafe('ANALYZE "WorkOrderPartConsumption"');
+  await db.$executeRawUnsafe('ANALYZE "AuditLog"');
+  await db.$executeRawUnsafe('ANALYZE "Asset"');
+  await db.$executeRawUnsafe('ANALYZE "Part"');
+}
+
+function median(values: number[]) {
+  const ordered = [...values].sort((left, right) => left - right);
+  return ordered[Math.floor(ordered.length / 2)] ?? Number.POSITIVE_INFINITY;
+}
+
+async function measure(
+  name: BenchmarkName,
+  operation: () => Promise<unknown>,
+): Promise<BenchmarkResult> {
+  // Warm Prisma/PostgreSQL caches before collecting stable measurements.
+  await operation();
+
+  const samplesMs: number[] = [];
+  for (let sample = 0; sample < SAMPLE_COUNT; sample += 1) {
+    const startedAt = performance.now();
+    await operation();
+    samplesMs.push(Number((performance.now() - startedAt).toFixed(1)));
+  }
+  const medianMs = Number(median(samplesMs).toFixed(1));
+  const budgetMs = budgetsMs[name];
+  if (medianMs > budgetMs) {
+    throw new Error(
+      `${name} median ${medianMs}ms exceeded ${budgetMs}ms budget on ` +
+        `${ANALYTICS_BENCHMARK.workOrderCount} synthetic work orders`,
+    );
+  }
+  return { name, medianMs, samplesMs, budgetMs };
 }
 
 async function main() {
-  const fixtureStarted = performance.now();
-  const fixture = await createAnalyticsBenchmarkFixture();
-  await db.$executeRaw`ANALYZE "WorkOrder"`;
-  await db.$executeRaw`ANALYZE "Asset"`;
-  const fixtureMs = performance.now() - fixtureStarted;
+  const fixtureStartedAt = performance.now();
+  await seedFixture();
+  const fixtureMs = Number((performance.now() - fixtureStartedAt).toFixed(1));
 
   try {
-    const backlog = await timed("Backlog dashboard", () =>
-      buildBacklogDashboard({
-        ...fixture,
-        now: ANALYTICS_BENCHMARK_NOW,
-      }),
+    const fromDate = localDateStartUtc(
+      ANALYTICS_BENCHMARK.from,
+      ANALYTICS_BENCHMARK.timezone,
     );
-    const reliability = await timed("Reliability dashboard", () =>
-      buildReliabilityDashboard({
-        ...fixture,
-        from: ANALYTICS_BENCHMARK_FROM,
-        to: ANALYTICS_BENCHMARK_TO,
-        now: ANALYTICS_BENCHMARK_NOW,
-      }),
+    const toDate = localDateStartUtc(
+      shiftCalendarDate(ANALYTICS_BENCHMARK.to, 1),
+      ANALYTICS_BENCHMARK.timezone,
     );
-    const downtime = await timed("Downtime dashboard", () =>
-      buildDowntimeDashboard({
-        ...fixture,
-        from: ANALYTICS_BENCHMARK_FROM,
-        to: ANALYTICS_BENCHMARK_TO,
-        now: ANALYTICS_BENCHMARK_NOW,
-      }),
-    );
-    const pareto = await timed("Failure Pareto", () =>
-      buildFailurePareto({
-        ...fixture,
-        from: ANALYTICS_BENCHMARK_FROM,
-        to: ANALYTICS_BENCHMARK_TO,
-        now: ANALYTICS_BENCHMARK_NOW,
-      }),
-    );
+    const common = {
+      organizationId: ANALYTICS_BENCHMARK.organizationId,
+      siteId: ANALYTICS_BENCHMARK.siteId,
+    };
+    const localRange = {
+      timeZone: ANALYTICS_BENCHMARK.timezone,
+      from: ANALYTICS_BENCHMARK.from,
+      to: ANALYTICS_BENCHMARK.to,
+      now: ANALYTICS_BENCHMARK.now,
+    };
 
-    if (backlog.result.totalOpen <= 0) throw new Error("Backlog benchmark fixture produced no open work");
-    if (reliability.result.mttr.sampleCount <= 0) throw new Error("Reliability benchmark fixture produced no MTTR samples");
-    if (reliability.result.mtbf.sampleCount <= 0) throw new Error("Reliability benchmark fixture produced no MTBF intervals");
-    if (downtime.result.eventCount <= 0) throw new Error("Downtime benchmark fixture produced no downtime events");
-    if (pareto.result.totalEventCount <= 0) throw new Error("Failure Pareto benchmark fixture produced no corrective events");
+    const backlogSample = await buildBacklogDashboard({ ...common, ...localRange });
+    const pmSample = await buildPmCompliance({
+      ...common,
+      from: fromDate,
+      to: toDate,
+      now: ANALYTICS_BENCHMARK.now,
+    });
+    const reliabilitySample = await buildReliabilityDashboard({ ...common, ...localRange });
+    const downtimeSample = await buildDowntimeDashboard({ ...common, ...localRange });
+    const paretoSample = await buildFailurePareto({ ...common, ...localRange });
+    const partsCostSample = await buildPartsCostDashboard({ ...common, ...localRange });
 
-    const queryMs =
-      backlog.durationMs + reliability.durationMs + downtime.durationMs + pareto.durationMs;
-    if (queryMs > TOTAL_QUERY_BUDGET_MS) {
-      throw new Error(
-        `Analytics query suite exceeded ${TOTAL_QUERY_BUDGET_MS}ms budget: ${queryMs.toFixed(1)}ms`,
-      );
+    if (backlogSample.totalOpen <= 0) throw new Error("Benchmark fixture produced no open backlog");
+    if (pmSample.due <= 0) throw new Error("Benchmark fixture produced no scheduled PM occurrences");
+    if (reliabilitySample.mttr.sampleCount <= 0) throw new Error("Benchmark fixture produced no MTTR samples");
+    if (reliabilitySample.mtbf.sampleCount <= 0) throw new Error("Benchmark fixture produced no MTBF intervals");
+    if (downtimeSample.eventCount <= 0) throw new Error("Benchmark fixture produced no downtime events");
+    if (paretoSample.totalEventCount <= 0) throw new Error("Benchmark fixture produced no corrective Pareto events");
+    if (partsCostSample.lineCount <= 0) throw new Error("Benchmark fixture produced no parts-consumption lines");
+    if (partsCostSample.unpricedLineCount <= 0) throw new Error("Benchmark fixture must exercise unpriced cost coverage");
+
+    const results = await Promise.all([
+      measure("backlog", () => buildBacklogDashboard({ ...common, ...localRange })),
+      measure("pmCompliance", () =>
+        buildPmCompliance({
+          ...common,
+          from: fromDate,
+          to: toDate,
+          now: ANALYTICS_BENCHMARK.now,
+        }),
+      ),
+      measure("reliability", () => buildReliabilityDashboard({ ...common, ...localRange })),
+      measure("downtime", () => buildDowntimeDashboard({ ...common, ...localRange })),
+      measure("failurePareto", () => buildFailurePareto({ ...common, ...localRange })),
+      measure("partsCost", () => buildPartsCostDashboard({ ...common, ...localRange })),
+    ]);
+
+    const totalMedianMs = Number(
+      results.reduce((sum, result) => sum + result.medianMs, 0).toFixed(1),
+    );
+    if (totalMedianMs > 20_000) {
+      throw new Error(`Analytics median suite exceeded 20000ms budget: ${totalMedianMs}ms`);
     }
 
     console.log(
       JSON.stringify(
         {
           fixture: {
-            workOrders: ANALYTICS_BENCHMARK_WORK_ORDER_COUNT,
-            assets: ANALYTICS_BENCHMARK_ASSET_COUNT,
-            createMs: Number(fixtureMs.toFixed(1)),
+            workOrders: ANALYTICS_BENCHMARK.workOrderCount,
+            assets: ANALYTICS_BENCHMARK.assetCount,
+            parts: ANALYTICS_BENCHMARK.partCount,
+            seedMs: fixtureMs,
           },
-          budgetsMs: {
-            perQuery: QUERY_BUDGET_MS,
-            suite: TOTAL_QUERY_BUDGET_MS,
-          },
-          queriesMs: {
-            backlog: Number(backlog.durationMs.toFixed(1)),
-            reliability: Number(reliability.durationMs.toFixed(1)),
-            downtime: Number(downtime.durationMs.toFixed(1)),
-            failurePareto: Number(pareto.durationMs.toFixed(1)),
-            total: Number(queryMs.toFixed(1)),
-          },
+          results,
+          totalMedianMs,
           samples: {
-            openBacklog: backlog.result.totalOpen,
-            mttr: reliability.result.mttr.sampleCount,
-            mtbf: reliability.result.mtbf.sampleCount,
-            downtime: downtime.result.eventCount,
-            failurePareto: pareto.result.totalEventCount,
+            openBacklog: backlogSample.totalOpen,
+            scheduledPmDue: pmSample.due,
+            mttr: reliabilitySample.mttr.sampleCount,
+            mtbf: reliabilitySample.mtbf.sampleCount,
+            downtime: downtimeSample.eventCount,
+            failurePareto: paretoSample.totalEventCount,
+            partsConsumptionLines: partsCostSample.lineCount,
+            unpricedPartsLines: partsCostSample.unpricedLineCount,
           },
         },
         null,
@@ -112,7 +224,7 @@ async function main() {
       ),
     );
   } finally {
-    await clearAnalyticsBenchmarkFixture();
+    await resetFixture();
   }
 }
 
