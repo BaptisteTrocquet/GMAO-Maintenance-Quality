@@ -94,8 +94,19 @@ describe("CAPA approval separation", () => {
         active: true,
         role: { in: ["OWNER", "ADMIN", "QUALITY_MANAGER"] },
         user: { active: true },
+        OR: [{ allSites: true }, { siteMemberships: { some: { siteId: "site-a" } } }],
       },
       select: { id: true, role: true },
+    });
+    expect(mocks.membershipFindMany).toHaveBeenCalledWith({
+      where: {
+        organizationId: "org-a",
+        userId: { in: ["quality-2"] },
+        active: true,
+        user: { active: true },
+        OR: [{ allSites: true }, { siteMemberships: { some: { siteId: "site-a" } } }],
+      },
+      select: { userId: true },
     });
     expect(mocks.auditCreate).toHaveBeenNthCalledWith(
       1,
@@ -134,7 +145,7 @@ describe("CAPA approval separation", () => {
     expect(mocks.auditCreate).not.toHaveBeenCalled();
   });
 
-  it("rejects approvers without an active quality/admin/owner membership", async () => {
+  it("rejects approvers without an active quality/admin/owner membership or site access", async () => {
     mockApprovalReads();
     mocks.membershipFindFirst.mockResolvedValue(null);
 
@@ -143,12 +154,12 @@ describe("CAPA approval separation", () => {
         organizationId: "org-a",
         siteId: "site-a",
         eventId: "event-1",
-        approverId: "tech-1",
+        approverId: "tech-or-other-site-user",
       }),
     ).rejects.toMatchObject({ code: "CAPA_APPROVER_NOT_ALLOWED" });
   });
 
-  it("revalidates action owners at approval time", async () => {
+  it("revalidates action owners and their site access at approval time", async () => {
     mockApprovalReads();
     mocks.membershipFindMany.mockResolvedValue([]);
 
