@@ -4,7 +4,9 @@ import { buildBacklogDashboard } from "../lib/analytics/backlog";
 import { buildDowntimeDashboard } from "../lib/analytics/downtime";
 import { buildFailurePareto } from "../lib/analytics/failure-pareto";
 import { buildPartsCostDashboard } from "../lib/analytics/parts-cost";
+import { buildPmCompliance } from "../lib/analytics/pm-compliance";
 import { buildReliabilityDashboard } from "../lib/analytics/reliability";
+import { localDateStartUtc, shiftCalendarDate } from "../lib/analytics/date-range";
 
 const ORGANIZATION_SLUG = "synthetic-analytics-benchmark";
 const ORGANIZATION_ID = "bench-org";
@@ -16,9 +18,16 @@ const CONSUMPTION_COUNT = 10_000;
 const QUERY_BUDGET_MS = 4_000;
 const FROM = "2025-08-01";
 const TO = "2026-07-31";
+const TIMEZONE = "UTC";
 const NOW = new Date("2026-08-08T12:00:00.000Z");
 
 async function removeFixture() {
+  await db.auditLog.deleteMany({
+    where: {
+      entityType: "WorkOrder",
+      entityId: { startsWith: "bench-wo-" },
+    },
+  });
   await db.organization.deleteMany({ where: { slug: ORGANIZATION_SLUG } });
 }
 
@@ -29,7 +38,7 @@ async function seedFixture() {
       id: ORGANIZATION_ID,
       slug: ORGANIZATION_SLUG,
       name: "Synthetic Analytics Benchmark",
-      timezone: "UTC",
+      timezone: TIMEZONE,
       locale: "en",
     },
   });
@@ -67,7 +76,7 @@ async function seedFixture() {
       ${ORGANIZATION_ID},
       'SP-' || LPAD(gs::text, 4, '0'),
       'Synthetic benchmark part ' || gs::text,
-      'EA',
+      CASE WHEN gs % 10 = 0 THEN 'M' ELSE 'EA' END,
       100,
       10,
       true,
@@ -111,6 +120,22 @@ async function seedFixture() {
     FROM generate_series(1, ${WORK_ORDER_COUNT}) AS gs
   `;
 
+  // PM compliance intentionally counts only generated preventive occurrences.
+  await db.$executeRaw`
+    INSERT INTO "AuditLog" (
+      id, "entityType", "entityId", action, "afterJson", "createdAt"
+    )
+    SELECT
+      'bench-pm-audit-' || gs::text,
+      'WorkOrder',
+      'bench-wo-' || gs::text,
+      'PREVENTIVE_GENERATED',
+      '{"synthetic":true}',
+      ${fixtureStart} + ((gs % 365) * INTERVAL '1 day')
+    FROM generate_series(1, ${WORK_ORDER_COUNT}) AS gs
+    WHERE gs % 4 = 0 AND gs % 17 <> 0
+  `;
+
   await db.$executeRaw`
     INSERT INTO "WorkOrderPartConsumption" (
       id, "workOrderId", "partId", quantity, "unitCost", "idempotencyKey", "createdAt"
@@ -128,16 +153,30 @@ async function seedFixture() {
 
   await db.$executeRawUnsafe('ANALYZE "WorkOrder"');
   await db.$executeRawUnsafe('ANALYZE "WorkOrderPartConsumption"');
+  await db.$executeRawUnsafe('ANALYZE "AuditLog"');
   await db.$executeRawUnsafe('ANALYZE "Asset"');
 
-  const [workOrders, assets, consumptions] = await Promise.all([
+  const [workOrders, assets, consumptions, generatedPreventiveOccurrences] = await Promise.all([
     db.workOrder.count({ where: { siteId: SITE_ID } }),
     db.asset.count({ where: { siteId: SITE_ID } }),
     db.workOrderPartConsumption.count({ where: { workOrder: { siteId: SITE_ID } } }),
+    db.auditLog.count({
+      where: {
+        entityType: "WorkOrder",
+        entityId: { startsWith: "bench-wo-" },
+        action: "PREVENTIVE_GENERATED",
+      },
+    }),
   ]);
-  if (workOrders !== WORK_ORDER_COUNT || assets !== ASSET_COUNT || consumptions !== CONSUMPTION_COUNT) {
+  if (
+    workOrders !== WORK_ORDER_COUNT ||
+    assets !== ASSET_COUNT ||
+    consumptions !== CONSUMPTION_COUNT ||
+    generatedPreventiveOccurrences <= 0
+  ) {
     throw new Error(
-      `Synthetic analytics fixture mismatch: workOrders=${workOrders}, assets=${assets}, consumptions=${consumptions}`,
+      `Synthetic analytics fixture mismatch: workOrders=${workOrders}, assets=${assets}, ` +
+        `consumptions=${consumptions}, generatedPreventiveOccurrences=${generatedPreventiveOccurrences}`,
     );
   }
 }
@@ -159,11 +198,13 @@ async function runBenchmarks() {
   const common = {
     organizationId: ORGANIZATION_ID,
     siteId: SITE_ID,
-    timeZone: "UTC",
+    timeZone: TIMEZONE,
     from: FROM,
     to: TO,
     now: NOW,
   };
+  const pmFrom = localDateStartUtc(FROM, TIMEZONE);
+  const pmTo = localDateStartUtc(shiftCalendarDate(TO, 1), TIMEZONE);
 
   await timed(
     "Backlog dashboard",
@@ -171,6 +212,22 @@ async function runBenchmarks() {
     (result) => {
       if (result.totalOpen <= 0 || result.oldest.length === 0) {
         throw new Error("Backlog benchmark returned no representative open-work data");
+      }
+    },
+  );
+  await timed(
+    "PM compliance",
+    () =>
+      buildPmCompliance({
+        organizationId: ORGANIZATION_ID,
+        siteId: SITE_ID,
+        from: pmFrom,
+        to: pmTo,
+        now: NOW,
+      }),
+    (result) => {
+      if (result.due <= 0) {
+        throw new Error("PM compliance benchmark returned no generated preventive occurrences");
       }
     },
   );
