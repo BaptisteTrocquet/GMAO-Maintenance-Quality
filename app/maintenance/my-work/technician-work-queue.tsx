@@ -2,6 +2,12 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  fetchTechnicianRead,
+  isOfflineReadPartition,
+  OFFLINE_CACHED_AT_HEADER,
+  OFFLINE_SOURCE_HEADER,
+} from "@/lib/pwa/technician-read-cache-client";
 
 type QueueWorkOrder = {
   id: string;
@@ -27,9 +33,6 @@ type QueueResponse = {
 };
 
 const OFFLINE_PARTITION_HEADER = "x-opengmao-offline-partition";
-const OFFLINE_SOURCE_HEADER = "x-opengmao-offline-source";
-const OFFLINE_CACHED_AT_HEADER = "x-opengmao-offline-cached-at";
-const PARTITION_PATTERN = /^[a-f0-9]{32}$/;
 
 const statusRank: Record<QueueWorkOrder["status"], number> = {
   IN_PROGRESS: 0,
@@ -88,11 +91,9 @@ export default function TechnicianWorkQueue({
     setLoading(true);
     setError("");
     const query = new URLSearchParams({ organizationId, siteId });
+    const endpoint = `/api/work-orders/technician?${query.toString()}`;
     try {
-      const response = await fetch(`/api/work-orders/technician?${query.toString()}`, {
-        cache: "no-store",
-        headers: cachePartition ? { [OFFLINE_PARTITION_HEADER]: cachePartition } : undefined,
-      });
+      const response = await fetchTechnicianRead(endpoint, cachePartition);
       const body = (await response.json()) as QueueResponse;
       if (!response.ok || !body.data) {
         throw new Error(body.error?.message ?? "Unable to load assigned work orders");
@@ -100,7 +101,7 @@ export default function TechnicianWorkQueue({
       setWorkOrders(body.data.workOrders);
 
       const confirmedPartition = response.headers.get(OFFLINE_PARTITION_HEADER) ?? "";
-      if (PARTITION_PATTERN.test(confirmedPartition) && confirmedPartition !== cachePartition) {
+      if (isOfflineReadPartition(confirmedPartition) && confirmedPartition !== cachePartition) {
         setCachePartition(confirmedPartition);
       }
 
