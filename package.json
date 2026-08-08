@@ -23,6 +23,7 @@
     "test:watch": "vitest",
     "test:db": "tsx scripts/check-db.ts",
     "test:credential-store:db": "tsx scripts/check-credential-store-db.ts",
+    "test:vector-store:db": "tsx scripts/check-vector-store-db.ts",
     "test:analytics:perf": "tsx scripts/benchmark-analytics.ts",
     "test:e2e": "playwright test",
     "sdk:build": "tsc -p sdk/tsconfig.json",
