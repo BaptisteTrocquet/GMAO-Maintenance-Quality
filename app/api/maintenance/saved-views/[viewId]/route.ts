@@ -25,7 +25,7 @@ function authorize(scope: Parameters<typeof assertSitePermission>[0], siteId: st
 export async function DELETE(
   request: Request,
   context: { params: Promise<{ viewId: string }> },
-) {
+): Promise<Response> {
   let body: unknown;
   try {
     body = await request.json();
