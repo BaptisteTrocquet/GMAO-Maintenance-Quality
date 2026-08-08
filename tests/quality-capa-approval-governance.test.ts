@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   transaction: vi.fn(),
   auditFindFirst: vi.fn(),
+  auditFindMany: vi.fn(),
   auditCreate: vi.fn(),
   membershipFindFirst: vi.fn(),
   membershipFindMany: vi.fn(),
@@ -11,6 +12,7 @@ const mocks = vi.hoisted(() => ({
 const tx = {
   auditLog: {
     findFirst: mocks.auditFindFirst,
+    findMany: mocks.auditFindMany,
     create: mocks.auditCreate,
   },
   organizationMembership: {
@@ -56,21 +58,21 @@ const draft = {
 };
 
 let rootCauseStatus: "DRAFT" | "CONFIRMED";
-let lastDraftEditorId: string | null;
+let draftAuthorIds: string[];
 
 function installAuditReads() {
   mocks.auditFindFirst.mockImplementation(
-    async ({ where }: { where: { entityType: string; action?: unknown } }) => {
+    async ({ where }: { where: { entityType: string } }) => {
       if (where.entityType === "QualityEvent") return { afterJson: JSON.stringify(event) };
       if (where.entityType === "QualityRootCause") {
         return { afterJson: JSON.stringify({ ...rootCause, status: rootCauseStatus }) };
       }
-      if (where.entityType === "QualityCapa" && where.action) {
-        return lastDraftEditorId ? { actorId: lastDraftEditorId } : null;
-      }
       if (where.entityType === "QualityCapa") return { afterJson: JSON.stringify(draft) };
       return null;
     },
+  );
+  mocks.auditFindMany.mockImplementation(async () =>
+    draftAuthorIds.map((actorId) => ({ actorId })),
   );
 }
 
@@ -79,12 +81,13 @@ describe("CAPA approval governance", () => {
     vi.clearAllMocks();
     mocks.transaction.mockReset();
     mocks.auditFindFirst.mockReset();
+    mocks.auditFindMany.mockReset();
     mocks.auditCreate.mockReset();
     mocks.membershipFindFirst.mockReset();
     mocks.membershipFindMany.mockReset();
 
     rootCauseStatus = "CONFIRMED";
-    lastDraftEditorId = "draft-author";
+    draftAuthorIds = ["draft-author"];
     installAuditReads();
     mocks.transaction.mockImplementation(
       async (callback: (transaction: typeof tx) => Promise<unknown>) => callback(tx),
@@ -115,6 +118,14 @@ describe("CAPA approval governance", () => {
       },
       select: { role: true },
     });
+    expect(mocks.auditFindMany).toHaveBeenCalledWith({
+      where: {
+        entityType: "QualityCapa",
+        entityId: "event-1",
+        action: { in: ["CREATED", "PLAN_UPDATED"] },
+      },
+      select: { actorId: true },
+    });
     expect(mocks.auditCreate).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({
@@ -137,8 +148,8 @@ describe("CAPA approval governance", () => {
     );
   });
 
-  it("blocks self approval by the last draft author or editor", async () => {
-    lastDraftEditorId = "approver-1";
+  it("blocks approval by any user who authored or edited the CAPA draft", async () => {
+    draftAuthorIds = ["draft-author", "approver-1", "later-editor"];
 
     await expect(
       approveCapaGoverned({
@@ -149,6 +160,19 @@ describe("CAPA approval governance", () => {
       }),
     ).rejects.toMatchObject({ code: "CAPA_SELF_APPROVAL_NOT_ALLOWED" });
     expect(mocks.auditCreate).not.toHaveBeenCalled();
+  });
+
+  it("blocks the original author even after a different user edited later", async () => {
+    draftAuthorIds = ["original-author", "later-editor"];
+
+    await expect(
+      approveCapaGoverned({
+        organizationId: "org-a",
+        siteId: "site-a",
+        eventId: "event-1",
+        approverId: "original-author",
+      }),
+    ).rejects.toMatchObject({ code: "CAPA_SELF_APPROVAL_NOT_ALLOWED" });
   });
 
   it("blocks users without an allowed approval role or site access", async () => {
