@@ -78,9 +78,14 @@ async function listRecentQualityNotifications(input: {
   organizationId: string;
   siteId: string;
 }) {
-  const marker = `"organizationId":"${input.organizationId}","siteId":"${input.siteId}"`;
   const logs = await db.auditLog.findMany({
-    where: { entityType: "QualityEvent", afterJson: { contains: marker } },
+    where: {
+      entityType: "QualityEvent",
+      AND: [
+        { afterJson: { contains: `"organizationId":"${input.organizationId}"` } },
+        { afterJson: { contains: `"siteId":"${input.siteId}"` } },
+      ],
+    },
     orderBy: { createdAt: "desc" },
     take: NOTIFICATION_QUALITY_SCAN_LIMIT,
     select: { entityId: true, afterJson: true },
@@ -115,6 +120,7 @@ export async function buildNotificationCenter(input: {
             site: { organizationId: input.organizationId, active: true },
             status: "ACTIVE",
             remindAt: { lte: now },
+            dueAt: { gte: now },
             workOrder: { status: { notIn: ["COMPLETED", "CANCELLED"] } },
           },
           select: {
