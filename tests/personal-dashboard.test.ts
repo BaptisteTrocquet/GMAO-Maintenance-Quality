@@ -27,7 +27,7 @@ beforeEach(() => {
 });
 
 describe("personal dashboard", () => {
-  it("scopes work to the selected tenant/site, direct assignments, or unassigned team work", async () => {
+  it("scopes work to the selected tenant/site, direct assignments, or unassigned active team work", async () => {
     await buildPersonalDashboard({
       organizationId: "org-a",
       siteId: "site-a",
@@ -46,7 +46,7 @@ describe("personal dashboard", () => {
             { assigneeId: "user-a" },
             {
               assigneeId: null,
-              team: { members: { some: { userId: "user-a" } } },
+              team: { active: true, members: { some: { userId: "user-a" } } },
             },
           ],
         },
