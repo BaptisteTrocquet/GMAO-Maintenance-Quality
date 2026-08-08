@@ -55,6 +55,9 @@ jobs:
           'test "$(id -u)" = "1001" &&
           test -x /app/node_modules/.bin/prisma &&
           test -d /app/prisma/migrations &&
+          test ! -e /app/node_modules/vitest &&
+          test ! -e /app/node_modules/esbuild &&
+          test ! -e /app/node_modules/@esbuild/linux-x64 &&
           test ! -e /usr/local/bin/npm &&
           test ! -e /usr/local/lib/node_modules/npm &&
           test "$HOME" = "/tmp"'
