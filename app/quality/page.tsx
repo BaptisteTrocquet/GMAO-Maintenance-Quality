@@ -41,7 +41,7 @@ export default async function QualityPage() {
         <div>
           <div className="title">Quality</div>
           <div className="muted">
-            Nonconformities, immediate containment and investigations for the selected site.
+            Nonconformities, immediate containment, RCA, CAPA and 8D for the selected site.
           </div>
         </div>
       </div>
@@ -70,6 +70,8 @@ export default async function QualityPage() {
                 <th>Work order</th>
                 <th>Detected</th>
                 <th>Containment due</th>
+                <th>8D</th>
+                <th>Evidence</th>
               </tr>
             </thead>
             <tbody>
@@ -84,6 +86,8 @@ export default async function QualityPage() {
                   <td>{event.workOrder?.number ?? "—"}</td>
                   <td>{formatDate(event.detectedAt)}</td>
                   <td>{formatDate(event.containment?.dueAt)}</td>
+                  <td><Link className="table-link" href={`/quality/${event.id}/8d`}>Open 8D →</Link></td>
+                  <td><Link className="table-link" href={`/quality/${event.id}/evidence`}>Evidence →</Link></td>
                 </tr>
               ))}
             </tbody>
