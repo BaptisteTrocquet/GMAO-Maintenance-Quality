@@ -154,27 +154,28 @@ export class OpenAiEmbeddingProvider implements EmbeddingProvider {
   readonly defaultModel: string;
   readonly dimensions: number | null;
 
-  constructor(
-    private readonly config: {
-      apiKey: string;
-      model: string;
-      dimensions?: number | null;
-      fetchImpl?: FetchLike;
-    },
-  ) {
+  private readonly apiKey: string;
+  private readonly fetchImpl: FetchLike;
+
+  constructor(config: {
+    apiKey: string;
+    model: string;
+    dimensions?: number | null;
+    fetchImpl?: FetchLike;
+  }) {
+    this.apiKey = requiredText(config.apiKey, "OpenAI API key", MAX_API_KEY_CHARS);
     this.defaultModel = requiredText(config.model, "OpenAI embedding model", MAX_MODEL_CHARS);
     this.dimensions = config.dimensions ?? null;
+    this.fetchImpl = config.fetchImpl ?? fetch;
     if (
       this.dimensions !== null &&
       (!Number.isInteger(this.dimensions) || this.dimensions < 1 || this.dimensions > MAX_DIMENSIONS)
     ) {
       throw new Error("OpenAI embedding dimensions configuration is invalid");
     }
-    requiredText(config.apiKey, "OpenAI API key", MAX_API_KEY_CHARS);
   }
 
   async embed(input: EmbeddingProviderEmbedInput): Promise<EmbeddingProviderEmbedResult> {
-    const fetchImpl = this.config.fetchImpl ?? fetch;
     const body = {
       model: input.model,
       input: input.inputs.map((item) => item.text),
@@ -182,12 +183,12 @@ export class OpenAiEmbeddingProvider implements EmbeddingProvider {
       ...(this.dimensions === null ? {} : { dimensions: this.dimensions }),
     };
 
-    const response = await fetchImpl(OPENAI_EMBEDDINGS_URL, {
+    const response = await this.fetchImpl(OPENAI_EMBEDDINGS_URL, {
       method: "POST",
       redirect: "error",
       signal: input.signal,
       headers: {
-        Authorization: `Bearer ${this.config.apiKey}`,
+        Authorization: `Bearer ${this.apiKey}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify(body),
@@ -212,8 +213,8 @@ export function createOpenAiEmbeddingProviderFromEnv(
   }
 
   return new OpenAiEmbeddingProvider({
-    apiKey: requiredText(apiKey, "OpenAI API key", MAX_API_KEY_CHARS),
-    model: requiredText(model, "OpenAI embedding model", MAX_MODEL_CHARS),
+    apiKey,
+    model,
     dimensions: parseDimensions(env.OPENAI_EMBEDDING_DIMENSIONS),
     fetchImpl,
   });
