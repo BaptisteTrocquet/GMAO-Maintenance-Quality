@@ -174,7 +174,7 @@ export async function listQualityEvidence(input: {
   eventId: string;
 }) {
   await requireQualityEvent(input);
-  const marker = `\"organizationId\":\"${input.organizationId}\",\"siteId\":\"${input.siteId}\",\"eventId\":\"${input.eventId}\"`;
+  const marker = `"organizationId":"${input.organizationId}","siteId":"${input.siteId}","eventId":"${input.eventId}"`;
   const records = await db.auditLog.findMany({
     where: {
       entityType: ENTITY_TYPE,
