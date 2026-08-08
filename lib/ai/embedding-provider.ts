@@ -91,7 +91,10 @@ function assertProviderId(id: string) {
   }
 }
 
-function normalizeModel(model: string | null | undefined, code: "INVALID_REQUEST" | "INVALID_RESPONSE") {
+function normalizeModel(
+  model: string | null | undefined,
+  code: "INVALID_REQUEST" | "INVALID_RESPONSE",
+) {
   const normalized = model?.trim() ?? "";
   if (!normalized || normalized.length > MODEL_ID_MAX_LENGTH || /[\u0000\r\n]/.test(normalized)) {
     throw new EmbeddingProviderError(code, "Embedding model id is invalid");
@@ -99,8 +102,16 @@ function normalizeModel(model: string | null | undefined, code: "INVALID_REQUEST
   return normalized;
 }
 
-function normalizeDimensions(value: number, code: "INVALID_PROVIDER" | "INVALID_RESPONSE") {
-  if (!Number.isInteger(value) || value < 1 || value > MAX_DIMENSIONS) {
+function normalizeDimensions(
+  value: unknown,
+  code: "INVALID_PROVIDER" | "INVALID_RESPONSE",
+) {
+  if (
+    typeof value !== "number" ||
+    !Number.isInteger(value) ||
+    value < 1 ||
+    value > MAX_DIMENSIONS
+  ) {
     throw new EmbeddingProviderError(
       code,
       `Embedding dimensions must be between 1 and ${MAX_DIMENSIONS}`,
@@ -154,7 +165,10 @@ function normalizeInputs(inputs: readonly EmbeddingInput[]) {
   return inputs.map((input) => {
     const id = input?.id?.trim() ?? "";
     if (!id || id.length > INPUT_ID_MAX_LENGTH || /[\u0000\r\n]/.test(id) || seen.has(id)) {
-      throw new EmbeddingProviderError("INVALID_REQUEST", "Embedding input id is invalid or duplicated");
+      throw new EmbeddingProviderError(
+        "INVALID_REQUEST",
+        "Embedding input id is invalid or duplicated",
+      );
     }
     if (typeof input.text !== "string" || !input.text.trim()) {
       throw new EmbeddingProviderError("INVALID_REQUEST", "Embedding input text is required");
@@ -229,7 +243,6 @@ async function invokeWithDeadline<T>(input: {
       reject(new EmbeddingProviderError("TIMEOUT", "Embedding provider request timed out"));
     }, input.timeoutMs);
   });
-
   const abortPromise = new Promise<never>((_, reject) => {
     if (!input.signal) return;
     abortHandler = () => {
@@ -253,7 +266,10 @@ function normalizeProviderResult(input: {
   requestedInputs: readonly Readonly<EmbeddingInput>[];
   response: EmbeddingProviderEmbedResult;
 }): Omit<EmbeddingBatchResult, "providerId"> {
-  const dimensions = normalizeDimensions(input.response?.dimensions, "INVALID_RESPONSE");
+  if (!input.response || typeof input.response !== "object") {
+    throw new EmbeddingProviderError("INVALID_RESPONSE", "Embedding provider returned an invalid response");
+  }
+  const dimensions = normalizeDimensions(input.response.dimensions, "INVALID_RESPONSE");
   if (input.provider.dimensions !== null && dimensions !== input.provider.dimensions) {
     throw new EmbeddingProviderError(
       "INVALID_RESPONSE",
@@ -264,7 +280,8 @@ function normalizeProviderResult(input: {
     input.response.model === undefined
       ? input.requestedModel
       : normalizeModel(input.response.model, "INVALID_RESPONSE");
-  if (!Array.isArray(input.response.embeddings) || input.response.embeddings.length !== input.requestedInputs.length) {
+  const rawEmbeddings = input.response.embeddings;
+  if (!Array.isArray(rawEmbeddings) || rawEmbeddings.length !== input.requestedInputs.length) {
     throw new EmbeddingProviderError(
       "INVALID_RESPONSE",
       "Embedding provider returned an unexpected number of vectors",
@@ -273,14 +290,17 @@ function normalizeProviderResult(input: {
 
   const expectedIds = new Set(input.requestedInputs.map((item) => item.id));
   const seen = new Set<string>();
-  const embeddings = input.response.embeddings.map((item) => {
+  const embeddings = rawEmbeddings.map((item: EmbeddingProviderVector) => {
     if (!item || !expectedIds.has(item.id) || seen.has(item.id) || !Array.isArray(item.vector)) {
       throw new EmbeddingProviderError(
         "INVALID_RESPONSE",
         "Embedding provider returned invalid or duplicated input identities",
       );
     }
-    if (item.vector.length !== dimensions || item.vector.some((value) => !Number.isFinite(value))) {
+    if (
+      item.vector.length !== dimensions ||
+      item.vector.some((value: number) => !Number.isFinite(value))
+    ) {
       throw new EmbeddingProviderError(
         "INVALID_RESPONSE",
         "Embedding provider returned an invalid vector",
@@ -296,7 +316,6 @@ function normalizeProviderResult(input: {
       "Embedding provider did not return every requested input",
     );
   }
-
   return { model, dimensions, embeddings };
 }
 
