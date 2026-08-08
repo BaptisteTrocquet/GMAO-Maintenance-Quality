@@ -104,7 +104,7 @@ export default function CapaWorkspace({
   }
 
   async function save() {
-    await run({
+    return run({
       action: "SAVE",
       objective,
       actions: actions.map((item) => ({
