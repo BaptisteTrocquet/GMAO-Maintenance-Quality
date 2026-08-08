@@ -9,6 +9,7 @@ export default function MaintenanceLayout({ children }: { children: ReactNode })
           <Link className="table-link" href="/maintenance">Overview</Link>
           <Link className="table-link" href="/maintenance/kanban">Work-order Kanban</Link>
           <Link className="table-link" href="/maintenance/calendar">Calendar planning</Link>
+          <Link className="table-link" href="/notifications">Notifications</Link>
         </div>
       </nav>
       {children}
