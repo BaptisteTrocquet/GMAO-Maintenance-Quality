@@ -202,20 +202,25 @@ export function createOpenAiEmbeddingProviderFromEnv(
   env: Readonly<Record<string, string | undefined>> = process.env,
   fetchImpl?: FetchLike,
 ): EmbeddingProvider {
-  const apiKey = env.OPENAI_API_KEY?.trim() ?? "";
   const model = env.OPENAI_EMBEDDING_MODEL?.trim() ?? "";
+  const dimensionsValue = env.OPENAI_EMBEDDING_DIMENSIONS?.trim() ?? "";
 
-  if (!apiKey && !model && !env.OPENAI_EMBEDDING_DIMENSIONS?.trim()) {
+  if (!model && !dimensionsValue) {
     return createDisabledEmbeddingProvider({ id: "openai", displayName: "OpenAI embeddings" });
   }
-  if (!apiKey || !model) {
-    throw new Error("OpenAI embeddings require both OPENAI_API_KEY and OPENAI_EMBEDDING_MODEL");
+  if (!model) {
+    throw new Error("OPENAI_EMBEDDING_MODEL is required when OpenAI embedding dimensions are set");
+  }
+
+  const apiKey = env.OPENAI_API_KEY?.trim() ?? "";
+  if (!apiKey) {
+    throw new Error("OpenAI embeddings require OPENAI_API_KEY when OPENAI_EMBEDDING_MODEL is set");
   }
 
   return new OpenAiEmbeddingProvider({
     apiKey,
     model,
-    dimensions: parseDimensions(env.OPENAI_EMBEDDING_DIMENSIONS),
+    dimensions: parseDimensions(dimensionsValue),
     fetchImpl,
   });
 }
