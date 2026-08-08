@@ -190,7 +190,25 @@ jobs:
         run: npm run build
 
       - name: Build production Docker image
-        run: docker build --pull --tag gmao-maintenance-quality:ci .
+        run: docker build --pull --target runner --tag gmao-maintenance-quality:ci .
+
+      - name: Build production migration image
+        run: docker build --target migration --tag gmao-maintenance-quality:migrate-ci .
+
+      - name: Verify production migration image
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          docker run --rm \
+            --network host \
+            --read-only \
+            --tmpfs /tmp:rw,noexec,nosuid,size=64m \
+            --env DATABASE_URL="postgresql://opengmao:opengmao@127.0.0.1:5432/opengmao?schema=public" \
+            gmao-maintenance-quality:migrate-ci
+
+          docker run --rm --entrypoint sh gmao-maintenance-quality:migrate-ci -c \
+            'test "$(id -u)" = "1001" && ! command -v npm && ! command -v yarn && ! command -v corepack'
 
       - name: Scan production Docker image for critical vulnerabilities
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
