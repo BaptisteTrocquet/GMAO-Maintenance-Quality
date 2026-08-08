@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { type DragEvent, useState } from "react";
 
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const DRAG_TYPE = "application/x-open-gmao-work-order";
@@ -120,12 +120,12 @@ export default function CalendarPlanner({
     }
   }
 
-  function beginDrag(event: React.DragEvent, payload: DragPayload) {
+  function beginDrag(event: DragEvent, payload: DragPayload) {
     event.dataTransfer.effectAllowed = "move";
     event.dataTransfer.setData(DRAG_TYPE, JSON.stringify(payload));
   }
 
-  function readDrag(event: React.DragEvent): DragPayload | null {
+  function readDrag(event: DragEvent): DragPayload | null {
     const raw = event.dataTransfer.getData(DRAG_TYPE);
     if (!raw) return null;
     try {
