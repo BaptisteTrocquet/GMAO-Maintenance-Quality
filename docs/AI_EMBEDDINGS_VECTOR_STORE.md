@@ -1,13 +1,17 @@
 # Embeddings and vector-store abstraction
 
-OpenGMAO keeps embedding generation and vector persistence behind provider-neutral server-side contracts. No vendor SDK or vector database is required by the core product.
+OpenGMAO keeps embedding generation and vector persistence behind provider-neutral server-side contracts. No vendor SDK or external vector database is required by the core product.
 
 The abstractions live in:
 
 - `lib/ai/embedding-provider.ts`
 - `lib/ai/vector-store.ts`
 
-They are deliberately separate from semantic-search policy. The next E13 story decides **which controlled effective documents may be retrieved** and must authorize the caller before embedding or vector-store access.
+The repository-provided durable baseline lives in:
+
+- `lib/ai/postgres-vector-store.ts`
+
+They remain deliberately separate from semantic-search policy. Controlled-document semantic search decides **which controlled effective documents may be retrieved** and authorizes the caller before embedding or vector-store access.
 
 ## Embedding provider
 
@@ -63,7 +67,7 @@ This double validation is intentional: filtering only in a vendor query is not c
 - `siteId: "site-a"` accepts only `site-a` hits;
 - `siteId: null` accepts only organization-level (`null`) hits.
 
-Future features that need multiple authorized site scopes must query those scopes explicitly and merge results after authorization. `null` never means “all sites”.
+Features that need multiple authorized site scopes must query those scopes explicitly and merge results after authorization. `null` never means “all sites”.
 
 ## Vector and metadata safety
 
@@ -83,11 +87,27 @@ The adapter is not allowed to return vectors in search hits through this contrac
 
 Backend exceptions are converted to a generic `STORE_ERROR` so credentials or vendor diagnostics do not escape the abstraction. Operations have bounded deadlines and support caller cancellation.
 
-## No backend selected yet
+## Repository baseline: native PostgreSQL
 
-This story intentionally does not choose pgvector, Pinecone, Qdrant, Weaviate, Elasticsearch/OpenSearch or another vector backend. A later deployment can implement `VectorStoreAdapter` without changing semantic-search application code.
+`createPostgresVectorStore()` provides a durable zero-extra-infrastructure backend using the same PostgreSQL instance as the application. `AiVectorRecord` persists:
 
-Likewise, this story does not create embeddings for existing records or documents. Indexing lifecycle, effective-revision selection, chunking, authorization and citations belong to the semantic-search story.
+- exact organization scope;
+- exact site scope, with an internal empty scope key representing public `siteId: null` semantics;
+- namespace and record identity;
+- vector dimensions and native PostgreSQL `DOUBLE PRECISION[]` values;
+- already-validated scalar JSON metadata.
+
+Upserts are idempotent for the same organization/site/namespace/record identity. Deletes remain constrained to that same exact scope.
+
+Queries load only records with the exact organization, exact site/null-site, namespace and dimension count, apply exact scalar metadata filters, calculate cosine similarity in application code, and sort deterministically by descending score then record ID.
+
+### Bounded baseline, not a hidden scale claim
+
+The native adapter intentionally has a bounded candidate scan (5,000 records by default, configurable up to 50,000 when constructing the adapter). If a single exact scope/namespace/dimension set exceeds the configured bound, the adapter fails closed and the public wrapper returns `STORE_ERROR` instead of loading an unbounded corpus into application memory.
+
+This backend is intended for modest controlled-document corpora and deployments that value zero additional infrastructure. Large semantic-search installations should implement the same `VectorStoreAdapter` contract with pgvector, Qdrant, Pinecone, Weaviate, Elasticsearch/OpenSearch or another indexed vector engine. Application authorization, scope validation and semantic-search code do not need to change.
+
+The repository still does not create embeddings automatically for every existing record or document. Indexing lifecycle, effective-revision selection, text extraction, authorization and citations are handled by controlled-document semantic search rather than by the persistence adapter.
 
 ## Tests
 
@@ -114,3 +134,5 @@ Likewise, this story does not create embeddings for existing records or document
 - timeout/cancellation;
 - disabled-store behavior;
 - safe metadata projection.
+
+`npm run test:vector-store:db` is the isolated PostgreSQL drill for the repository baseline. CI verifies persistence across adapter re-instantiation, deterministic cosine ranking, exact metadata filters, organization/site/null-site isolation, idempotent updates, deletion and the candidate-scan safety bound against disposable synthetic data.
