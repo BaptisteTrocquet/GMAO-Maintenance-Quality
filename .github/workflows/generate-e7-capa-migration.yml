@@ -1,0 +1,193 @@
+name: Generate E7 CAPA migration
+
+on:
+  push:
+    branches:
+      - agent/e7-capa-actions
+
+permissions:
+  contents: write
+
+jobs:
+  migration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16.14
+        env:
+          POSTGRES_USER: opengmao
+          POSTGRES_PASSWORD: opengmao
+          POSTGRES_DB: opengmao
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U opengmao"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+    env:
+      DATABASE_URL: postgresql://opengmao:opengmao@localhost:5432/opengmao?schema=public
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.1
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Add CAPA models to Prisma schema
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("prisma/schema.prisma")
+          schema = path.read_text()
+
+          enum_anchor = '''enum StockMovementType {
+            RECEIPT
+            ISSUE
+            ADJUSTMENT
+            WORK_ORDER_CONSUMPTION
+          }
+          '''
+          enums = enum_anchor + '''
+          enum QualityCapaStatus {
+            DRAFT
+            ACTIVE
+            CLOSED
+            CANCELLED
+          }
+
+          enum QualityActionType {
+            CORRECTIVE
+            PREVENTIVE
+          }
+
+          enum QualityActionStatus {
+            OPEN
+            IN_PROGRESS
+            COMPLETED
+            CANCELLED
+          }
+
+          enum QualityEffectivenessStatus {
+            NOT_REQUIRED
+            PENDING
+            EFFECTIVE
+            INEFFECTIVE
+          }
+          '''
+          if "enum QualityCapaStatus" not in schema:
+              schema = schema.replace(enum_anchor, enums)
+
+          user_anchor = "  auditLogs           AuditLog[]\n"
+          if "qualityCapasOwned" not in schema:
+              schema = schema.replace(
+                  user_anchor,
+                  user_anchor
+                  + '  qualityCapasOwned     QualityCapa[]   @relation("QualityCapaOwner")\n'
+                  + '  qualityActionsOwned   QualityAction[] @relation("QualityActionOwner")\n'
+                  + '  qualityActionsVerified QualityAction[] @relation("QualityActionVerifier")\n',
+              )
+
+          organization_anchor = "  suppliers   Supplier[]\n"
+          if "qualityCapas QualityCapa[]" not in schema:
+              schema = schema.replace(
+                  organization_anchor,
+                  organization_anchor + "  qualityCapas QualityCapa[]\n",
+              )
+
+          site_anchor = "  warehouses           Warehouse[]\n"
+          if schema.count("qualityCapas           QualityCapa[]") == 0:
+              schema = schema.replace(
+                  site_anchor,
+                  site_anchor + "  qualityCapas           QualityCapa[]\n",
+              )
+
+          models = r'''
+
+          model QualityCapa {
+            id             String            @id @default(cuid())
+            organizationId String
+            siteId         String
+            eventId        String
+            title          String
+            objective      String?
+            status         QualityCapaStatus @default(DRAFT)
+            ownerId        String
+            dueAt          DateTime?
+            activatedAt    DateTime?
+            closedAt       DateTime?
+            cancelledAt    DateTime?
+            createdAt      DateTime          @default(now())
+            updatedAt      DateTime          @updatedAt
+            organization   Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+            site           Site              @relation(fields: [siteId], references: [id], onDelete: Cascade)
+            owner          User              @relation("QualityCapaOwner", fields: [ownerId], references: [id])
+            actions        QualityAction[]
+
+            @@unique([organizationId, eventId])
+            @@index([siteId, status, dueAt])
+            @@index([ownerId, status])
+          }
+
+          model QualityAction {
+            id                        String                     @id @default(cuid())
+            capaId                    String
+            type                      QualityActionType
+            title                     String
+            description               String?
+            ownerId                   String
+            dueAt                     DateTime
+            status                    QualityActionStatus        @default(OPEN)
+            completionNote            String?
+            completedAt               DateTime?
+            effectivenessRequired     Boolean                    @default(true)
+            effectivenessStatus       QualityEffectivenessStatus @default(PENDING)
+            effectivenessDueAt        DateTime?
+            effectivenessNote         String?
+            effectivenessVerifiedAt   DateTime?
+            effectivenessVerifiedById String?
+            createdAt                 DateTime                   @default(now())
+            updatedAt                 DateTime                   @updatedAt
+            capa                      QualityCapa                @relation(fields: [capaId], references: [id], onDelete: Cascade)
+            owner                     User                       @relation("QualityActionOwner", fields: [ownerId], references: [id])
+            effectivenessVerifiedBy   User?                      @relation("QualityActionVerifier", fields: [effectivenessVerifiedById], references: [id])
+
+            @@index([capaId, status, dueAt])
+            @@index([ownerId, status, dueAt])
+            @@index([effectivenessStatus, effectivenessDueAt])
+          }
+          '''
+          if "model QualityCapa" not in schema:
+              schema = schema.rstrip() + models + "\n"
+
+          path.write_text(schema)
+          PY
+          npx prisma format
+
+      - name: Apply existing migrations
+        run: npm run prisma:migrate:deploy
+
+      - name: Generate CAPA migration
+        run: npx prisma migrate dev --name e7_capa_actions --create-only
+
+      - name: Verify generated schema
+        run: |
+          npm run prisma:generate
+          npm run typecheck
+
+      - name: Commit schema and migration
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add prisma/schema.prisma prisma/migrations
+          git rm .github/workflows/generate-e7-capa-migration.yml
+          git commit -m "E7: add CAPA and quality action models"
+          git push origin HEAD:agent/e7-capa-actions
