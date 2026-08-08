@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   buildWorkOrderBoard,
+  buildWorkOrderBoardWhere,
   isWorkOrderOverdue,
   matchesDueFilter,
+  WORK_ORDER_BOARD_LIMIT,
   type WorkOrderBoardItem,
 } from "@/lib/maintenance/board";
 
@@ -26,6 +28,60 @@ function item(overrides: Partial<WorkOrderBoardItem> = {}): WorkOrderBoardItem {
 }
 
 describe("maintenance work-order board", () => {
+  it("uses a bounded large-list policy for predictable Kanban rendering", () => {
+    expect(WORK_ORDER_BOARD_LIMIT).toBe(500);
+  });
+
+  it("builds tenant/site-scoped SQL filters before loading board rows", () => {
+    expect(
+      buildWorkOrderBoardWhere({
+        organizationId: "org-a",
+        siteId: "site-a",
+        dueFilter: "ALL",
+        now,
+      }),
+    ).toEqual({
+      siteId: "site-a",
+      site: { organizationId: "org-a", active: true },
+      status: {
+        in: ["REQUESTED", "APPROVED", "PLANNED", "IN_PROGRESS", "BLOCKED", "COMPLETED"],
+      },
+    });
+  });
+
+  it("pushes overdue and seven-day windows into the database query", () => {
+    expect(
+      buildWorkOrderBoardWhere({
+        organizationId: "org-a",
+        siteId: "site-a",
+        dueFilter: "OVERDUE",
+        now,
+      }),
+    ).toEqual({
+      siteId: "site-a",
+      site: { organizationId: "org-a", active: true },
+      status: { in: ["REQUESTED", "APPROVED", "PLANNED", "IN_PROGRESS", "BLOCKED"] },
+      dueAt: { lt: now },
+    });
+
+    expect(
+      buildWorkOrderBoardWhere({
+        organizationId: "org-a",
+        siteId: "site-a",
+        dueFilter: "DUE_7_DAYS",
+        now,
+      }),
+    ).toEqual({
+      siteId: "site-a",
+      site: { organizationId: "org-a", active: true },
+      status: { in: ["REQUESTED", "APPROVED", "PLANNED", "IN_PROGRESS", "BLOCKED"] },
+      dueAt: {
+        gte: now,
+        lte: new Date("2026-08-15T12:00:00.000Z"),
+      },
+    });
+  });
+
   it("treats only active workflow items past due as overdue", () => {
     expect(
       isWorkOrderOverdue(item({ dueAt: new Date("2026-08-07T12:00:00.000Z") }), now),
