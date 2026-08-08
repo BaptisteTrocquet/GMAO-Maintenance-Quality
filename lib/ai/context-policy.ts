@@ -7,6 +7,7 @@ const FORBIDDEN_PROMPT_KEYS = new Set([
   "assigneeId",
   "user",
   "users",
+  "userId",
   "createdBy",
   "createdById",
   "updatedBy",
@@ -27,6 +28,7 @@ const FORBIDDEN_PROMPT_KEYS = new Set([
   "cost",
   "credential",
   "credentials",
+  "password",
   "secret",
   "secrets",
   "token",
@@ -51,6 +53,10 @@ const FORBIDDEN_AUDIT_KEYS = new Set([
 
 const MAX_DEPTH = 20;
 const MAX_KEYS = 20_000;
+const SERIALIZED_FORBIDDEN_PROMPT_KEY_PATTERN = new RegExp(
+  `["'](?:${[...FORBIDDEN_PROMPT_KEYS].join("|")})["']\\s*:`,
+  "i",
+);
 
 export class AiContextPolicyError extends Error {
   constructor(
@@ -101,6 +107,23 @@ function assertObjectKeysSafe(value: unknown, forbidden: ReadonlySet<string>, co
 
 export function assertAiPromptContextSafe(value: unknown) {
   assertObjectKeysSafe(value, FORBIDDEN_PROMPT_KEYS, "AI prompt context");
+}
+
+export function assertAiPromptMessagesSafe(messages: readonly { content: string }[]) {
+  if (!Array.isArray(messages)) {
+    throw new AiContextPolicyError("INVALID_CONTEXT", "AI prompt messages are invalid");
+  }
+  for (const message of messages) {
+    if (!message || typeof message.content !== "string") {
+      throw new AiContextPolicyError("INVALID_CONTEXT", "AI prompt messages are invalid");
+    }
+    if (SERIALIZED_FORBIDDEN_PROMPT_KEY_PATTERN.test(message.content)) {
+      throw new AiContextPolicyError(
+        "FORBIDDEN_FIELD",
+        "AI prompt messages contain a serialized sensitive field",
+      );
+    }
+  }
 }
 
 export function assertAiAuditPayloadSafe(value: unknown) {
