@@ -27,7 +27,9 @@ type EditableAction = {
 };
 
 function toLocalInput(value: string) {
-  return value.slice(0, 16);
+  const date = new Date(value);
+  const offsetMilliseconds = date.getTimezoneOffset() * 60_000;
+  return new Date(date.getTime() - offsetMilliseconds).toISOString().slice(0, 16);
 }
 
 function editableActions(capa: CapaSnapshot | null): EditableAction[] {
@@ -144,7 +146,7 @@ export default function CapaWorkspace({
         title: item.title,
         description: item.description.trim() || null,
         ownerId: item.ownerId,
-        dueAt: item.dueAt,
+        dueAt: item.dueAt ? new Date(item.dueAt).toISOString() : "",
       })),
     });
   }
