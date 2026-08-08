@@ -35,7 +35,7 @@ describe("reliability analytics", () => {
       .mockResolvedValueOnce([{ intervalCount: 3, assetCount: 2, hours: 120 }]);
   });
 
-  it("returns MTTR and event-based MTBF samples with explicit formulas", async () => {
+  it("returns MTTR and calendar-time MTBF samples with explicit formulas", async () => {
     const result = await buildReliabilityDashboard({
       organizationId: "org-a",
       siteId: "site-a",
@@ -50,13 +50,17 @@ describe("reliability analytics", () => {
     expect(result.range.from).toBe("2026-06-30T22:00:00.000Z");
     expect(result.range.toExclusive).toBe(now.toISOString());
     expect(result.definitions.mttr).toContain("counted separately");
-    expect(result.definitions.mtbf).toContain("proxy");
+    expect(result.definitions.mtbf).toContain("Calendar-time MTBF");
+    expect(result.definitions.mtbf).toContain("not operating-hours MTBF");
 
     expect(sqlText(0)).toContain('AVG(\n          EXTRACT(EPOCH FROM (wo."completedAt" - wo."startedAt")) / 3600.0');
     expect(sqlText(0)).toContain('AS "excludedIncomplete"');
     expect(sqlText(0)).toContain('wo."startedAt" >= wo."requestedAt"');
     expect(sqlText(0)).toContain("wo.type = 'CORRECTIVE'");
-    expect(sqlText(1)).toContain('LAG(wo."requestedAt")');
+    expect(sqlText(1)).toContain('LAG(wo."completedAt")');
+    expect(sqlText(1)).toContain('AS "previousCompletedAt"');
+    expect(sqlText(1)).toContain('"requestedAt" - "previousCompletedAt"');
+    expect(sqlText(1)).toContain('"requestedAt" > "previousCompletedAt"');
     expect(sqlText(1)).toContain('PARTITION BY wo."assetId"');
     expect(sqlText(1)).toContain("wo.status <> 'CANCELLED'");
   });
