@@ -54,49 +54,40 @@ export function buildWorkOrderBoardWhere(input: {
   userId?: string;
   now: Date;
 }): Prisma.WorkOrderWhereInput {
-  const filters: Prisma.WorkOrderWhereInput[] = [
-    {
-      siteId: input.siteId,
-      site: { organizationId: input.organizationId, active: true },
-    },
-  ];
+  const where: Prisma.WorkOrderWhereInput = {
+    siteId: input.siteId,
+    site: { organizationId: input.organizationId, active: true },
+  };
 
   if (input.dueFilter === "OVERDUE") {
-    filters.push({
-      status: { in: [...ACTIVE_BOARD_STATUSES] },
-      dueAt: { lt: input.now },
-    });
+    where.status = { in: [...ACTIVE_BOARD_STATUSES] };
+    where.dueAt = { lt: input.now };
   } else if (input.dueFilter === "DUE_7_DAYS") {
-    filters.push({
-      status: { in: [...ACTIVE_BOARD_STATUSES] },
-      dueAt: {
-        gte: input.now,
-        lte: new Date(input.now.getTime() + 7 * 24 * 60 * 60 * 1000),
-      },
-    });
+    where.status = { in: [...ACTIVE_BOARD_STATUSES] };
+    where.dueAt = {
+      gte: input.now,
+      lte: new Date(input.now.getTime() + 7 * 24 * 60 * 60 * 1000),
+    };
   } else {
-    filters.push({
-      status: { in: [...WORK_ORDER_BOARD_STATUSES] },
-      ...(input.dueFilter === "NO_DUE_DATE" ? { dueAt: null } : {}),
-    });
+    where.status = { in: [...WORK_ORDER_BOARD_STATUSES] };
+    if (input.dueFilter === "NO_DUE_DATE") where.dueAt = null;
   }
 
   if (input.priorityFilter && input.priorityFilter !== "ALL") {
-    filters.push({ priority: input.priorityFilter });
+    where.priority = input.priorityFilter;
   }
 
   if (input.assignmentFilter === "UNASSIGNED") {
-    filters.push({ assigneeId: null, teamId: null });
+    where.assigneeId = null;
+    where.teamId = null;
   } else if (input.assignmentFilter === "MY_WORK" && input.userId) {
-    filters.push({
-      OR: [
-        { assigneeId: input.userId },
-        { team: { members: { some: { userId: input.userId } } } },
-      ],
-    });
+    where.OR = [
+      { assigneeId: input.userId },
+      { team: { members: { some: { userId: input.userId } } } },
+    ];
   }
 
-  return { AND: filters };
+  return where;
 }
 
 export function isWorkOrderOverdue(item: Pick<WorkOrderBoardItem, "status" | "dueAt">, now: Date) {
@@ -118,8 +109,12 @@ export function matchesDueFilter(
   if (filter === "OVERDUE") return isWorkOrderOverdue(item, now);
   if (!item.dueAt || item.status === "COMPLETED" || item.status === "CANCELLED") return false;
 
-  const sevenDaysFromNow = now.getTime() + 7 * 24 * 60 * 60 * 1000;
+  const sevenDaysFromNow = inputSafeSevenDays(now);
   return item.dueAt.getTime() >= now.getTime() && item.dueAt.getTime() <= sevenDaysFromNow;
+}
+
+function inputSafeSevenDays(now: Date) {
+  return now.getTime() + 7 * 24 * 60 * 60 * 1000;
 }
 
 export function sortBoardItems(left: WorkOrderBoardItem, right: WorkOrderBoardItem) {
