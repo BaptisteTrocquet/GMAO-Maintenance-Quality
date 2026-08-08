@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildCalendarGrid,
   buildPlanningCalendar,
+  buildPlanningCalendarWhere,
   calendarSearchRange,
   parseCalendarMonth,
   shiftCalendarMonth,
@@ -64,6 +65,25 @@ describe("maintenance planning calendar", () => {
 
     expect(range.start.toISOString()).toBe("2026-07-26T06:00:00.000Z");
     expect(range.end.toISOString()).toBe("2026-09-07T17:59:59.999Z");
+  });
+
+  it("builds a strict organization and site scoped database query", () => {
+    const range = {
+      start: new Date("2026-07-26T06:00:00.000Z"),
+      end: new Date("2026-09-07T17:59:59.999Z"),
+    };
+
+    expect(
+      buildPlanningCalendarWhere({ organizationId: "org-a", siteId: "site-a", range }),
+    ).toEqual({
+      siteId: "site-a",
+      site: { organizationId: "org-a", active: true },
+      status: { not: "CANCELLED" },
+      OR: [
+        { plannedStart: { gte: range.start, lte: range.end } },
+        { dueAt: { gte: range.start, lte: range.end } },
+      ],
+    });
   });
 
   it("places UTC timestamps on the correct local site date", () => {
