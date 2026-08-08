@@ -17,6 +17,12 @@ vi.mock("@/lib/db", () => ({
 import { BACKLOG_DETAIL_LIMIT, buildBacklogDashboard } from "@/lib/analytics/backlog";
 
 const now = new Date("2026-08-08T10:00:00.000Z");
+const baseInput = {
+  organizationId: "org-a",
+  siteId: "site-a",
+  timeZone: "Europe/Paris",
+  now,
+};
 
 describe("backlog analytics", () => {
   beforeEach(() => {
@@ -40,9 +46,10 @@ describe("backlog analytics", () => {
       .mockResolvedValueOnce(11)
       .mockResolvedValueOnce(12);
 
-    const result = await buildBacklogDashboard({ organizationId: "org-a", siteId: "site-a", now });
+    const result = await buildBacklogDashboard(baseInput);
 
     expect(result.totalOpen).toBe(15);
+    expect(result.timezone).toBe("Europe/Paris");
     expect(result.status).toEqual({
       REQUESTED: 2,
       APPROVED: 3,
@@ -63,7 +70,7 @@ describe("backlog analytics", () => {
   });
 
   it("scopes every query to the selected active organization/site and bounds detail rows", async () => {
-    await buildBacklogDashboard({ organizationId: "org-a", siteId: "site-a", now });
+    await buildBacklogDashboard(baseInput);
 
     for (const [input] of mocks.count.mock.calls) {
       expect(input.where).toMatchObject({
@@ -85,7 +92,7 @@ describe("backlog analytics", () => {
   });
 
   it("defines empty backlog metrics as zero instead of undefined", async () => {
-    const result = await buildBacklogDashboard({ organizationId: "org-a", siteId: "site-a", now });
+    const result = await buildBacklogDashboard(baseInput);
 
     expect(result.empty).toBe(true);
     expect(result.totalOpen).toBe(0);
@@ -95,24 +102,24 @@ describe("backlog analytics", () => {
     expect(result.oldest).toEqual([]);
   });
 
-  it("uses exact non-overlapping aging boundaries and excludes future requested timestamps", async () => {
-    await buildBacklogDashboard({ organizationId: "org-a", siteId: "site-a", now });
+  it("uses exact non-overlapping local-calendar aging boundaries and excludes future timestamps", async () => {
+    await buildBacklogDashboard(baseInput);
 
     const agingCalls = mocks.count.mock.calls.slice(8, 12).map(([input]) => input.where.requestedAt);
     expect(agingCalls[0]).toEqual({
-      gt: new Date("2026-08-01T10:00:00.000Z"),
+      gte: new Date("2026-08-01T22:00:00.000Z"),
       lte: now,
     });
     expect(agingCalls[1]).toEqual({
-      lte: new Date("2026-08-01T10:00:00.000Z"),
-      gt: new Date("2026-07-09T10:00:00.000Z"),
+      gte: new Date("2026-07-09T22:00:00.000Z"),
+      lt: new Date("2026-08-01T22:00:00.000Z"),
     });
     expect(agingCalls[2]).toEqual({
-      lte: new Date("2026-07-09T10:00:00.000Z"),
-      gt: new Date("2026-05-10T10:00:00.000Z"),
+      gte: new Date("2026-05-10T22:00:00.000Z"),
+      lt: new Date("2026-07-09T22:00:00.000Z"),
     });
     expect(agingCalls[3]).toEqual({
-      lte: new Date("2026-05-10T10:00:00.000Z"),
+      lt: new Date("2026-05-10T22:00:00.000Z"),
     });
   });
 });
