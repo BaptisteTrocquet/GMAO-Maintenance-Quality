@@ -151,14 +151,14 @@ export default function CalendarPlanner({
     setBusyId(workOrderId);
     setError(null);
     try {
-      const response = await fetch(`/api/work-orders/${workOrder.id}`, {
+      const response = await fetch(`/api/work-orders/${workOrder.id}/schedule`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           organizationId,
           siteId,
           plannedStart: schedule.plannedStart.toISOString(),
-          ...(schedule.dueAt ? { dueAt: schedule.dueAt.toISOString() } : {}),
+          dueAt: schedule.dueAt?.toISOString() ?? null,
         }),
       });
       const body = (await response.json()) as { error?: { message?: string } };
