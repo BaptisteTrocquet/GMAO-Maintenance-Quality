@@ -221,7 +221,7 @@ describe("quality evidence attachments", () => {
     ).rejects.toMatchObject({ code: "FILE_INTEGRITY_FAILED" });
   });
 
-  it("soft-removes evidence in the audit trail then deletes managed storage bytes", async () => {
+  it("soft-removes evidence while retaining managed storage bytes for audit", async () => {
     const stored = evidenceSnapshot();
     mocks.auditFindMany.mockResolvedValue([{ afterJson: JSON.stringify(stored) }]);
 
@@ -231,10 +231,9 @@ describe("quality evidence attachments", () => {
       eventId: "event-1",
       evidenceId: "evidence-a",
       actorId: "quality-1",
-      adapter,
     });
 
-    expect(result.storageDeleted).toBe(true);
+    expect(result.storageRetained).toBe(true);
     expect(result.evidence.removedAt).toBeTruthy();
     expect(result.evidence.removedById).toBe("quality-1");
     expect(mocks.auditCreate).toHaveBeenCalledWith({
@@ -244,7 +243,7 @@ describe("quality evidence attachments", () => {
         action: "EVIDENCE_REMOVED",
       }),
     });
-    expect(mocks.storageDelete).toHaveBeenCalledWith(stored.storageKey);
+    expect(mocks.storageDelete).not.toHaveBeenCalled();
   });
 
   it("returns null without querying evidence when the quality event is outside scope", async () => {
