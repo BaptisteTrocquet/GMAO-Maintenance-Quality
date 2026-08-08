@@ -1,6 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
-import { CapaError, type CapaSnapshot } from "@/lib/quality/capa";
+import { type CapaSnapshot } from "@/lib/quality/capa";
 
 const CAPA_ENTITY = "QualityCapa";
 const APPROVAL_ENTITY = "QualityCapaApproval";
@@ -30,6 +30,7 @@ export class CapaApprovalError extends Error {
       | "CAPA_NOT_DRAFT"
       | "CAPA_APPROVER_NOT_ALLOWED"
       | "CAPA_SELF_APPROVAL_NOT_ALLOWED"
+      | "ACTION_OWNER_NOT_FOUND"
       | "ACTION_DATA_REQUIRED",
     message: string,
   ) {
@@ -152,13 +153,14 @@ export async function approveCapa(input: {
         active: true,
         role: { in: ["OWNER", "ADMIN", "QUALITY_MANAGER"] },
         user: { active: true },
+        OR: [{ allSites: true }, { siteMemberships: { some: { siteId: input.siteId } } }],
       },
       select: { id: true, role: true },
     });
     if (!approverMembership) {
       throw new CapaApprovalError(
         "CAPA_APPROVER_NOT_ALLOWED",
-        "CAPA approval requires an active quality manager, admin or owner",
+        "CAPA approval requires an active quality manager, admin or owner with access to this site",
       );
     }
 
@@ -181,14 +183,15 @@ export async function approveCapa(input: {
         userId: { in: ownerIds },
         active: true,
         user: { active: true },
+        OR: [{ allSites: true }, { siteMemberships: { some: { siteId: input.siteId } } }],
       },
       select: { userId: true },
     });
     const validOwners = new Set(owners.map((owner) => owner.userId));
     if (ownerIds.some((ownerId) => !validOwners.has(ownerId))) {
-      throw new CapaError(
+      throw new CapaApprovalError(
         "ACTION_OWNER_NOT_FOUND",
-        "Each CAPA action owner must still be an active organization member at approval time",
+        "Each CAPA action owner must still have active access to this site at approval time",
       );
     }
 
