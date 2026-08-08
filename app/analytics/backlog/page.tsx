@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { headers } from "next/headers";
 import BacklogClient from "./backlog-client";
 
@@ -8,10 +9,15 @@ export default async function BacklogAnalyticsPage() {
 
   return (
     <>
-      <div className="header">
+      <div className="header asset-header">
         <div>
           <div className="title">Backlog analytics</div>
           <div className="muted">Trusted open-work indicators for the selected site.</div>
+        </div>
+        <div className="asset-status">
+          <Link className="table-link" href="/analytics/reliability">Reliability</Link>
+          <Link className="table-link" href="/analytics/downtime">Downtime</Link>
+          <Link className="table-link" href="/analytics/failure-pareto">Failure Pareto</Link>
         </div>
       </div>
       <BacklogClient organizationId={organizationId} siteId={siteId} />
