@@ -104,7 +104,7 @@ export async function buildReliabilityDashboard(input: {
     ? Prisma.sql`AND wo."completedAt" >= ${requestedRange.from}`
     : Prisma.empty;
   const mtbfFromFilter = requestedRange.from
-    ? Prisma.sql`AND "requestedAt" >= ${requestedRange.from}`
+    ? Prisma.sql`AND "failureRequestedAt" >= ${requestedRange.from}`
     : Prisma.empty;
 
   const [mttrRows, mtbfRows] = await Promise.all([
@@ -140,37 +140,68 @@ export async function buildReliabilityDashboard(input: {
         ${assetFilter}
     `),
     db.$queryRaw<MtbfRow[]>(Prisma.sql`
-      WITH failures AS (
+      WITH scoped AS MATERIALIZED (
         SELECT
           wo."assetId",
           wo."requestedAt",
-          (
-            SELECT MAX(previous."completedAt")
-            FROM "WorkOrder" previous
-            WHERE previous."siteId" = wo."siteId"
-              AND previous."assetId" = wo."assetId"
-              AND previous.type = 'CORRECTIVE'
-              AND previous.status = 'COMPLETED'
-              AND previous."completedAt" IS NOT NULL
-              AND previous."completedAt" < wo."requestedAt"
-          ) AS "previousCompletedAt"
+          wo."completedAt",
+          wo.status
         FROM "WorkOrder" wo
         INNER JOIN "Site" site ON site.id = wo."siteId"
         WHERE wo."siteId" = ${input.siteId}
           AND site."organizationId" = ${input.organizationId}
           AND site.active = true
           AND wo.type = 'CORRECTIVE'
-          AND wo.status <> 'CANCELLED'
           AND wo."assetId" IS NOT NULL
-          AND wo."requestedAt" < ${toExclusive}
+          AND (
+            wo."requestedAt" < ${toExclusive}
+            OR (
+              wo.status = 'COMPLETED'
+              AND wo."completedAt" IS NOT NULL
+              AND wo."completedAt" < ${toExclusive}
+            )
+          )
           ${assetFilter}
+      ), timeline AS (
+        SELECT
+          "assetId",
+          "completedAt" AS "eventAt",
+          1 AS "eventKind",
+          "completedAt" AS "repairCompletedAt",
+          NULL::timestamp AS "failureRequestedAt"
+        FROM scoped
+        WHERE status = 'COMPLETED'
+          AND "completedAt" IS NOT NULL
+          AND "completedAt" < ${toExclusive}
+
+        UNION ALL
+
+        SELECT
+          "assetId",
+          "requestedAt" AS "eventAt",
+          0 AS "eventKind",
+          NULL::timestamp AS "repairCompletedAt",
+          "requestedAt" AS "failureRequestedAt"
+        FROM scoped
+        WHERE status <> 'CANCELLED'
+          AND "requestedAt" < ${toExclusive}
+      ), sequenced AS (
+        SELECT
+          "assetId",
+          "failureRequestedAt",
+          MAX("repairCompletedAt") OVER (
+            PARTITION BY "assetId"
+            ORDER BY "eventAt", "eventKind"
+            ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+          ) AS "previousCompletedAt"
+        FROM timeline
       ), intervals AS (
         SELECT
           "assetId",
-          "requestedAt",
-          EXTRACT(EPOCH FROM ("requestedAt" - "previousCompletedAt")) / 3600.0 AS hours
-        FROM failures
-        WHERE "previousCompletedAt" IS NOT NULL
+          EXTRACT(EPOCH FROM ("failureRequestedAt" - "previousCompletedAt")) / 3600.0 AS hours
+        FROM sequenced
+        WHERE "failureRequestedAt" IS NOT NULL
+          AND "previousCompletedAt" IS NOT NULL
           ${mtbfFromFilter}
       )
       SELECT
