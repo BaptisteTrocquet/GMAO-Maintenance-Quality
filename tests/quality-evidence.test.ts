@@ -1,22 +1,35 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { StorageAdapter } from "@/lib/storage";
 
 const mocks = vi.hoisted(() => ({
   getQualityEvent: vi.fn(),
+  transaction: vi.fn(),
   auditCreate: vi.fn(),
   auditFindMany: vi.fn(),
+  storagePut: vi.fn(),
+  storageGet: vi.fn(),
+  storageDelete: vi.fn(),
 }));
+
+const tx = {
+  auditLog: { create: mocks.auditCreate },
+};
 
 vi.mock("@/lib/quality/events", () => ({ getQualityEvent: mocks.getQualityEvent }));
 vi.mock("@/lib/db", () => ({
   db: {
-    auditLog: {
-      create: mocks.auditCreate,
-      findMany: mocks.auditFindMany,
-    },
+    $transaction: mocks.transaction,
+    auditLog: { findMany: mocks.auditFindMany },
   },
 }));
 
 import { addQualityEvidence, listQualityEvidence } from "@/lib/quality/evidence";
+
+const adapter: StorageAdapter = {
+  put: mocks.storagePut,
+  get: mocks.storageGet,
+  delete: mocks.storageDelete,
+};
 
 const activeEvent = {
   id: "event-1",
@@ -25,6 +38,7 @@ const activeEvent = {
   status: "INVESTIGATING",
 };
 
+const fileData = new Uint8Array([1, 2, 3, 4]);
 const baseInput = {
   organizationId: "org-a",
   siteId: "site-a",
@@ -32,22 +46,28 @@ const baseInput = {
   phase: "ROOT_CAUSE" as const,
   kind: "DOCUMENT" as const,
   fileName: "synthetic-analysis.pdf",
-  storageKey: "quality/event-1/synthetic-analysis.pdf",
   mimeType: "application/pdf",
-  sizeBytes: 2048,
   description: "Synthetic RCA evidence",
   actorId: "quality-1",
+  data: fileData,
+  adapter,
 };
 
 describe("quality evidence attachments", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.getQualityEvent.mockResolvedValue(activeEvent);
+    mocks.transaction.mockImplementation(
+      async (callback: (transaction: typeof tx) => Promise<unknown>) => callback(tx),
+    );
     mocks.auditCreate.mockResolvedValue({ id: "audit-1" });
     mocks.auditFindMany.mockResolvedValue([]);
+    mocks.storagePut.mockResolvedValue("stored");
+    mocks.storageGet.mockResolvedValue(fileData);
+    mocks.storageDelete.mockResolvedValue(undefined);
   });
 
-  it("appends immutable evidence and mirrors a quality-event audit entry", async () => {
+  it("stores bytes, checksums them and appends immutable evidence plus event audit", async () => {
     const evidence = await addQualityEvidence(baseInput);
 
     expect(evidence).toMatchObject({
@@ -57,16 +77,19 @@ describe("quality evidence attachments", () => {
       phase: "ROOT_CAUSE",
       kind: "DOCUMENT",
       fileName: "synthetic-analysis.pdf",
-      storageKey: "quality/event-1/synthetic-analysis.pdf",
+      sizeBytes: fileData.byteLength,
       createdById: "quality-1",
     });
+    expect(evidence.checksum).toMatch(/^[a-f0-9]{64}$/);
+    expect(evidence.storageKey).toContain(`quality-evidence/org-a/event-1/${evidence.id}/`);
+    expect(mocks.storagePut).toHaveBeenCalledWith(evidence.storageKey, fileData);
     expect(mocks.auditCreate).toHaveBeenCalledTimes(2);
     expect(mocks.auditCreate).toHaveBeenNthCalledWith(1, {
       data: expect.objectContaining({
         actorId: "quality-1",
         entityType: "QualityEvidenceAttachment",
         action: "EVIDENCE_ATTACHED",
-        afterJson: expect.stringContaining('"storageKey":"quality/event-1/synthetic-analysis.pdf"'),
+        afterJson: expect.stringContaining(`"checksum":"${evidence.checksum}"`),
       }),
     });
     expect(mocks.auditCreate).toHaveBeenNthCalledWith(2, {
@@ -79,14 +102,24 @@ describe("quality evidence attachments", () => {
     });
   });
 
-  it("blocks new evidence after the quality event is closed", async () => {
+  it("blocks new evidence after the quality event is closed before storing bytes", async () => {
     mocks.getQualityEvent.mockResolvedValue({ ...activeEvent, status: "CLOSED" });
 
     await expect(addQualityEvidence(baseInput)).rejects.toMatchObject({ code: "EVENT_CLOSED" });
+    expect(mocks.storagePut).not.toHaveBeenCalled();
     expect(mocks.auditCreate).not.toHaveBeenCalled();
   });
 
-  it("uses a real JSON quote marker and filters parsed snapshots to the requested tenant/site", async () => {
+  it("deletes stored bytes when the audit transaction fails", async () => {
+    mocks.transaction.mockRejectedValue(new Error("audit unavailable"));
+
+    await expect(addQualityEvidence(baseInput)).rejects.toThrow("audit unavailable");
+    expect(mocks.storagePut).toHaveBeenCalledOnce();
+    expect(mocks.storageDelete).toHaveBeenCalledOnce();
+    expect(mocks.storageDelete).toHaveBeenCalledWith(expect.stringContaining("quality-evidence/org-a/event-1/"));
+  });
+
+  it("uses real JSON quote matching and filters parsed snapshots to the requested tenant/site", async () => {
     const visible = {
       id: "evidence-a",
       eventId: "event-1",
@@ -95,9 +128,10 @@ describe("quality evidence attachments", () => {
       phase: "CAPA",
       kind: "PHOTO",
       fileName: "synthetic-photo.jpg",
-      storageKey: "quality/event-1/synthetic-photo.jpg",
+      storageKey: "quality-evidence/org-a/event-1/evidence-a/checksum-a",
       mimeType: "image/jpeg",
       sizeBytes: 512,
+      checksum: "a".repeat(64),
       description: null,
       createdById: "quality-2",
       createdAt: "2026-08-08T00:00:00.000Z",
