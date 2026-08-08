@@ -149,6 +149,12 @@ export default function CommandPalette({
       setActiveIndex((current) =>
         nextCommandIndex({ current, direction: -1, total: items.length }),
       );
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      setActiveIndex(items.length ? 0 : -1);
+    } else if (event.key === "End") {
+      event.preventDefault();
+      setActiveIndex(items.length ? items.length - 1 : -1);
     } else if (event.key === "Enter") {
       const item = items[activeIndex];
       if (!item) return;
@@ -156,6 +162,7 @@ export default function CommandPalette({
       navigate(item);
     } else if (event.key === "Escape") {
       event.preventDefault();
+      event.stopPropagation();
       close();
     }
   }
@@ -233,11 +240,14 @@ export default function CommandPalette({
             <input
               ref={inputRef}
               id="command-palette-input"
+              role="combobox"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               onKeyDown={onInputKeyDown}
               autoComplete="off"
               placeholder="Type at least two characters…"
+              aria-autocomplete="list"
+              aria-expanded={open}
               aria-controls="command-palette-results"
               aria-activedescendant={activeIndex >= 0 ? `command-item-${activeIndex}` : undefined}
               style={{ width: "100%", marginTop: 6 }}
@@ -247,7 +257,7 @@ export default function CommandPalette({
               {loading
                 ? "Searching…"
                 : query.trim().length < GLOBAL_SEARCH_MIN_LENGTH
-                  ? "Quick actions · use ↑/↓ and Enter"
+                  ? "Quick actions · use ↑/↓, Home/End and Enter"
                   : `${items.length} result${items.length === 1 ? "" : "s"}`}
             </div>
             {error ? <div role="alert" style={{ marginTop: 8 }}>{error}</div> : null}
