@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 type BacklogPayload = {
   generatedAt: string;
@@ -55,6 +55,11 @@ export default function BacklogClient({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const exportHref = useMemo(() => {
+    const params = new URLSearchParams({ organizationId, siteId, format: "csv" });
+    return `/api/analytics/backlog?${params.toString()}`;
+  }, [organizationId, siteId]);
+
   const load = useCallback(async () => {
     if (!organizationId || !siteId) return;
     const params = new URLSearchParams({ organizationId, siteId });
@@ -93,9 +98,12 @@ export default function BacklogClient({
             <strong>Backlog health</strong>
             <div className="muted">Open work only. Completed and cancelled work orders are excluded.</div>
           </div>
-          <button type="button" onClick={() => void load()} disabled={loading}>
-            {loading ? "Refreshing…" : "Refresh"}
-          </button>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            <a href={exportHref} download>Export CSV</a>
+            <button type="button" onClick={() => void load()} disabled={loading}>
+              {loading ? "Refreshing…" : "Refresh"}
+            </button>
+          </div>
         </div>
         {payload ? <div className="muted" style={{ marginTop: 8 }}>Generated {new Date(payload.generatedAt).toLocaleString()}</div> : null}
       </section>
