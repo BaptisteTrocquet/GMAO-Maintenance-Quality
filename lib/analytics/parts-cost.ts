@@ -1,6 +1,10 @@
 import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
-import { resolveAnalyticsDateRange } from "@/lib/analytics/date-range";
+import {
+  localDateStartUtc,
+  resolveAnalyticsDateRange,
+  shiftCalendarDate,
+} from "@/lib/analytics/date-range";
 
 export const PARTS_COST_TOP_PART_LIMIT = 10;
 export const PARTS_COST_MAX_RANGE_DAYS = 731;
@@ -20,7 +24,6 @@ type AggregateRow = {
   lineCount: number;
   pricedLineCount: number;
   unpricedLineCount: number;
-  quantity: number;
   costAmount: number;
 };
 
@@ -62,10 +65,14 @@ export async function buildPartsCostDashboard(input: {
   if (!range.from || !range.toExclusive) {
     throw new Error("Parts cost analytics requires a bounded reporting range");
   }
-  if (
-    range.toExclusive.getTime() - range.from.getTime() >
-    (PARTS_COST_MAX_RANGE_DAYS + 1) * 24 * 60 * 60 * 1000
-  ) {
+
+  // Bound by local calendar days, not elapsed milliseconds, so DST transitions cannot
+  // make an otherwise valid reporting horizon appear one hour too long or short.
+  const maxToExclusive = localDateStartUtc(
+    shiftCalendarDate(input.from, PARTS_COST_MAX_RANGE_DAYS),
+    input.timeZone,
+  );
+  if (range.toExclusive.getTime() > maxToExclusive.getTime()) {
     throw new PartsCostAnalyticsError(
       "RANGE_TOO_LARGE",
       `Parts cost reporting is limited to ${PARTS_COST_MAX_RANGE_DAYS} local calendar days per request`,
@@ -104,7 +111,6 @@ export async function buildPartsCostDashboard(input: {
       lineCount: 0,
       pricedLineCount: 0,
       unpricedLineCount: 0,
-      quantity: 0,
       costAmount: 0,
       averageCostPerPricedLine: null,
       incompleteCost: false,
@@ -126,7 +132,6 @@ export async function buildPartsCostDashboard(input: {
         COUNT(*)::int AS "lineCount",
         COUNT(*) FILTER (WHERE c."unitCost" IS NOT NULL)::int AS "pricedLineCount",
         COUNT(*) FILTER (WHERE c."unitCost" IS NULL)::int AS "unpricedLineCount",
-        COALESCE(SUM(c.quantity), 0)::double precision AS quantity,
         COALESCE(SUM(CASE WHEN c."unitCost" IS NOT NULL THEN c.quantity * c."unitCost" ELSE 0 END), 0)::double precision AS "costAmount"
       FROM "WorkOrderPartConsumption" c
       INNER JOIN "WorkOrder" wo ON wo.id = c."workOrderId"
@@ -172,7 +177,6 @@ export async function buildPartsCostDashboard(input: {
 
   const trend = monthlyRows.map((row) => ({
     ...row,
-    quantity: finite(row.quantity),
     costAmount: finite(row.costAmount),
   }));
   const topParts = partRows.map((row) => ({
@@ -185,10 +189,9 @@ export async function buildPartsCostDashboard(input: {
       lineCount: sum.lineCount + row.lineCount,
       pricedLineCount: sum.pricedLineCount + row.pricedLineCount,
       unpricedLineCount: sum.unpricedLineCount + row.unpricedLineCount,
-      quantity: sum.quantity + row.quantity,
       costAmount: sum.costAmount + row.costAmount,
     }),
-    { lineCount: 0, pricedLineCount: 0, unpricedLineCount: 0, quantity: 0, costAmount: 0 },
+    { lineCount: 0, pricedLineCount: 0, unpricedLineCount: 0, costAmount: 0 },
   );
 
   return {
@@ -201,6 +204,6 @@ export async function buildPartsCostDashboard(input: {
     trend,
     topParts,
     definition:
-      "Consumed-parts cost uses quantity × captured unitCost on WorkOrderPartConsumption. Lines with missing unitCost are reported as unpriced instead of being silently treated as zero-cost. Currency is not yet modeled on consumption records.",
+      "Consumed-parts cost uses quantity × captured unitCost on WorkOrderPartConsumption. Lines with missing unitCost are reported as unpriced instead of being silently treated as zero-cost. Aggregate quantities are intentionally omitted because different parts can use different units. Currency is not yet modeled on consumption records.",
   };
 }
