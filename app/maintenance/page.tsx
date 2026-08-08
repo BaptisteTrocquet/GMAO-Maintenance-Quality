@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { headers } from "next/headers";
 import { db } from "@/lib/db";
 import { advanceCalendarDue, type CalendarFrequencyUnit } from "@/lib/maintenance/calendar";
 import { calculateMaintenanceForecast } from "@/lib/maintenance/forecast";
@@ -12,12 +13,40 @@ function formatMeterValue(value: number | null, unit?: string | null) {
 }
 
 export default async function MaintenancePage() {
+  const requestHeaders = await headers();
+  const organizationId = requestHeaders.get("x-organization-id") ?? "";
+  const selectedSiteId = requestHeaders.get("x-site-id") ?? "";
+
+  if (!organizationId) {
+    return (
+      <>
+        <div className="header">
+          <div>
+            <div className="title">Maintenance</div>
+            <div className="muted">Corrective and preventive maintenance.</div>
+          </div>
+        </div>
+        <section className="card">
+          <p>Select an organization to view maintenance operations.</p>
+        </section>
+      </>
+    );
+  }
+
+  const siteScope = {
+    organizationId,
+    active: true,
+    ...(selectedSiteId ? { id: selectedSiteId } : {}),
+  };
+
   const [workOrders, plans, reminders] = await Promise.all([
     db.workOrder.findMany({
+      where: { site: siteScope },
       include: { site: true, asset: true, assignee: true, team: true },
       orderBy: { requestedAt: "desc" },
     }),
     db.maintenancePlan.findMany({
+      where: { asset: { site: siteScope } },
       include: {
         asset: { include: { site: { include: { organization: { select: { timezone: true } } } } } },
         meter: {
@@ -28,7 +57,7 @@ export default async function MaintenancePage() {
       orderBy: [{ nextDueAt: "asc" }, { nextDueMeterValue: "asc" }],
     }),
     db.maintenanceReminder.findMany({
-      where: { status: "ACTIVE" },
+      where: { status: "ACTIVE", site: siteScope },
       include: {
         site: { select: { code: true } },
         workOrder: { select: { id: true, number: true, status: true } },
@@ -61,10 +90,15 @@ export default async function MaintenancePage() {
 
   return (
     <>
-      <div className="header">
+      <div className="header asset-header">
         <div>
           <div className="title">Maintenance</div>
-          <div className="muted">Corrective and preventive maintenance.</div>
+          <div className="muted">
+            Corrective and preventive maintenance{selectedSiteId ? " for the selected site" : " for the selected organization"}.
+          </div>
+        </div>
+        <div className="asset-status">
+          <Link className="badge" href="/maintenance/board">Work-order board</Link>
         </div>
       </div>
 
@@ -214,6 +248,7 @@ export default async function MaintenancePage() {
           </table>
         </div>
       </div>
+
       <div className="section card">
         <h2>Preventive plans</h2>
         <div className="responsive-table">
