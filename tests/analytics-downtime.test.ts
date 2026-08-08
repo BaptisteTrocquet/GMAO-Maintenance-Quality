@@ -14,10 +14,18 @@ vi.mock("@/lib/db", () => ({
 
 import {
   buildDowntimeDashboard,
+  DOWNTIME_TOP_ASSET_LIMIT,
   DowntimeAnalyticsError,
 } from "@/lib/analytics/downtime";
 
 const now = new Date("2026-08-08T10:00:00.000Z");
+
+function sqlText(callIndex: number) {
+  const query = mocks.queryRaw.mock.calls[callIndex]?.[0] as
+    | { sql?: string; text?: string }
+    | undefined;
+  return query?.sql ?? query?.text ?? "";
+}
 
 describe("downtime analytics", () => {
   beforeEach(() => {
@@ -39,7 +47,7 @@ describe("downtime analytics", () => {
       ]);
   });
 
-  it("derives total, average and asset points from database aggregates", async () => {
+  it("derives totals from bounded database aggregates and preserves SQL scope", async () => {
     const result = await buildDowntimeDashboard({
       organizationId: "org-a",
       siteId: "site-a",
@@ -64,6 +72,12 @@ describe("downtime analytics", () => {
       minutes: 75,
       hours: 1.25,
     });
+    expect(sqlText(0)).toContain("TO_CHAR");
+    expect(sqlText(0)).toContain("wo.status = 'COMPLETED'");
+    expect(sqlText(0)).toContain('wo."downtimeMinutes" > 0');
+    expect(sqlText(1)).toContain('INNER JOIN "Asset" asset');
+    expect(sqlText(1)).toContain("ORDER BY minutes DESC");
+    expect(DOWNTIME_TOP_ASSET_LIMIT).toBe(10);
   });
 
   it("uses local-calendar boundaries across the 23-hour spring DST day", async () => {
@@ -86,7 +100,7 @@ describe("downtime analytics", () => {
     ).toBe(23 * 60 * 60 * 1000);
   });
 
-  it("caps the reporting window at now and returns an explicit empty result for future-only ranges", async () => {
+  it("caps future reporting windows and returns an explicit empty result for future-only ranges", async () => {
     mocks.queryRaw.mockReset();
 
     const result = await buildDowntimeDashboard({
@@ -101,6 +115,21 @@ describe("downtime analytics", () => {
     expect(result.empty).toBe(true);
     expect(result.totalMinutes).toBe(0);
     expect(result.averageMinutesPerEvent).toBeNull();
+    expect(mocks.queryRaw).not.toHaveBeenCalled();
+  });
+
+  it("rejects ranges over the bounded analytics horizon", async () => {
+    await expect(
+      buildDowntimeDashboard({
+        organizationId: "org-a",
+        siteId: "site-a",
+        timeZone: "UTC",
+        from: "2023-01-01",
+        to: "2026-03-31",
+        now,
+      }),
+    ).rejects.toMatchObject({ code: "RANGE_TOO_LARGE" });
+
     expect(mocks.queryRaw).not.toHaveBeenCalled();
   });
 
