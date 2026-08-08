@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildCalendarGrid,
   buildPlanningCalendar,
+  buildPlanningCalendarWhere,
   calendarSearchRange,
   currentCalendarMonth,
   parseCalendarMonth,
@@ -47,6 +48,27 @@ describe("maintenance planning calendar", () => {
     const range = calendarSearchRange(buildCalendarGrid({ year: 2026, month: 8, key: "2026-08" }));
     expect(range.start.toISOString()).toBe("2026-07-26T06:00:00.000Z");
     expect(range.end.toISOString()).toBe("2026-09-07T17:59:59.999Z");
+  });
+
+  it("builds a tenant/site-scoped database predicate", () => {
+    const start = new Date("2026-07-26T06:00:00.000Z");
+    const end = new Date("2026-09-07T17:59:59.999Z");
+    expect(
+      buildPlanningCalendarWhere({
+        organizationId: "org-a",
+        siteId: "site-a",
+        start,
+        end,
+      }),
+    ).toEqual({
+      siteId: "site-a",
+      site: { organizationId: "org-a", active: true },
+      status: { not: "CANCELLED" },
+      OR: [
+        { plannedStart: { gte: start, lte: end } },
+        { dueAt: { gte: start, lte: end } },
+      ],
+    });
   });
 
   it("maps planned and due instants to organization-local dates", () => {
