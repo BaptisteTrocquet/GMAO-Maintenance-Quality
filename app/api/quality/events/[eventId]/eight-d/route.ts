@@ -152,7 +152,7 @@ export async function PATCH(
       }),
     );
   } catch (error) {
-    if (error instanceof EightDError) return eightDEError(error);
+    if (error instanceof EightDError) return eightDError(error);
     throw error;
   }
 }
