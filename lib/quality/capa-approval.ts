@@ -164,15 +164,19 @@ export async function approveCapa(input: {
       );
     }
 
-    const createdEvent = await tx.auditLog.findFirst({
-      where: { entityType: CAPA_ENTITY, entityId: input.eventId, action: "CAPA_DRAFT_CREATED" },
-      orderBy: { createdAt: "asc" },
+    const lastDraftEdit = await tx.auditLog.findFirst({
+      where: {
+        entityType: CAPA_ENTITY,
+        entityId: input.eventId,
+        action: { in: ["CAPA_DRAFT_CREATED", "CAPA_DRAFT_UPDATED"] },
+      },
+      orderBy: { createdAt: "desc" },
       select: { actorId: true },
     });
-    if (createdEvent?.actorId && createdEvent.actorId === input.approverId) {
+    if (lastDraftEdit?.actorId && lastDraftEdit.actorId === input.approverId) {
       throw new CapaApprovalError(
         "CAPA_SELF_APPROVAL_NOT_ALLOWED",
-        "The CAPA draft author cannot approve their own CAPA plan",
+        "The user who last authored or edited the CAPA draft cannot approve it",
       );
     }
 
