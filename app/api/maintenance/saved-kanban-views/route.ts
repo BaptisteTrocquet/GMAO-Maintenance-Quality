@@ -63,6 +63,7 @@ export async function GET(request: Request) {
 
   const auth = await authorize(request, parsed.data.organizationId, parsed.data.siteId);
   if (auth instanceof Response) return auth;
+  if (!auth) return apiError(500, "AUTH_CONTEXT_MISSING", "Authenticated request context is unavailable");
 
   return apiData(
     await listSavedKanbanViews({
@@ -86,6 +87,7 @@ export async function POST(request: Request) {
 
   const auth = await authorize(request, parsed.data.organizationId, parsed.data.siteId);
   if (auth instanceof Response) return auth;
+  if (!auth) return apiError(500, "AUTH_CONTEXT_MISSING", "Authenticated request context is unavailable");
 
   try {
     return apiData(
@@ -113,6 +115,7 @@ export async function DELETE(request: Request) {
 
   const auth = await authorize(request, parsed.data.organizationId, parsed.data.siteId);
   if (auth instanceof Response) return auth;
+  if (!auth) return apiError(500, "AUTH_CONTEXT_MISSING", "Authenticated request context is unavailable");
 
   try {
     return apiData(
