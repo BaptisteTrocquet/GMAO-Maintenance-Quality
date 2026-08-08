@@ -62,6 +62,8 @@ For OIDC deployments:
 
 The production image already runs as unprivileged user `nextjs` (UID 1001). Preserve that boundary.
 
+The final image deliberately removes the global npm/Corepack/Yarn package-manager toolchain after the standalone Next.js server has been built. Production executes `node server.js`; package managers are build-time tools, not runtime dependencies. Keeping them out of the final filesystem reduces the image attack surface and prevents vulnerabilities in bundled package-manager dependencies from becoming production-image findings. Do not re-add npm or Yarn to the runtime image merely for operational convenience; run migrations and other release tooling as separate controlled jobs/images.
+
 At the orchestrator level, additionally prefer:
 
 - `no-new-privileges`;
@@ -148,6 +150,7 @@ The `npm run hardening:check` gate validates repository-controlled invariants in
 - non-root production runtime;
 - standalone production output;
 - persistent local-storage boundary;
+- removal of build-only global npm/Corepack/Yarn tooling from the final runtime image;
 - no secret-like Docker build arguments or baked secret environment values;
 - exclusion of `.env`, backups, private keys, PEM material and `.npmrc` from Docker context;
 - empty secret placeholders in `.env.example`;
@@ -167,6 +170,7 @@ Before exposing a deployment to users, confirm:
 - private PostgreSQL and storage administration surfaces;
 - secrets injected at runtime and absent from images/logs;
 - non-root container with hardened runtime security options;
+- no build-time package manager/toolchain left in the final application runtime;
 - durable document storage and verified backups;
 - exact trusted-proxy configuration;
 - internal access policy for health/readiness/metrics;
