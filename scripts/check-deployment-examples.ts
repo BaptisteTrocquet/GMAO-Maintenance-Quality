@@ -10,6 +10,7 @@ async function read(relativePath: string) {
 
 async function main() {
   assertDeploymentExamples({
+    dockerfile: await read("Dockerfile"),
     compose: await read("deploy/compose/docker-compose.production.yml"),
     kubernetesApp: await read("deploy/kubernetes/app.yaml"),
     kubernetesMigration: await read("deploy/kubernetes/migrate-job.yaml"),
