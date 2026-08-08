@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { headers } from "next/headers";
 import { db } from "@/lib/db";
 import { getReorderAlerts } from "@/lib/inventory/reorder";
@@ -71,6 +72,10 @@ export default async function InventoryPage() {
         <div>
           <div className="title">Inventory</div>
           <div className="muted">Spare parts, warehouses and equipment relationships.</div>
+        </div>
+        <div className="asset-status">
+          <Link className="badge" href="/inventory/purchase-requests">Purchase requests</Link>
+          <Link className="badge" href="/inventory/cycle-counts">Cycle counts</Link>
         </div>
       </div>
 
