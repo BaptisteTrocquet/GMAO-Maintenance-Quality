@@ -139,6 +139,49 @@ describe("work order triage API", () => {
     });
   });
 
+  it("audits a manager calendar reschedule through the existing triage path", async () => {
+    const response = await PATCH(
+      request({
+        organizationId: "org-a",
+        siteId: "site-a",
+        plannedStart: "2026-08-12T06:00:00.000Z",
+      }),
+      params,
+    );
+
+    await expectStatus(response, 200);
+    expect(mocks.workOrderUpdate).toHaveBeenCalledWith({
+      where: { id: "wo-1" },
+      data: expect.objectContaining({
+        plannedStart: new Date("2026-08-12T06:00:00.000Z"),
+      }),
+    });
+    expect(mocks.auditCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        actorId: "manager-1",
+        entityType: "WorkOrder",
+        entityId: "wo-1",
+        action: "TRIAGED",
+      }),
+    });
+  });
+
+  it("blocks a technician from calendar rescheduling before any write or audit", async () => {
+    mocks.authenticateRequest.mockResolvedValue(auth("TECHNICIAN"));
+    const response = await PATCH(
+      request({
+        organizationId: "org-a",
+        siteId: "site-a",
+        plannedStart: "2026-08-12T06:00:00.000Z",
+      }),
+      params,
+    );
+
+    await expectStatus(response, 403);
+    expect(mocks.workOrderUpdate).not.toHaveBeenCalled();
+    expect(mocks.auditCreate).not.toHaveBeenCalled();
+  });
+
   it("blocks a technician from triage and assignment fields", async () => {
     mocks.authenticateRequest.mockResolvedValue(auth("TECHNICIAN"));
     const response = await PATCH(
