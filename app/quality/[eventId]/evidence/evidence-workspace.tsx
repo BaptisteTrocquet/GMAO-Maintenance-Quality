@@ -64,9 +64,11 @@ export default function EvidenceWorkspace({
   const [fileInputKey, setFileInputKey] = useState(0);
   const [description, setDescription] = useState("");
   const [busy, setBusy] = useState(false);
+  const [removingId, setRemovingId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<{ kind: "success" | "error"; message: string } | null>(null);
 
   const closed = eventStatus === "CLOSED";
+  const scopeQuery = `organizationId=${encodeURIComponent(organizationId)}&siteId=${encodeURIComponent(siteId)}`;
   const controlStyle = {
     width: "100%",
     padding: "9px 11px",
@@ -118,6 +120,40 @@ export default function EvidenceWorkspace({
     }
   }
 
+  async function removeEvidence(evidenceId: string) {
+    setRemovingId(evidenceId);
+    setFeedback(null);
+    try {
+      const response = await fetch(
+        `/api/quality/events/${eventId}/evidence/${evidenceId}/file?${scopeQuery}`,
+        { method: "DELETE" },
+      );
+      const body = (await response.json()) as {
+        data?: { storageDeleted?: boolean };
+        error?: { message?: string };
+      };
+      if (!response.ok) {
+        throw new Error(body.error?.message ?? "Evidence removal failed");
+      }
+      setEvidence((current) => current.filter((item) => item.id !== evidenceId));
+      setFeedback({
+        kind: body.data?.storageDeleted === false ? "error" : "success",
+        message:
+          body.data?.storageDeleted === false
+            ? "Evidence was removed from the register, but storage cleanup needs attention."
+            : "Evidence removed from the active register and audited.",
+      });
+      router.refresh();
+    } catch (error) {
+      setFeedback({
+        kind: "error",
+        message: error instanceof Error ? error.message : "Evidence removal failed",
+      });
+    } finally {
+      setRemovingId(null);
+    }
+  }
+
   return (
     <div className="grid" style={{ gap: 18 }}>
       <section className="card">
@@ -134,6 +170,7 @@ export default function EvidenceWorkspace({
                   <th>Description</th>
                   <th>Added by</th>
                   <th>Added</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -153,6 +190,26 @@ export default function EvidenceWorkspace({
                     <td>{item.description ?? "—"}</td>
                     <td>{item.actorName}</td>
                     <td>{formatDate(item.createdAt)}</td>
+                    <td>
+                      <a
+                        href={`/api/quality/events/${eventId}/evidence/${item.id}/file?${scopeQuery}`}
+                      >
+                        Download
+                      </a>
+                      {!closed ? (
+                        <>
+                          {" · "}
+                          <button
+                            type="button"
+                            onClick={() => removeEvidence(item.id)}
+                            disabled={removingId === item.id}
+                            style={{ border: 0, padding: 0, background: "transparent", textDecoration: "underline", cursor: "pointer" }}
+                          >
+                            {removingId === item.id ? "Removing…" : "Remove"}
+                          </button>
+                        </>
+                      ) : null}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -197,6 +254,7 @@ export default function EvidenceWorkspace({
               <input
                 key={fileInputKey}
                 type="file"
+                accept=".pdf,.png,.jpg,.jpeg,.webp,.txt,.csv,.docx,.xlsx,.zip"
                 onChange={(event) => setFile(event.target.files?.[0] ?? null)}
                 style={{ ...controlStyle, marginTop: 6 }}
               />
@@ -218,7 +276,7 @@ export default function EvidenceWorkspace({
                 disabled={busy || !file}
                 style={{ border: "1px solid #111827", borderRadius: 8, padding: "9px 14px", background: "#111827", color: "white", cursor: "pointer" }}
               >
-                Upload evidence
+                {busy ? "Uploading…" : "Upload evidence"}
               </button>
             </div>
           </div>
