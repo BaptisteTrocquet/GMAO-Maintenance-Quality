@@ -323,20 +323,19 @@ export default function CapaWorkspace({
             >
               Save draft
             </button>
-            <button
-              type="button"
-              onClick={async () => {
-                const saved = await saveDraft();
-                if (saved) await patch({ action: "APPROVE" });
-              }}
-              disabled={!canInvestigate || busy || !objective.trim() || !draftActions.length}
-              style={{ ...buttonStyle, background: "#111827", color: "white", borderColor: "#111827" }}
-            >
-              Approve & activate CAPA
-            </button>
+            {capa?.status === "DRAFT" ? (
+              <button
+                type="button"
+                onClick={() => patch({ action: "APPROVE" })}
+                disabled={!canInvestigate || busy}
+                style={{ ...buttonStyle, background: "#111827", color: "white", borderColor: "#111827" }}
+              >
+                Approve & activate CAPA
+              </button>
+            ) : null}
           </div>
           <p className="muted" style={{ marginBottom: 0 }}>
-            Approval requires an active Quality Manager, Admin or Owner. The CAPA draft author cannot approve their own plan.
+            Save changes first. Approval uses the last saved draft and requires an active Quality Manager, Admin or Owner. The last draft author/editor cannot approve their own plan.
           </p>
         </section>
       ) : null}
