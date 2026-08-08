@@ -86,7 +86,9 @@ export async function GET(request: Request): Promise<Response> {
   }
 
   const authorization = await authorize(request, organizationId, siteId);
-  if ("error" in authorization && authorization.error) return authorization.error;
+  if ("error" in authorization) {
+    return authorization.error ?? apiError(500, "AUTHORIZATION_FAILED", "Authorization failed");
+  }
 
   return apiData(await listBulkActionOptions({ organizationId, siteId }));
 }
@@ -114,7 +116,9 @@ export async function POST(request: Request): Promise<Response> {
     parsed.data.organizationId,
     parsed.data.siteId,
   );
-  if ("error" in authorization && authorization.error) return authorization.error;
+  if ("error" in authorization) {
+    return authorization.error ?? apiError(500, "AUTHORIZATION_FAILED", "Authorization failed");
+  }
 
   try {
     return apiData(
