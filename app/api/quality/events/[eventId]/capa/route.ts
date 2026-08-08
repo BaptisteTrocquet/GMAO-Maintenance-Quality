@@ -142,6 +142,11 @@ function activePlanIntegrityError(current: QualityCapaSnapshot | null, payload: 
   return null;
 }
 
+function authenticationError(auth: Awaited<ReturnType<typeof authenticateRequest>>) {
+  if (!("error" in auth)) return null;
+  return auth.error ?? apiError(401, "UNAUTHENTICATED", "Authentication required");
+}
+
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ eventId: string }> },
@@ -155,7 +160,11 @@ export async function GET(
   }
 
   const auth = await authenticateRequest(request, organizationId);
-  if ("error" in auth) return auth.error;
+  const authError = authenticationError(auth);
+  if (authError) return authError;
+  if (!("session" in auth) || !("tenant" in auth)) {
+    return apiError(401, "UNAUTHENTICATED", "Authentication required");
+  }
   const denied = authorize(auth.tenant.scope, siteId, "quality:read");
   if (denied) return denied;
 
@@ -184,7 +193,11 @@ export async function PUT(
   }
 
   const auth = await authenticateRequest(request, parsed.data.organizationId);
-  if ("error" in auth) return auth.error;
+  const authError = authenticationError(auth);
+  if (authError) return authError;
+  if (!("session" in auth) || !("tenant" in auth)) {
+    return apiError(401, "UNAUTHENTICATED", "Authentication required");
+  }
   const denied = authorize(auth.tenant.scope, parsed.data.siteId, "quality:manage");
   if (denied) return denied;
 
@@ -233,7 +246,11 @@ export async function PATCH(
   }
 
   const auth = await authenticateRequest(request, parsed.data.organizationId);
-  if ("error" in auth) return auth.error;
+  const authError = authenticationError(auth);
+  if (authError) return authError;
+  if (!("session" in auth) || !("tenant" in auth)) {
+    return apiError(401, "UNAUTHENTICATED", "Authentication required");
+  }
   const denied = authorize(auth.tenant.scope, parsed.data.siteId, "quality:manage");
   if (denied) return denied;
 
