@@ -1,22 +1,25 @@
 import { db } from "@/lib/db";
+import {
+  localCalendarDate,
+  localDateStartUtc,
+  shiftCalendarDate,
+} from "@/lib/analytics/date-range";
 
 export const BACKLOG_DETAIL_LIMIT = 10;
 
 const OPEN_STATUSES = ["REQUESTED", "APPROVED", "PLANNED", "IN_PROGRESS", "BLOCKED"] as const;
 
-function daysBefore(now: Date, days: number) {
-  return new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
-}
-
 export async function buildBacklogDashboard(input: {
   organizationId: string;
   siteId: string;
+  timeZone: string;
   now?: Date;
 }) {
   const now = input.now ?? new Date();
-  const sevenDaysAgo = daysBefore(now, 7);
-  const thirtyDaysAgo = daysBefore(now, 30);
-  const ninetyDaysAgo = daysBefore(now, 90);
+  const today = localCalendarDate(now, input.timeZone);
+  const sevenDayBoundary = localDateStartUtc(shiftCalendarDate(today, -6), input.timeZone);
+  const thirtyDayBoundary = localDateStartUtc(shiftCalendarDate(today, -29), input.timeZone);
+  const ninetyDayBoundary = localDateStartUtc(shiftCalendarDate(today, -89), input.timeZone);
   const scope = {
     siteId: input.siteId,
     site: { organizationId: input.organizationId, active: true },
@@ -50,15 +53,15 @@ export async function buildBacklogDashboard(input: {
     db.workOrder.count({ where: { ...openScope, plannedStart: null } }),
     db.workOrder.count({ where: { ...openScope, priority: "URGENT" } }),
     db.workOrder.count({
-      where: { ...openScope, requestedAt: { gt: sevenDaysAgo, lte: now } },
+      where: { ...openScope, requestedAt: { gte: sevenDayBoundary, lte: now } },
     }),
     db.workOrder.count({
-      where: { ...openScope, requestedAt: { lte: sevenDaysAgo, gt: thirtyDaysAgo } },
+      where: { ...openScope, requestedAt: { gte: thirtyDayBoundary, lt: sevenDayBoundary } },
     }),
     db.workOrder.count({
-      where: { ...openScope, requestedAt: { lte: thirtyDaysAgo, gt: ninetyDaysAgo } },
+      where: { ...openScope, requestedAt: { gte: ninetyDayBoundary, lt: thirtyDayBoundary } },
     }),
-    db.workOrder.count({ where: { ...openScope, requestedAt: { lte: ninetyDaysAgo } } }),
+    db.workOrder.count({ where: { ...openScope, requestedAt: { lt: ninetyDayBoundary } } }),
     db.workOrder.findMany({
       where: openScope,
       select: {
@@ -79,6 +82,7 @@ export async function buildBacklogDashboard(input: {
   const totalOpen = requested + approved + planned + inProgress + blocked;
   return {
     generatedAt: now.toISOString(),
+    timezone: input.timeZone,
     empty: totalOpen === 0,
     totalOpen,
     overdue,
