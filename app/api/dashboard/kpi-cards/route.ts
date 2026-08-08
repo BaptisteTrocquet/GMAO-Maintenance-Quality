@@ -41,7 +41,9 @@ export async function GET(request: Request): Promise<Response> {
   if (!parsed.success) return apiError(400, "INVALID_QUERY", "organizationId and siteId are required");
 
   const access = await authorize(request, parsed.data.organizationId, parsed.data.siteId);
-  if ("error" in access) return access.error;
+  if ("error" in access) {
+    return access.error ?? apiError(401, "UNAUTHENTICATED", "Authentication required");
+  }
   return apiData(
     await getDashboardKpiConfig({
       organizationId: parsed.data.organizationId,
@@ -62,7 +64,9 @@ export async function PATCH(request: Request): Promise<Response> {
   if (!parsed.success) return apiError(400, "INVALID_BODY", "Valid organizationId, siteId and KPI cards are required", parsed.error.flatten());
 
   const access = await authorize(request, parsed.data.organizationId, parsed.data.siteId);
-  if ("error" in access) return access.error;
+  if ("error" in access) {
+    return access.error ?? apiError(401, "UNAUTHENTICATED", "Authentication required");
+  }
   try {
     return apiData(
       await saveDashboardKpiConfig({
