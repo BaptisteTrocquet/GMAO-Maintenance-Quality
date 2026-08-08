@@ -59,7 +59,9 @@ export async function POST(
   }
 
   const auth = await authenticateRequest(request, parsed.data.organizationId);
-  if ("error" in auth) return auth.error;
+  if ("error" in auth) {
+    return auth.error ?? apiError(500, "AUTHENTICATION_FAILED", "Authentication could not be completed");
+  }
 
   const { workOrderId } = await context.params;
 
