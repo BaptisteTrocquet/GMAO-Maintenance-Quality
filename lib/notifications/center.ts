@@ -19,6 +19,8 @@ export type NotificationCenterItem = {
   href: string;
   occurredAt: Date;
   dueAt: Date | null;
+  dismissible: boolean;
+  reminderId: string | null;
 };
 
 function severityRank(value: NotificationSeverity) {
@@ -43,52 +45,33 @@ export async function buildNotificationCenter(input: {
   const now = input.now ?? new Date();
   const through = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
   const items: NotificationCenterItem[] = [];
+  const dueWorkOrderIds = new Set<string>();
 
   if (can(input.role, "work:read")) {
-    const [workOrders, reminders] = await Promise.all([
-      db.workOrder.findMany({
-        where: {
-          siteId: input.siteId,
-          site: { organizationId: input.organizationId, active: true },
-          status: { notIn: ["COMPLETED", "CANCELLED"] },
-          dueAt: { lte: through },
-        },
-        select: {
-          id: true,
-          number: true,
-          title: true,
-          status: true,
-          priority: true,
-          dueAt: true,
-          updatedAt: true,
-          asset: { select: { code: true } },
-        },
-        orderBy: { dueAt: "asc" },
-        take: NOTIFICATION_WORK_QUERY_LIMIT,
-      }),
-      db.maintenanceReminder.findMany({
-        where: {
-          siteId: input.siteId,
-          site: { organizationId: input.organizationId, active: true },
-          status: "ACTIVE",
-          remindAt: { lte: now },
-          workOrder: { status: { notIn: ["COMPLETED", "CANCELLED"] } },
-        },
-        select: {
-          id: true,
-          title: true,
-          assetCode: true,
-          dueAt: true,
-          remindAt: true,
-          workOrderId: true,
-        },
-        orderBy: { dueAt: "asc" },
-        take: NOTIFICATION_WORK_QUERY_LIMIT,
-      }),
-    ]);
+    const workOrders = await db.workOrder.findMany({
+      where: {
+        siteId: input.siteId,
+        site: { organizationId: input.organizationId, active: true },
+        status: { notIn: ["COMPLETED", "CANCELLED"] },
+        dueAt: { lte: through },
+      },
+      select: {
+        id: true,
+        number: true,
+        title: true,
+        status: true,
+        priority: true,
+        dueAt: true,
+        updatedAt: true,
+        asset: { select: { code: true } },
+      },
+      orderBy: { dueAt: "asc" },
+      take: NOTIFICATION_WORK_QUERY_LIMIT,
+    });
 
     for (const workOrder of workOrders) {
       if (!workOrder.dueAt) continue;
+      dueWorkOrderIds.add(workOrder.id);
       const overdue = workOrder.dueAt.getTime() < now.getTime();
       items.push({
         key: `work:${workOrder.id}:${overdue ? "overdue" : "due"}`,
@@ -99,13 +82,36 @@ export async function buildNotificationCenter(input: {
         href: `/maintenance/${workOrder.id}`,
         occurredAt: workOrder.updatedAt,
         dueAt: workOrder.dueAt,
+        dismissible: false,
+        reminderId: null,
       });
     }
+  }
 
-    const workKeys = new Set(workOrders.map((workOrder) => workOrder.id));
+  if (can(input.role, "maintenance:read")) {
+    const reminders = await db.maintenanceReminder.findMany({
+      where: {
+        siteId: input.siteId,
+        site: { organizationId: input.organizationId, active: true },
+        status: "ACTIVE",
+        remindAt: { lte: now },
+        workOrder: { status: { notIn: ["COMPLETED", "CANCELLED"] } },
+      },
+      select: {
+        id: true,
+        title: true,
+        assetCode: true,
+        dueAt: true,
+        remindAt: true,
+        workOrderId: true,
+      },
+      orderBy: { dueAt: "asc" },
+      take: NOTIFICATION_WORK_QUERY_LIMIT,
+    });
+
     for (const reminder of reminders) {
       // A due/overdue work-order notification is more actionable than a duplicate reminder for the same WO.
-      if (workKeys.has(reminder.workOrderId)) continue;
+      if (dueWorkOrderIds.has(reminder.workOrderId)) continue;
       items.push({
         key: `reminder:${reminder.id}`,
         kind: "MAINTENANCE_REMINDER",
@@ -115,6 +121,8 @@ export async function buildNotificationCenter(input: {
         href: `/maintenance/${reminder.workOrderId}`,
         occurredAt: reminder.remindAt,
         dueAt: reminder.dueAt,
+        dismissible: true,
+        reminderId: reminder.id,
       });
     }
   }
@@ -134,6 +142,8 @@ export async function buildNotificationCenter(input: {
         href: "/inventory",
         occurredAt: now,
         dueAt: null,
+        dismissible: false,
+        reminderId: null,
       });
     }
   }
