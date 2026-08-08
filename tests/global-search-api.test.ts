@@ -3,12 +3,17 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   authenticateRequest: vi.fn(),
   searchGlobal: vi.fn(),
+  siteFindFirst: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/request-auth", () => ({
   authenticateRequest: mocks.authenticateRequest,
 }));
-
+vi.mock("@/lib/db", () => ({
+  db: {
+    site: { findFirst: mocks.siteFindFirst },
+  },
+}));
 vi.mock("@/lib/search/global-search", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/search/global-search")>();
   return { ...actual, searchGlobal: mocks.searchGlobal };
@@ -47,6 +52,7 @@ describe("global search API", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.authenticateRequest.mockResolvedValue(auth());
+    mocks.siteFindFirst.mockResolvedValue({ id: "site-a" });
     mocks.searchGlobal.mockResolvedValue([
       {
         kind: "ASSET",
@@ -65,6 +71,7 @@ describe("global search API", () => {
 
     expect(response.status).toBe(400);
     expect(mocks.authenticateRequest).not.toHaveBeenCalled();
+    expect(mocks.siteFindFirst).not.toHaveBeenCalled();
     expect(mocks.searchGlobal).not.toHaveBeenCalled();
   });
 
@@ -73,6 +80,10 @@ describe("global search API", () => {
 
     expect(response.status).toBe(200);
     expect(mocks.authenticateRequest).toHaveBeenCalledWith(expect.any(Request), "org-a");
+    expect(mocks.siteFindFirst).toHaveBeenCalledWith({
+      where: { id: "site-a", organizationId: "org-a", active: true },
+      select: { id: true },
+    });
     expect(mocks.searchGlobal).toHaveBeenCalledWith({
       organizationId: "org-a",
       siteId: "site-a",
@@ -91,10 +102,11 @@ describe("global search API", () => {
     const response = requireResponse(await GET(request("pump", "site-b")));
 
     expect(response.status).toBe(403);
+    expect(mocks.siteFindFirst).not.toHaveBeenCalled();
     expect(mocks.searchGlobal).not.toHaveBeenCalled();
   });
 
-  it("allows all-site membership without relying on a category permission", async () => {
+  it("validates all-sites membership against a real active site in the organization", async () => {
     mocks.authenticateRequest.mockResolvedValue(
       auth({ role: "QUALITY_MANAGER", allSites: true, siteIds: [] }),
     );
@@ -102,12 +114,28 @@ describe("global search API", () => {
     const response = requireResponse(await GET(request("audit", "site-b")));
 
     expect(response.status).toBe(200);
+    expect(mocks.siteFindFirst).toHaveBeenCalledWith({
+      where: { id: "site-b", organizationId: "org-a", active: true },
+      select: { id: true },
+    });
     expect(mocks.searchGlobal).toHaveBeenCalledWith({
       organizationId: "org-a",
       siteId: "site-b",
       role: "QUALITY_MANAGER",
       query: "audit",
     });
+  });
+
+  it("rejects an arbitrary or cross-organization site even for all-sites membership", async () => {
+    mocks.authenticateRequest.mockResolvedValue(
+      auth({ role: "QUALITY_MANAGER", allSites: true, siteIds: [] }),
+    );
+    mocks.siteFindFirst.mockResolvedValue(null);
+
+    const response = requireResponse(await GET(request("audit", "foreign-site")));
+
+    expect(response.status).toBe(404);
+    expect(mocks.searchGlobal).not.toHaveBeenCalled();
   });
 
   it("normalizes whitespace before invoking the search engine", async () => {
@@ -130,6 +158,7 @@ describe("global search API", () => {
     const response = requireResponse(await GET(request()));
 
     expect(response.status).toBe(401);
+    expect(mocks.siteFindFirst).not.toHaveBeenCalled();
     expect(mocks.searchGlobal).not.toHaveBeenCalled();
   });
 });
