@@ -131,7 +131,8 @@ describe("inventory purchase requests", () => {
 
   it("allows edits only while the purchase request is in DRAFT", async () => {
     await createPurchaseRequest(createInput);
-    const snapshot = { ...auditSnapshot(), status: "SUBMITTED" };
+    const snapshot = auditSnapshot();
+    snapshot.status = "SUBMITTED";
     mocks.auditFindFirst.mockResolvedValue({ afterJson: JSON.stringify(snapshot) });
 
     await expect(
