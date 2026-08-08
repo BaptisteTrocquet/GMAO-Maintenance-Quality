@@ -121,6 +121,30 @@ Both backends share the same key validation: absolute paths, traversal segments,
 
 The credential-vault E12 story is intentionally separate. Object-storage deployment credentials remain infrastructure/server configuration rather than tenant-managed connector credentials.
 
+## Identity-provider adapters
+
+`lib/auth/provider.ts` already defines the provider-neutral `AuthenticationProvider` contract consumed by `loginWithProvider()`. `lib/auth/oidc-provider.ts` now supplies the first production adapter: generic OpenID Connect ID-token verification suitable for standards-compliant providers such as Microsoft Entra ID, Okta, Auth0 and Keycloak when configured with their issuer/client/JWKS metadata.
+
+The OIDC adapter is explicitly organization-scoped. Every verification input carries `organizationId`, and a mismatched organization is rejected before any key lookup or network request. It does not provision users: after a token is cryptographically verified, existing login behavior still resolves a pre-existing active OpenGMAO user by normalized email and creates the normal application session. This prevents an external IdP from silently creating or granting local accounts.
+
+Verification is fail-closed and checks:
+
+- HTTPS issuer and JWKS endpoints with no embedded credentials or fragments
+- exact issuer match
+- configured client ID in `aud`
+- `RS256` only, with a matching RSA signing key selected by `kid`
+- signature validity
+- required `sub`, email and `exp` claims
+- expiration plus bounded clock tolerance, optional `nbf`, and future `iat` rejection
+- optional strict `email_verified=true`
+- configurable email and display-name claim mapping
+
+JWKS retrieval reuses the platform public-IP DNS validation before connecting, pins the HTTPS connection to the validated public address while preserving TLS SNI/Host, applies a 5-second timeout, limits the response to 256 KiB and does not follow redirects. Supported signing keys are cached briefly; an unknown `kid` forces one refresh so normal key rotation works without accepting arbitrary keys.
+
+Provider/network/parser exceptions are converted to a failed verification (`null`) rather than exposing upstream diagnostics or token material. OIDC metadata in `.env.example` is public configuration; no OIDC client secret is required for ID-token verification in this primitive.
+
+`tests/oidc-provider.test.ts` covers signed-token verification, issuer/audience/time/algorithm/signature rejection, organization isolation before network access, claim mapping, optional verified-email enforcement, key rotation/cache refresh, fail-closed upstream errors and environment factory configuration.
+
 ## Existing webhook primitive
 
 Signed outbound webhooks are documented separately in `docs/WEBHOOKS.md`. Their existing DNS validation and IP-pinned HTTPS delivery are reused by the REST connector pattern so both outbound integration paths share the same public-network trust boundary.
