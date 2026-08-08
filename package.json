@@ -7,6 +7,9 @@
   "engines": {
     "node": ">=22 <23"
   },
+  "prisma": {
+    "schema": "./prisma"
+  },
   "scripts": {
     "dev": "next dev",
     "prebuild": "npm run upgrade:check && npm run hardening:check && npm run release:check",
