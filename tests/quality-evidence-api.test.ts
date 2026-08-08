@@ -42,6 +42,13 @@ function auth(role: "VIEWER" | "QUALITY_MANAGER") {
   };
 }
 
+function expectResponse(response: Response | undefined, status: number) {
+  expect(response).toBeDefined();
+  if (!response) throw new Error("expected response");
+  expect(response.status).toBe(status);
+  return response;
+}
+
 const eventContext = { params: Promise.resolve({ eventId: "event-1" }) };
 const evidenceContext = {
   params: Promise.resolve({ eventId: "event-1", evidenceId: "evidence-1" }),
@@ -65,17 +72,22 @@ describe("quality evidence API", () => {
   it("lets viewers list and download evidence", async () => {
     mocks.authenticateRequest.mockResolvedValue(auth("VIEWER"));
 
-    const listResponse = await LIST(
-      new Request("http://localhost/api/quality/events/event-1/evidence?organizationId=org-a&siteId=site-a"),
-      eventContext,
+    const listResponse = expectResponse(
+      await LIST(
+        new Request("http://localhost/api/quality/events/event-1/evidence?organizationId=org-a&siteId=site-a"),
+        eventContext,
+      ),
+      200,
     );
     expect(listResponse.status).toBe(200);
 
-    const downloadResponse = await DOWNLOAD(
-      new Request("http://localhost/api/quality/events/event-1/evidence/evidence-1?organizationId=org-a&siteId=site-a"),
-      evidenceContext,
+    const downloadResponse = expectResponse(
+      await DOWNLOAD(
+        new Request("http://localhost/api/quality/events/event-1/evidence/evidence-1?organizationId=org-a&siteId=site-a"),
+        evidenceContext,
+      ),
+      200,
     );
-    expect(downloadResponse.status).toBe(200);
     expect(downloadResponse.headers.get("content-type")).toBe("text/plain");
     expect(downloadResponse.headers.get("cache-control")).toBe("private, no-store");
     expect(downloadResponse.headers.get("x-content-sha256")).toBe("a".repeat(64));
@@ -86,15 +98,16 @@ describe("quality evidence API", () => {
     const form = new FormData();
     form.set("file", new File(["proof"], "proof.txt", { type: "text/plain" }));
 
-    const response = await POST(
-      new Request("http://localhost/api/quality/events/event-1/evidence?organizationId=org-a&siteId=site-a", {
-        method: "POST",
-        body: form,
-      }),
-      eventContext,
+    expectResponse(
+      await POST(
+        new Request("http://localhost/api/quality/events/event-1/evidence?organizationId=org-a&siteId=site-a", {
+          method: "POST",
+          body: form,
+        }),
+        eventContext,
+      ),
+      403,
     );
-
-    expect(response.status).toBe(403);
     expect(mocks.attachQualityEvidence).not.toHaveBeenCalled();
   });
 
@@ -105,15 +118,16 @@ describe("quality evidence API", () => {
     form.set("kind", "INSPECTION");
     form.set("description", "Synthetic inspection proof");
 
-    const response = await POST(
-      new Request("http://localhost/api/quality/events/event-1/evidence?organizationId=org-a&siteId=site-a", {
-        method: "POST",
-        body: form,
-      }),
-      eventContext,
+    expectResponse(
+      await POST(
+        new Request("http://localhost/api/quality/events/event-1/evidence?organizationId=org-a&siteId=site-a", {
+          method: "POST",
+          body: form,
+        }),
+        eventContext,
+      ),
+      201,
     );
-
-    expect(response.status).toBe(201);
     expect(mocks.attachQualityEvidence).toHaveBeenCalledWith(
       expect.objectContaining({
         organizationId: "org-a",
@@ -129,15 +143,16 @@ describe("quality evidence API", () => {
   });
 
   it("rejects upload scope before reading multipart data", async () => {
-    const response = await POST(
-      new Request("http://localhost/api/quality/events/event-1/evidence", {
-        method: "POST",
-        body: "not multipart",
-      }),
-      eventContext,
+    expectResponse(
+      await POST(
+        new Request("http://localhost/api/quality/events/event-1/evidence", {
+          method: "POST",
+          body: "not multipart",
+        }),
+        eventContext,
+      ),
+      400,
     );
-
-    expect(response.status).toBe(400);
     expect(mocks.authenticateRequest).not.toHaveBeenCalled();
     expect(mocks.attachQualityEvidence).not.toHaveBeenCalled();
   });
