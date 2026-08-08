@@ -10,6 +10,7 @@ import {
   PLANNING_CALENDAR_LIMIT,
   shiftCalendarMonth,
 } from "@/lib/maintenance/planning-calendar";
+import ReschedulableCalendarDay from "./reschedulable-day";
 
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const MAX_DAY_ITEMS = 8;
@@ -20,22 +21,6 @@ function monthLabel(year: number, month: number) {
     year: "numeric",
     timeZone: "UTC",
   }).format(new Date(Date.UTC(year, month - 1, 1)));
-}
-
-function statusLabel(value: string) {
-  return value.toLowerCase().replaceAll("_", " ");
-}
-
-function eventTiming(item: {
-  planned: boolean;
-  due: boolean;
-  plannedTime: string | null;
-  dueTime: string | null;
-}) {
-  const values: string[] = [];
-  if (item.planned) values.push(`Start${item.plannedTime ? ` ${item.plannedTime}` : ""}`);
-  if (item.due) values.push(`Due${item.dueTime ? ` ${item.dueTime}` : ""}`);
-  return values.join(" · ");
 }
 
 export default async function PlanningCalendarPage({
@@ -131,6 +116,27 @@ export default async function PlanningCalendarPage({
       teamName: workOrder.team?.name ?? null,
     })),
   });
+  const serializableDays = days.map((day) => ({
+    dateKey: day.dateKey,
+    dayOfMonth: day.dayOfMonth,
+    inMonth: day.inMonth,
+    items: day.items.map((item) => ({
+      id: item.id,
+      number: item.number,
+      title: item.title,
+      status: item.status,
+      priority: item.priority,
+      assetCode: item.assetCode,
+      assigneeName: item.assigneeName,
+      teamName: item.teamName,
+      planned: item.planned,
+      due: item.due,
+      plannedTime: item.plannedTime,
+      dueTime: item.dueTime,
+      plannedStart: item.plannedStart?.toISOString() ?? null,
+      dueAt: item.dueAt?.toISOString() ?? null,
+    })),
+  }));
   const previous = shiftCalendarMonth(month, -1);
   const next = shiftCalendarMonth(month, 1);
 
@@ -159,6 +165,9 @@ export default async function PlanningCalendarPage({
             {monthLabel(next.year, next.month)} →
           </Link>
         </div>
+        <p className="muted" style={{ marginBottom: 0 }}>
+          Drag a START or DUE control onto another day to reschedule it. Keyboard users can activate the same control and enter a local date. The original local clock time is preserved.
+        </p>
       </section>
 
       {truncated ? (
@@ -181,42 +190,16 @@ export default async function PlanningCalendarPage({
           </div>
 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(140px, 1fr))", gap: 8 }}>
-            {days.map((day) => {
-              const hiddenCount = Math.max(day.items.length - MAX_DAY_ITEMS, 0);
-              return (
-                <section
-                  className="card"
-                  key={day.dateKey}
-                  aria-label={`${day.dateKey}, ${day.items.length} work-order event${day.items.length === 1 ? "" : "s"}`}
-                  style={{ minHeight: 170, padding: 10, opacity: day.inMonth ? 1 : 0.62 }}
-                >
-                  <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
-                    <strong>{day.dayOfMonth}</strong>
-                    {day.items.length ? <span className="badge">{day.items.length}</span> : null}
-                  </div>
-                  <div style={{ display: "grid", gap: 7, marginTop: 8 }}>
-                    {day.items.slice(0, MAX_DAY_ITEMS).map((item) => (
-                      <article key={`${day.dateKey}-${item.id}`} style={{ borderTop: "1px solid #e5e7eb", paddingTop: 7 }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", gap: 6 }}>
-                          <Link className="table-link" href={`/maintenance/${item.id}`}>
-                            {item.number}
-                          </Link>
-                          <span className="badge">{item.priority}</span>
-                        </div>
-                        <div style={{ fontSize: 13, marginTop: 3 }}>{item.title}</div>
-                        <div className="muted" style={{ fontSize: 12, marginTop: 3 }}>
-                          {eventTiming(item)} · {statusLabel(item.status)}
-                        </div>
-                        <div className="muted" style={{ fontSize: 12 }}>
-                          {item.assetCode ?? "No asset"} · {item.assigneeName ?? item.teamName ?? "Unassigned"}
-                        </div>
-                      </article>
-                    ))}
-                    {hiddenCount ? <div className="muted">+{hiddenCount} more on this day</div> : null}
-                  </div>
-                </section>
-              );
-            })}
+            {serializableDays.map((day) => (
+              <ReschedulableCalendarDay
+                key={day.dateKey}
+                organizationId={organizationId}
+                siteId={siteId}
+                timeZone={site.organization.timezone}
+                day={day}
+                maxItems={MAX_DAY_ITEMS}
+              />
+            ))}
           </div>
         </div>
       </section>
