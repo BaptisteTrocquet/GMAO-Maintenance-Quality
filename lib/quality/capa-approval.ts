@@ -1,6 +1,12 @@
 import { db } from "@/lib/db";
 
 const CAPA_ENTITY_TYPE = "QualityCapa";
+const DRAFT_EDIT_ACTIONS = new Set(["CREATED", "PLAN_UPDATED"]);
+const DRAFT_CYCLE_BOUNDARIES = new Set([
+  "APPROVED",
+  "EFFECTIVENESS_FAILED",
+  "REOPENED",
+]);
 
 export class CapaApprovalGuardError extends Error {
   constructor(
@@ -39,18 +45,36 @@ export async function assertIndependentCapaApprover(input: {
     );
   }
 
-  const draftEdits = await db.auditLog.findMany({
+  const timeline = await db.auditLog.findMany({
     where: {
       entityType: CAPA_ENTITY_TYPE,
       entityId: input.eventId,
-      action: { in: ["CREATED", "PLAN_UPDATED"] },
+      action: {
+        in: [
+          ...DRAFT_EDIT_ACTIONS,
+          ...DRAFT_CYCLE_BOUNDARIES,
+        ],
+      },
     },
-    select: { actorId: true },
+    orderBy: { createdAt: "asc" },
+    select: { action: true, actorId: true },
   });
-  if (draftEdits.some((edit) => edit.actorId === input.approverId)) {
+
+  const currentDraftAuthors = new Set<string>();
+  for (const entry of timeline) {
+    if (DRAFT_CYCLE_BOUNDARIES.has(entry.action)) {
+      currentDraftAuthors.clear();
+      continue;
+    }
+    if (DRAFT_EDIT_ACTIONS.has(entry.action) && entry.actorId) {
+      currentDraftAuthors.add(entry.actorId);
+    }
+  }
+
+  if (currentDraftAuthors.has(input.approverId)) {
     throw new CapaApprovalGuardError(
       "CAPA_SELF_APPROVAL_NOT_ALLOWED",
-      "A user who authored or edited the CAPA draft cannot approve it",
+      "A user who authored or edited the current CAPA draft cannot approve it",
     );
   }
 }
