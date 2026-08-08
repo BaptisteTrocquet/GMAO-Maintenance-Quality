@@ -2,6 +2,8 @@
 
 import { useEffect } from "react";
 
+import { logger } from "@/lib/logger";
+
 export default function ErrorPage({
   error,
   reset,
@@ -10,8 +12,11 @@ export default function ErrorPage({
   reset: () => void;
 }) {
   useEffect(() => {
-    console.error("Application route error", error);
-  }, [error]);
+    logger.error("application_route_error", {
+      component: "app-error-boundary",
+      digest: error.digest ?? null,
+    });
+  }, [error.digest]);
 
   return (
     <div className="card">
