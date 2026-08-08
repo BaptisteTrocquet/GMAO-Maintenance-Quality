@@ -112,7 +112,36 @@ describe("work order triage API", () => {
     });
   });
 
-  it("lets a manager set priority, category, assignee and planning dates", async () => {
+  it("lets a manager reschedule planning dates and records an audit event", async () => {
+    const response = await PATCH(
+      request({
+        organizationId: "org-a",
+        siteId: "site-a",
+        plannedStart: "2026-08-08T08:00:00.000Z",
+        dueAt: "2026-08-08T12:00:00.000Z",
+      }),
+      params,
+    );
+
+    await expectStatus(response, 200);
+    expect(mocks.workOrderUpdate).toHaveBeenCalledWith({
+      where: { id: "wo-1" },
+      data: expect.objectContaining({
+        plannedStart: new Date("2026-08-08T08:00:00.000Z"),
+        dueAt: new Date("2026-08-08T12:00:00.000Z"),
+      }),
+    });
+    expect(mocks.auditCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        actorId: "manager-1",
+        entityType: "WorkOrder",
+        entityId: "wo-1",
+        action: "TRIAGED",
+      }),
+    });
+  });
+
+  it("lets a manager set priority, category and assignee", async () => {
     mocks.membershipFindFirst.mockResolvedValue({ id: "membership-1" });
     const response = await PATCH(
       request({
@@ -121,8 +150,6 @@ describe("work order triage API", () => {
         priority: "HIGH",
         type: "SAFETY",
         assigneeId: "tech-1",
-        plannedStart: "2026-08-08T08:00:00.000Z",
-        dueAt: "2026-08-08T12:00:00.000Z",
       }),
       params,
     );
@@ -137,6 +164,22 @@ describe("work order triage API", () => {
         assigneeId: "tech-1",
       }),
     });
+  });
+
+  it("blocks a technician from calendar rescheduling fields", async () => {
+    mocks.authenticateRequest.mockResolvedValue(auth("TECHNICIAN"));
+    const response = await PATCH(
+      request({
+        organizationId: "org-a",
+        siteId: "site-a",
+        plannedStart: "2026-08-09T08:00:00.000Z",
+      }),
+      params,
+    );
+
+    await expectStatus(response, 403);
+    expect(mocks.workOrderUpdate).not.toHaveBeenCalled();
+    expect(mocks.auditCreate).not.toHaveBeenCalled();
   });
 
   it("blocks a technician from triage and assignment fields", async () => {
