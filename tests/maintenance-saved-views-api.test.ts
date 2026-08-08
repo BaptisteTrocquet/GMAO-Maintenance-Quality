@@ -40,6 +40,12 @@ import { DELETE } from "@/app/api/maintenance/saved-views/[viewId]/route";
 
 const scope = { role: "TECHNICIAN" };
 
+function expectResponse(response: Response | undefined) {
+  expect(response).toBeDefined();
+  if (!response) throw new Error("expected response");
+  return response;
+}
+
 describe("saved work-order views API", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -53,8 +59,10 @@ describe("saved work-order views API", () => {
   });
 
   it("lists only the authenticated user's views after work:read authorization", async () => {
-    const response = await GET(
-      new Request("https://example.test/api/maintenance/saved-views?organizationId=org-a&siteId=site-a"),
+    const response = expectResponse(
+      await GET(
+        new Request("https://example.test/api/maintenance/saved-views?organizationId=org-a&siteId=site-a"),
+      ),
     );
 
     expect(response.status).toBe(200);
@@ -67,19 +75,21 @@ describe("saved work-order views API", () => {
   });
 
   it("lets a reader save a personal compound filter without requiring work:manage", async () => {
-    const response = await POST(
-      new Request("https://example.test/api/maintenance/saved-views", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          organizationId: "org-a",
-          siteId: "site-a",
-          name: "Urgent unassigned",
-          dueFilter: "OVERDUE",
-          priorityFilter: "URGENT",
-          assignmentFilter: "UNASSIGNED",
+    const response = expectResponse(
+      await POST(
+        new Request("https://example.test/api/maintenance/saved-views", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            organizationId: "org-a",
+            siteId: "site-a",
+            name: "Urgent unassigned",
+            dueFilter: "OVERDUE",
+            priorityFilter: "URGENT",
+            assignmentFilter: "UNASSIGNED",
+          }),
         }),
-      }),
+      ),
     );
 
     expect(response.status).toBe(200);
@@ -100,8 +110,10 @@ describe("saved work-order views API", () => {
       throw new mocks.AccessDeniedError("Denied");
     });
 
-    const response = await GET(
-      new Request("https://example.test/api/maintenance/saved-views?organizationId=org-a&siteId=site-a"),
+    const response = expectResponse(
+      await GET(
+        new Request("https://example.test/api/maintenance/saved-views?organizationId=org-a&siteId=site-a"),
+      ),
     );
 
     expect(response.status).toBe(403);
@@ -109,13 +121,15 @@ describe("saved work-order views API", () => {
   });
 
   it("deletes only through the authenticated user and requested tenant/site scope", async () => {
-    const response = await DELETE(
-      new Request("https://example.test/api/maintenance/saved-views/view-1", {
-        method: "DELETE",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ organizationId: "org-a", siteId: "site-a" }),
-      }),
-      { params: Promise.resolve({ viewId: "view-1" }) },
+    const response = expectResponse(
+      await DELETE(
+        new Request("https://example.test/api/maintenance/saved-views/view-1", {
+          method: "DELETE",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ organizationId: "org-a", siteId: "site-a" }),
+        }),
+        { params: Promise.resolve({ viewId: "view-1" }) },
+      ),
     );
 
     expect(response.status).toBe(200);
