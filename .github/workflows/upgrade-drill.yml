@@ -52,6 +52,7 @@ jobs:
 
     env:
       DATABASE_URL: postgresql://gmao:gmao@127.0.0.1:5432/gmao_upgrade_drill?schema=public
+      PSQL_DATABASE_URL: postgresql://gmao:gmao@127.0.0.1:5432/gmao_upgrade_drill
 
     steps:
       - name: Checkout candidate source
@@ -114,7 +115,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -At <<'SQL' | LC_ALL=C sort > /tmp/before-upgrade.txt
+          psql "$PSQL_DATABASE_URL" -X -v ON_ERROR_STOP=1 -At <<'SQL' | LC_ALL=C sort > /tmp/before-upgrade.txt
           SELECT 'organization|' || "id" || '|' || "slug" || '|' || "name" || '|' || "timezone"
             FROM "Organization" WHERE "slug" = 'demo-operations';
           SELECT 'site|' || s."id" || '|' || s."code" || '|' || s."name"
@@ -152,7 +153,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -At <<'SQL' | LC_ALL=C sort > /tmp/after-upgrade.txt
+          psql "$PSQL_DATABASE_URL" -X -v ON_ERROR_STOP=1 -At <<'SQL' | LC_ALL=C sort > /tmp/after-upgrade.txt
           SELECT 'organization|' || "id" || '|' || "slug" || '|' || "name" || '|' || "timezone"
             FROM "Organization" WHERE "slug" = 'demo-operations';
           SELECT 'site|' || s."id" || '|' || s."code" || '|' || s."name"
