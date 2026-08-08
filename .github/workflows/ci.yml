@@ -89,6 +89,65 @@ jobs:
             tar -tzf documents.tar.gz | grep -q 'ci-document.txt'
           )
 
+      - name: Drill production restore into isolated targets
+        shell: bash
+        env:
+          RESTORE_SOURCE_DIR: ${{ runner.temp }}/gmao-backups/gmao-ci
+          RESTORE_DATABASE_URL: postgresql://opengmao:opengmao@localhost:5432/opengmao_restore?schema=public
+          RESTORE_STORAGE_DIR: ${{ runner.temp }}/gmao-restored-documents
+          RESTORE_ACKNOWLEDGE_ISOLATED_TARGET: "true"
+        run: |
+          set -euo pipefail
+
+          source_pg_url="$(node -e '
+            const url = new URL(process.env.DATABASE_URL);
+            url.searchParams.delete("schema");
+            process.stdout.write(url.toString());
+          ')"
+          admin_pg_url="$(node -e '
+            const url = new URL(process.env.DATABASE_URL);
+            url.search = "";
+            url.pathname = "/postgres";
+            process.stdout.write(url.toString());
+          ')"
+          restore_pg_url="$(node -e '
+            const url = new URL(process.env.RESTORE_DATABASE_URL);
+            url.searchParams.delete("schema");
+            process.stdout.write(url.toString());
+          ')"
+
+          cleanup() {
+            psql "$admin_pg_url" --set=ON_ERROR_STOP=1 --command='DROP DATABASE IF EXISTS opengmao_restore WITH (FORCE);' >/dev/null 2>&1 || true
+            rm -rf "$RESTORE_STORAGE_DIR" "${RESTORE_STORAGE_DIR}.second"
+          }
+          trap cleanup EXIT
+          cleanup
+
+          source_org_count="$(psql "$source_pg_url" --tuples-only --no-align --set=ON_ERROR_STOP=1 --command='SELECT count(*) FROM "Organization";' | tr -d '[:space:]')"
+          source_site_count="$(psql "$source_pg_url" --tuples-only --no-align --set=ON_ERROR_STOP=1 --command='SELECT count(*) FROM "Site";' | tr -d '[:space:]')"
+          source_work_order_count="$(psql "$source_pg_url" --tuples-only --no-align --set=ON_ERROR_STOP=1 --command='SELECT count(*) FROM "WorkOrder";' | tr -d '[:space:]')"
+
+          psql "$admin_pg_url" --set=ON_ERROR_STOP=1 --command='CREATE DATABASE opengmao_restore;'
+
+          npm run restore:production
+
+          restored_org_count="$(psql "$restore_pg_url" --tuples-only --no-align --set=ON_ERROR_STOP=1 --command='SELECT count(*) FROM "Organization";' | tr -d '[:space:]')"
+          restored_site_count="$(psql "$restore_pg_url" --tuples-only --no-align --set=ON_ERROR_STOP=1 --command='SELECT count(*) FROM "Site";' | tr -d '[:space:]')"
+          restored_work_order_count="$(psql "$restore_pg_url" --tuples-only --no-align --set=ON_ERROR_STOP=1 --command='SELECT count(*) FROM "WorkOrder";' | tr -d '[:space:]')"
+
+          test "$restored_org_count" = "$source_org_count"
+          test "$restored_site_count" = "$source_site_count"
+          test "$restored_work_order_count" = "$source_work_order_count"
+          test "$(cat "$RESTORE_STORAGE_DIR/ci-document.txt")" = "synthetic controlled document"
+
+          DATABASE_URL="$RESTORE_DATABASE_URL" npm run prisma:status
+          DATABASE_URL="$RESTORE_DATABASE_URL" npm run test:db
+
+          if RESTORE_STORAGE_DIR="${RESTORE_STORAGE_DIR}.second" npm run restore:production; then
+            echo "restore unexpectedly overwrote a non-empty target database" >&2
+            exit 1
+          fi
+
       - name: Database integration smoke check
         run: npm run test:db
 
