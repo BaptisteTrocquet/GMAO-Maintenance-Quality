@@ -23,7 +23,10 @@
     "check": "npm run typecheck && npm run lint && npm run test && npm run sdk:build && npm run examples:check && npm run build",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
-    "prisma:seed": "tsx prisma/seed.ts"
+    "prisma:deploy": "prisma migrate deploy",
+    "prisma:status": "prisma migrate status",
+    "prisma:seed": "tsx prisma/seed.ts",
+    "db:bootstrap": "npm run prisma:generate && npm run prisma:deploy && npm run prisma:seed"
   },
   "dependencies": {
     "@prisma/client": "6.19.3",

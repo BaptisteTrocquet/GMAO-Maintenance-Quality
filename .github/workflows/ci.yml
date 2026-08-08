@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -38,15 +41,19 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
 
-      - name: Install dependencies
-        run: npm install --no-audit --no-fund
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
 
       - name: Generate Prisma client
         run: npm run prisma:generate
 
-      - name: Apply schema to disposable database
-        run: npx prisma db push
+      - name: Apply committed migrations
+        run: npm run prisma:deploy
+
+      - name: Verify migration status
+        run: npm run prisma:status
 
       - name: Seed synthetic demo data
         run: npm run prisma:seed
