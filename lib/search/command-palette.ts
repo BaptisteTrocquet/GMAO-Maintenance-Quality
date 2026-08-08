@@ -38,6 +38,13 @@ export const COMMAND_PALETTE_QUICK_ACTIONS: CommandPaletteItem[] = [
     badge: "ACTION",
   },
   {
+    key: "action:notifications",
+    label: "Notification center",
+    description: "Review actionable maintenance, inventory and quality alerts",
+    href: "/notifications",
+    badge: "ACTION",
+  },
+  {
     key: "action:quality",
     label: "Quality workspace",
     description: "Open quality events and CAPA workflows",
