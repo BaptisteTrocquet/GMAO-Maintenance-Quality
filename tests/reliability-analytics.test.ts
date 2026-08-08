@@ -31,7 +31,7 @@ describe("reliability analytics", () => {
     vi.clearAllMocks();
     mocks.assetFindFirst.mockResolvedValue({ id: "asset-a" });
     mocks.queryRaw
-      .mockResolvedValueOnce([{ sampleCount: 4, hours: 3.25 }])
+      .mockResolvedValueOnce([{ sampleCount: 4, excludedIncomplete: 1, hours: 3.25 }])
       .mockResolvedValueOnce([{ intervalCount: 3, assetCount: 2, hours: 120 }]);
   });
 
@@ -45,24 +45,26 @@ describe("reliability analytics", () => {
       now,
     });
 
-    expect(result.mttr).toEqual({ hours: 3.25, sampleCount: 4 });
+    expect(result.mttr).toEqual({ hours: 3.25, sampleCount: 4, excludedIncomplete: 1 });
     expect(result.mtbf).toEqual({ hours: 120, sampleCount: 3, assetCount: 2 });
     expect(result.range.from).toBe("2026-06-30T22:00:00.000Z");
     expect(result.range.toExclusive).toBe(now.toISOString());
-    expect(result.definitions.mttr).toContain("startedAt to completedAt");
-    expect(result.definitions.mtbf).toContain("successive non-cancelled corrective");
+    expect(result.definitions.mttr).toContain("counted separately");
+    expect(result.definitions.mtbf).toContain("proxy");
 
-    expect(sqlText(0)).toContain('AVG(EXTRACT(EPOCH FROM (wo."completedAt" - wo."startedAt")) / 3600.0)');
+    expect(sqlText(0)).toContain('AVG(\n          EXTRACT(EPOCH FROM (wo."completedAt" - wo."startedAt")) / 3600.0');
+    expect(sqlText(0)).toContain('AS "excludedIncomplete"');
+    expect(sqlText(0)).toContain('wo."startedAt" >= wo."requestedAt"');
     expect(sqlText(0)).toContain("wo.type = 'CORRECTIVE'");
     expect(sqlText(1)).toContain('LAG(wo."requestedAt")');
     expect(sqlText(1)).toContain('PARTITION BY wo."assetId"');
     expect(sqlText(1)).toContain("wo.status <> 'CANCELLED'");
   });
 
-  it("defines missing samples as null KPI values rather than zero hours", async () => {
+  it("defines missing samples as null KPI values while preserving incomplete-data counts", async () => {
     mocks.queryRaw.mockReset();
     mocks.queryRaw
-      .mockResolvedValueOnce([{ sampleCount: 0, hours: null }])
+      .mockResolvedValueOnce([{ sampleCount: 0, excludedIncomplete: 2, hours: null }])
       .mockResolvedValueOnce([{ intervalCount: 0, assetCount: 0, hours: null }]);
 
     const result = await buildReliabilityDashboard({
@@ -72,7 +74,7 @@ describe("reliability analytics", () => {
       now,
     });
 
-    expect(result.mttr).toEqual({ hours: null, sampleCount: 0 });
+    expect(result.mttr).toEqual({ hours: null, sampleCount: 0, excludedIncomplete: 2 });
     expect(result.mtbf).toEqual({ hours: null, sampleCount: 0, assetCount: 0 });
   });
 
