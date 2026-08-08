@@ -5,11 +5,10 @@ const MAX_PAYLOAD_BYTES = 256 * 1024;
 const CHANNEL_PATTERN = /^[a-z0-9][a-z0-9._:-]{0,79}$/;
 const SENSITIVE_KEYS = new Set([
   "authorization",
-  "proxy-authorization",
+  "proxyauthorization",
   "cookie",
-  "set-cookie",
-  "x-api-key",
-  "api-key",
+  "setcookie",
+  "xapikey",
   "apikey",
   "password",
   "secret",
