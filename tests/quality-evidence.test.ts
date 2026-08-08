@@ -94,7 +94,7 @@ describe("quality evidence attachments", () => {
     expect(adapter.delete).toHaveBeenCalledWith(storageKey);
   });
 
-  it("lists only evidence for the exact organization/site/event JSON marker", async () => {
+  it("scopes evidence search with independent compact JSON markers", async () => {
     mocks.auditFindMany.mockResolvedValue([]);
 
     await listQualityEvidence({ organizationId: "org-a", siteId: "site-a", eventId: "event-1" });
@@ -102,13 +102,45 @@ describe("quality evidence attachments", () => {
     expect(mocks.auditFindMany).toHaveBeenCalledWith({
       where: {
         entityType: "QualityEvidenceAttachment",
-        afterJson: {
-          contains: '"organizationId":"org-a","siteId":"site-a","eventId":"event-1"',
-        },
+        AND: [
+          { afterJson: { contains: '"organizationId":"org-a"' } },
+          { afterJson: { contains: '"siteId":"site-a"' } },
+          { afterJson: { contains: '"eventId":"event-1"' } },
+        ],
       },
       include: { actor: { select: { displayName: true } } },
       orderBy: { createdAt: "desc" },
     });
+  });
+
+  it("filters any false-positive audit rows after parsing snapshots", async () => {
+    mocks.auditFindMany.mockResolvedValue([
+      {
+        afterJson: JSON.stringify({
+          id: "evidence-other",
+          eventId: "event-other",
+          organizationId: "org-a",
+          siteId: "site-a",
+          fileName: "other.txt",
+          mimeType: "text/plain",
+          sizeBytes: 1,
+          checksum: "a".repeat(64),
+          storageKey: "quality-evidence/org-a/event-other/evidence-other/checksum",
+          kind: "EVIDENCE",
+          description: null,
+          uploadedById: "quality-1",
+          createdAt: "2026-08-08T00:00:00.000Z",
+        }),
+        actor: { displayName: "Synthetic User" },
+      },
+    ]);
+
+    const result = await listQualityEvidence({
+      organizationId: "org-a",
+      siteId: "site-a",
+      eventId: "event-1",
+    });
+    expect(result).toEqual([]);
   });
 
   it("verifies SHA-256 before returning stored evidence", async () => {
