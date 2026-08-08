@@ -113,7 +113,10 @@ describe("notification center", () => {
       expect.objectContaining({
         where: {
           entityType: "QualityEvent",
-          afterJson: { contains: '"organizationId":"org-a","siteId":"site-a"' },
+          AND: [
+            { afterJson: { contains: '"organizationId":"org-a"' } },
+            { afterJson: { contains: '"siteId":"site-a"' } },
+          ],
         },
         take: NOTIFICATION_QUALITY_SCAN_LIMIT,
       }),
