@@ -1,0 +1,162 @@
+name: Migration safety
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "prisma/schema.prisma"
+      - "prisma/migrations/**"
+      - "package.json"
+      - "package-lock.json"
+      - "scripts/check-migration-policy.ts"
+      - "docs/UPGRADING.md"
+      - ".github/workflows/migration-safety.yml"
+  pull_request:
+    paths:
+      - "prisma/schema.prisma"
+      - "prisma/migrations/**"
+      - "package.json"
+      - "package-lock.json"
+      - "scripts/check-migration-policy.ts"
+      - "docs/UPGRADING.md"
+      - ".github/workflows/migration-safety.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  migration-policy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Verify committed migration policy
+        run: npm run migration:check
+
+  forward-migration-drill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: opengmao
+          POSTGRES_PASSWORD: opengmao
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U opengmao"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+    env:
+      UPGRADE_DATABASE_URL: postgresql://opengmao:opengmao@localhost:5432/opengmao_upgrade?schema=public
+      ADMIN_DATABASE_URL: postgresql://opengmao:opengmao@localhost:5432/postgres
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Drill baseline-to-current forward migrations
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mapfile -t migration_dirs < <(
+            find prisma/migrations -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort
+          )
+          if [ "${#migration_dirs[@]}" -lt 2 ]; then
+            echo "Forward migration drill requires a baseline plus at least one later migration." >&2
+            exit 1
+          fi
+
+          baseline="${migration_dirs[0]}"
+          if [ "$baseline" != "00000000000000_init" ]; then
+            echo "Unexpected migration baseline: $baseline" >&2
+            exit 1
+          fi
+
+          drill_root="$(mktemp -d)"
+          cleanup() {
+            rm -rf "$drill_root"
+            psql "$ADMIN_DATABASE_URL" --set=ON_ERROR_STOP=1 \
+              --command='DROP DATABASE IF EXISTS opengmao_upgrade WITH (FORCE);' \
+              >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          cleanup
+          drill_root="$(mktemp -d)"
+
+          psql "$ADMIN_DATABASE_URL" --set=ON_ERROR_STOP=1 \
+            --command='CREATE DATABASE opengmao_upgrade;' >/dev/null
+
+          mkdir -p "$drill_root/prisma/migrations"
+          cp prisma/schema.prisma "$drill_root/prisma/schema.prisma"
+          cp prisma/migrations/migration_lock.toml "$drill_root/prisma/migrations/migration_lock.toml"
+          cp -R "prisma/migrations/$baseline" "$drill_root/prisma/migrations/$baseline"
+
+          DATABASE_URL="$UPGRADE_DATABASE_URL" \
+            npx prisma migrate deploy --schema="$drill_root/prisma/schema.prisma"
+
+          psql "postgresql://opengmao:opengmao@localhost:5432/opengmao_upgrade" \
+            --set=ON_ERROR_STOP=1 <<'SQL'
+          INSERT INTO "Organization" ("id", "slug", "name", "updatedAt")
+          VALUES ('upgrade-drill-org', 'upgrade-drill-org', 'Upgrade drill sentinel', CURRENT_TIMESTAMP);
+          SQL
+
+          for migration_dir in "${migration_dirs[@]:1}"; do
+            cp -R "prisma/migrations/$migration_dir" \
+              "$drill_root/prisma/migrations/$migration_dir"
+          done
+
+          DATABASE_URL="$UPGRADE_DATABASE_URL" \
+            npx prisma migrate deploy --schema="$drill_root/prisma/schema.prisma"
+          DATABASE_URL="$UPGRADE_DATABASE_URL" \
+            npx prisma migrate status --schema="$drill_root/prisma/schema.prisma"
+
+          sentinel_count="$(
+            psql "postgresql://opengmao:opengmao@localhost:5432/opengmao_upgrade" \
+              --tuples-only --no-align --set=ON_ERROR_STOP=1 \
+              --command="SELECT count(*) FROM \"Organization\" WHERE \"id\" = 'upgrade-drill-org';" \
+              | tr -d '[:space:]'
+          )"
+          test "$sentinel_count" = "1"
+
+          later_table_count="$(
+            psql "postgresql://opengmao:opengmao@localhost:5432/opengmao_upgrade" \
+              --tuples-only --no-align --set=ON_ERROR_STOP=1 \
+              --command="SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'IntegrationDeadLetter';" \
+              | tr -d '[:space:]'
+          )"
+          test "$later_table_count" = "1"
+
+          applied_count="$(
+            psql "postgresql://opengmao:opengmao@localhost:5432/opengmao_upgrade" \
+              --tuples-only --no-align --set=ON_ERROR_STOP=1 \
+              --command='SELECT count(*) FROM "_prisma_migrations" WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL;' \
+              | tr -d '[:space:]'
+          )"
+          test "$applied_count" = "${#migration_dirs[@]}"
