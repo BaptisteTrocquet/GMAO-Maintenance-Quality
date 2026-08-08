@@ -11,7 +11,7 @@ A story is not complete because the screen appears to work.
 - relevant unit/integration tests added
 - build passes
 - no secret, personal data or organization-specific private data committed
-- schema changes include migration strategy
+- Prisma schema changes include a reviewed versioned migration in `prisma/migrations/`
 - important mutations emit audit events when applicable
 - error and empty states considered
 - responsive behavior checked for user-facing UI
@@ -50,9 +50,12 @@ A story is not complete because the screen appears to work.
 
 ## Pre-merge verification
 
-1. install dependencies
+1. install locked dependencies with `npm ci`
 2. generate Prisma client
-3. apply schema to disposable PostgreSQL
-4. run tests
-5. run build
-6. inspect diff for private/sensitive data and accidental secrets
+3. apply versioned migrations to disposable PostgreSQL with `npm run prisma:migrate:deploy`
+4. verify migration status and schema drift
+5. seed synthetic fixtures and run database smoke checks
+6. run typecheck, lint, tests, SDK/examples checks and build
+7. inspect diff for private/sensitive data and accidental secrets
+
+See `docs/DATABASE_MIGRATIONS.md` for the database workflow and baseline procedure.
