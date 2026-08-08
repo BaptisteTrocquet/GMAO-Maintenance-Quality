@@ -49,6 +49,16 @@ function statusLabel(value: string) {
   return value.toLowerCase().replaceAll("_", " ");
 }
 
+function localTime(value: string | null, timeZone: string) {
+  if (!value) return null;
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone,
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).format(new Date(value));
+}
+
 function WorkOrderCard({
   workOrder,
   planned,
@@ -75,6 +85,8 @@ function WorkOrderCard({
   onDragStart: (workOrderId: string, event: React.DragEvent<HTMLElement>) => void;
 }) {
   const canReschedule = planned || workOrder.plannedStart === null;
+  const displayedPlannedTime = plannedTime ?? localTime(workOrder.plannedStart, timeZone);
+  const displayedDueTime = dueTime ?? localTime(workOrder.dueAt, timeZone);
 
   return (
     <article
@@ -109,8 +121,8 @@ function WorkOrderCard({
         {workOrder.assetCode ?? "No asset"} · {workOrder.assigneeName ?? workOrder.teamName ?? "Unassigned"}
       </div>
       <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
-        {planned ? <span className="badge">START {plannedTime ?? "—"}</span> : null}
-        {due ? <span className="badge">DUE {dueTime ?? "—"}</span> : null}
+        {planned ? <span className="badge">START {displayedPlannedTime ?? "—"}</span> : null}
+        {due ? <span className="badge">DUE {displayedDueTime ?? "—"}</span> : null}
         {!planned && workOrder.plannedStart === null ? <span className="badge">UNSCHEDULED</span> : null}
         <span className="badge">{statusLabel(workOrder.status)}</span>
       </div>
