@@ -96,6 +96,7 @@ export function parseRetryAfter(value: string | null | undefined, now = new Date
     if (!Number.isSafeInteger(seconds)) return null;
     return seconds * 1_000;
   }
+  if (/^[+-]\d+$/.test(trimmed)) return null;
 
   const timestamp = Date.parse(trimmed);
   if (!Number.isFinite(timestamp)) return null;
