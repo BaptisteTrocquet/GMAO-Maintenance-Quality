@@ -2,6 +2,8 @@
 
 import { useEffect } from "react";
 
+import { logger } from "@/lib/logger";
+
 export default function PwaRegister() {
   useEffect(() => {
     if (!("serviceWorker" in navigator)) return;
@@ -9,9 +11,11 @@ export default function PwaRegister() {
     const register = async () => {
       try {
         await navigator.serviceWorker.register("/sw.js", { scope: "/" });
-      } catch (error) {
+      } catch {
         // Registration failure must not break the authenticated application shell.
-        console.warn("PWA service worker registration failed", error);
+        logger.warn("pwa_service_worker_registration_failed", {
+          component: "pwa-register",
+        });
       }
     };
 
