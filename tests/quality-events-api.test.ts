@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => {
   return {
     authenticateRequest: vi.fn(),
     getCapaWorkspace: vi.fn(),
+    getEightDWorkspace: vi.fn(),
     listQualityEvents: vi.fn(),
     createQualityEvent: vi.fn(),
     getQualityEvent: vi.fn(),
@@ -21,6 +22,7 @@ const mocks = vi.hoisted(() => {
 
 vi.mock("@/lib/auth/request-auth", () => ({ authenticateRequest: mocks.authenticateRequest }));
 vi.mock("@/lib/quality/capa", () => ({ getCapaWorkspace: mocks.getCapaWorkspace }));
+vi.mock("@/lib/quality/eight-d", () => ({ getEightDWorkspace: mocks.getEightDWorkspace }));
 vi.mock("@/lib/quality/events", () => ({
   listQualityEvents: mocks.listQualityEvents,
   createQualityEvent: mocks.createQualityEvent,
@@ -74,6 +76,11 @@ describe("quality event APIs", () => {
       rootCause: null,
       capa: null,
     });
+    mocks.getEightDWorkspace.mockResolvedValue({
+      event: { organizationId: "org-a", siteId: "site-a" },
+      eightD: null,
+      capa: null,
+    });
     mocks.listQualityEvents.mockResolvedValue([]);
     mocks.createQualityEvent.mockResolvedValue({
       idempotent: false,
@@ -87,11 +94,9 @@ describe("quality event APIs", () => {
 
   it("lets viewers read quality events in their site scope", async () => {
     mocks.authenticateRequest.mockResolvedValue(auth("VIEWER"));
-
     const response = await listEvents(
       new Request("http://localhost/api/quality/events?organizationId=org-a&siteId=site-a"),
     );
-
     expectStatus(response, 200);
     expect(mocks.listQualityEvents).toHaveBeenCalledWith({
       organizationId: "org-a",
@@ -126,7 +131,6 @@ describe("quality event APIs", () => {
 
   it("lets quality managers create linked idempotent quality events", async () => {
     mocks.authenticateRequest.mockResolvedValue(auth("QUALITY_MANAGER"));
-
     const response = await createEvent(
       new Request("http://localhost/api/quality/events", {
         method: "POST",
@@ -146,7 +150,6 @@ describe("quality event APIs", () => {
         }),
       }),
     );
-
     expectStatus(response, 201);
     expect(mocks.createQualityEvent).toHaveBeenCalledWith({
       organizationId: "org-a",
@@ -166,7 +169,6 @@ describe("quality event APIs", () => {
 
   it("lets quality managers record immediate containment", async () => {
     mocks.authenticateRequest.mockResolvedValue(auth("QUALITY_MANAGER"));
-
     const response = await patchEvent(
       new Request("http://localhost/api/quality/events/event-1", {
         method: "PATCH",
@@ -182,7 +184,6 @@ describe("quality event APIs", () => {
       }),
       eventContext,
     );
-
     expectStatus(response, 200);
     expect(mocks.setImmediateContainment).toHaveBeenCalledWith({
       organizationId: "org-a",
@@ -198,16 +199,11 @@ describe("quality event APIs", () => {
 
   it("routes investigation and closure through explicit transitions", async () => {
     mocks.authenticateRequest.mockResolvedValue(auth("QUALITY_MANAGER"));
-
     const start = await patchEvent(
       new Request("http://localhost/api/quality/events/event-1", {
         method: "PATCH",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          organizationId: "org-a",
-          siteId: "site-a",
-          action: "START_INVESTIGATION",
-        }),
+        body: JSON.stringify({ organizationId: "org-a", siteId: "site-a", action: "START_INVESTIGATION" }),
       }),
       eventContext,
     );
@@ -236,11 +232,8 @@ describe("quality event APIs", () => {
       eventContext,
     );
     expectStatus(close, 200);
-    expect(mocks.getCapaWorkspace).toHaveBeenCalledWith({
-      organizationId: "org-a",
-      siteId: "site-a",
-      eventId: "event-1",
-    });
+    expect(mocks.getCapaWorkspace).toHaveBeenCalledWith({ organizationId: "org-a", siteId: "site-a", eventId: "event-1" });
+    expect(mocks.getEightDWorkspace).toHaveBeenCalledWith({ organizationId: "org-a", siteId: "site-a", eventId: "event-1" });
     expect(mocks.transitionQualityEvent).toHaveBeenCalledWith({
       organizationId: "org-a",
       siteId: "site-a",
@@ -257,11 +250,7 @@ describe("quality event APIs", () => {
       new Request("http://localhost/api/quality/events/event-1", {
         method: "PATCH",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          organizationId: "org-a",
-          siteId: "site-a",
-          action: "CLOSE",
-        }),
+        body: JSON.stringify({ organizationId: "org-a", siteId: "site-a", action: "CLOSE" }),
       }),
       eventContext,
     );
@@ -271,24 +260,12 @@ describe("quality event APIs", () => {
 
   it("returns event detail with its audit timeline to readers", async () => {
     mocks.authenticateRequest.mockResolvedValue(auth("VIEWER"));
-
     const response = await getEvent(
-      new Request(
-        "http://localhost/api/quality/events/event-1?organizationId=org-a&siteId=site-a",
-      ),
+      new Request("http://localhost/api/quality/events/event-1?organizationId=org-a&siteId=site-a"),
       eventContext,
     );
-
     expectStatus(response, 200);
-    expect(mocks.getQualityEvent).toHaveBeenCalledWith({
-      organizationId: "org-a",
-      siteId: "site-a",
-      eventId: "event-1",
-    });
-    expect(mocks.listQualityEventTimeline).toHaveBeenCalledWith({
-      organizationId: "org-a",
-      siteId: "site-a",
-      eventId: "event-1",
-    });
+    expect(mocks.getQualityEvent).toHaveBeenCalledWith({ organizationId: "org-a", siteId: "site-a", eventId: "event-1" });
+    expect(mocks.listQualityEventTimeline).toHaveBeenCalledWith({ organizationId: "org-a", siteId: "site-a", eventId: "event-1" });
   });
 });
