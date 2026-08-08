@@ -21,11 +21,11 @@ Read these runbooks before rollout:
 
 ## Shared release boundary
 
-Application and migration images must come from the **same reviewed release source**. The final application runtime intentionally contains only the standalone Node server; npm and Prisma CLI are removed from it. Migration tooling therefore uses a separate short-lived image built from Docker target `builder`.
+Application and migration images must come from the **same reviewed release source**. The final application runtime intentionally contains only the standalone Node server; npm and Prisma CLI are removed from it. Migration tooling therefore uses the dedicated short-lived Docker target `migration`, which contains the committed Prisma migrations and CLI but still runs as UID `1001` and removes global package managers.
 
 ```sh
 docker build --target runner -t registry.example.invalid/opengmao:<release> .
-docker build --target builder -t registry.example.invalid/opengmao-migrations:<release> .
+docker build --target migration -t registry.example.invalid/opengmao-migrations:<release> .
 ```
 
 Push those images through the production registry workflow, record their immutable digests, and deploy immutable release tags or digests rather than floating tags such as `latest`.
@@ -73,7 +73,7 @@ docker compose --env-file /etc/opengmao/runtime.env \
   -f deploy/compose/docker-compose.production.yml up -d app
 ```
 
-The migration service is a release tool, not a sidecar. It executes `prisma migrate deploy` once and exits.
+The migration service is a release tool, not a sidecar. It executes `prisma migrate deploy` once and exits. Its image should be built from the same source revision as the application image using Docker target `migration`.
 
 ## TLS, proxies and rate limiting
 
@@ -109,7 +109,7 @@ Startup/liveness probe `/api/health`; readiness probes `/api/ready`.
 
 Both committed Kubernetes manifests use an all-zero SHA-256 digest placeholder. It cannot identify a real release. Replace each placeholder with the exact reviewed registry digest before applying the manifest.
 
-The migration image must be built from Docker target `builder` for the same source revision as the application `runner` image. Do not reuse the stripped runtime image for migration tooling.
+The migration image must be built from Docker target `migration` for the same source revision as the application `runner` image. Do not reuse the stripped runtime image for migration tooling and do not use the root-owned `builder` stage as the production migration image.
 
 ## Runtime secret
 
