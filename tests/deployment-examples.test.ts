@@ -52,7 +52,13 @@ describe("production deployment examples", () => {
   });
 
   it("keeps migration tooling separate from the hardened application runtime", () => {
-    expect(dockerfile).toContain("FROM builder AS migration");
+    expect(dockerfile).toContain("FROM deps AS migration-deps");
+    expect(dockerfile).toContain("npm prune --omit=dev --no-audit --no-fund");
+    expect(dockerfile).toContain("FROM base AS migration");
+    expect(dockerfile).toContain(
+      "COPY --from=migration-deps --chown=nextjs:nodejs /app/node_modules ./node_modules",
+    );
+    expect(dockerfile).not.toMatch(/FROM builder AS migration\b/);
     expect(dockerfile).toContain('CMD ["./node_modules/.bin/prisma", "migrate", "deploy"]');
     expect(compose).toContain('command: ["./node_modules/.bin/prisma", "migrate", "deploy"]');
     expect(kubernetesMigration).toContain('"migration"');
