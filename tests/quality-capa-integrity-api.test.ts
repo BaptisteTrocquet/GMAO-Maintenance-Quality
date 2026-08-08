@@ -92,6 +92,12 @@ function request(actions: unknown[]) {
   });
 }
 
+function requireResponse(response: Response | undefined) {
+  expect(response).toBeDefined();
+  if (!response) throw new Error("expected response");
+  return response;
+}
+
 describe("activated CAPA action integrity", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -110,7 +116,7 @@ describe("activated CAPA action integrity", () => {
   });
 
   it("rejects silent removal of an action after CAPA activation", async () => {
-    const response = await PUT(request([]), context);
+    const response = requireResponse(await PUT(request([]), context));
     expect(response.status).toBe(409);
     expect(await response.json()).toMatchObject({
       error: { code: "CAPA_ACTION_REMOVAL_FORBIDDEN" },
@@ -119,18 +125,20 @@ describe("activated CAPA action integrity", () => {
   });
 
   it("rejects rewriting a completed action definition", async () => {
-    const response = await PUT(
-      request([
-        {
-          id: "action-1",
-          type: "CORRECTIVE",
-          title: "Rewrite completed action",
-          description: "Synthetic detail",
-          ownerId: "owner-1",
-          dueAt: "2026-08-15T10:00:00.000Z",
-        },
-      ]),
-      context,
+    const response = requireResponse(
+      await PUT(
+        request([
+          {
+            id: "action-1",
+            type: "CORRECTIVE",
+            title: "Rewrite completed action",
+            description: "Synthetic detail",
+            ownerId: "owner-1",
+            dueAt: "2026-08-15T10:00:00.000Z",
+          },
+        ]),
+        context,
+      ),
     );
     expect(response.status).toBe(409);
     expect(await response.json()).toMatchObject({
@@ -140,18 +148,20 @@ describe("activated CAPA action integrity", () => {
   });
 
   it("allows the unchanged completed action to remain in an active plan", async () => {
-    const response = await PUT(
-      request([
-        {
-          id: completedAction.id,
-          type: completedAction.type,
-          title: completedAction.title,
-          description: completedAction.description,
-          ownerId: completedAction.ownerId,
-          dueAt: completedAction.dueAt,
-        },
-      ]),
-      context,
+    const response = requireResponse(
+      await PUT(
+        request([
+          {
+            id: completedAction.id,
+            type: completedAction.type,
+            title: completedAction.title,
+            description: completedAction.description,
+            ownerId: completedAction.ownerId,
+            dueAt: completedAction.dueAt,
+          },
+        ]),
+        context,
+      ),
     );
     expect(response.status).toBe(200);
     expect(mocks.saveCapaPlan).toHaveBeenCalledTimes(1);
