@@ -12,6 +12,7 @@ import {
   setCapaActionStatus,
   startCapaVerification,
   verifyCapaEffectiveness,
+  type QualityCapaSnapshot,
 } from "@/lib/quality/capa";
 
 const actionSchema = z.object({
@@ -32,6 +33,8 @@ const saveSchema = z.object({
     acceptanceCriteria: z.string().trim().max(5000),
   }),
 });
+
+type SavePayload = z.infer<typeof saveSchema>;
 
 const activateSchema = z.object({
   organizationId: z.string().min(1),
@@ -100,6 +103,45 @@ function capaError(error: QualityCapaError) {
   return apiError(status, error.code, error.message);
 }
 
+function activePlanIntegrityError(current: QualityCapaSnapshot | null, payload: SavePayload) {
+  if (!current || current.status !== "ACTIVE") return null;
+
+  const proposedById = new Map(
+    payload.actions.flatMap((action) => (action.id ? [[action.id, action] as const] : [])),
+  );
+
+  for (const existing of current.actions) {
+    const proposed = proposedById.get(existing.id);
+    if (!proposed) {
+      return apiError(
+        409,
+        "CAPA_ACTION_REMOVAL_FORBIDDEN",
+        "Activated CAPA actions cannot be removed; complete or explicitly transition them instead",
+      );
+    }
+
+    if (existing.status === "COMPLETED") {
+      const proposedDescription = proposed.description?.trim() || null;
+      const proposedDueAt = new Date(proposed.dueAt).toISOString();
+      if (
+        proposed.type !== existing.type ||
+        proposed.title.trim() !== existing.title ||
+        proposedDescription !== existing.description ||
+        proposed.ownerId !== existing.ownerId ||
+        proposedDueAt !== existing.dueAt
+      ) {
+        return apiError(
+          409,
+          "COMPLETED_CAPA_ACTION_IMMUTABLE",
+          "Completed CAPA action definition cannot be rewritten",
+        );
+      }
+    }
+  }
+
+  return null;
+}
+
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ eventId: string }> },
@@ -145,6 +187,17 @@ export async function PUT(
   if ("error" in auth) return auth.error;
   const denied = authorize(auth.tenant.scope, parsed.data.siteId, "quality:manage");
   if (denied) return denied;
+
+  const workspace = await getCapaWorkspace({
+    organizationId: parsed.data.organizationId,
+    siteId: parsed.data.siteId,
+    eventId,
+  });
+  if (!workspace) {
+    return apiError(404, "QUALITY_EVENT_NOT_FOUND", "Quality event not found in site scope");
+  }
+  const integrityError = activePlanIntegrityError(workspace.capa, parsed.data);
+  if (integrityError) return integrityError;
 
   try {
     return apiData(
