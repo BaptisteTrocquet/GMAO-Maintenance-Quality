@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { movePlannedStartToDate } from "@/lib/maintenance/planning-calendar";
 
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const DRAG_TYPE = "application/x-open-gmao-work-order";
@@ -95,18 +94,13 @@ export default function CalendarPlanner({
     setBusyId(payload.id);
     setError(null);
     try {
-      const plannedStart = movePlannedStartToDate({
-        plannedStart: payload.plannedStart ? new Date(payload.plannedStart) : null,
-        targetDateKey,
-        timeZone,
-      });
-      const response = await fetch(`/api/work-orders/${payload.id}`, {
+      const response = await fetch(`/api/work-orders/${payload.id}/reschedule`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           organizationId,
           siteId,
-          plannedStart: plannedStart.toISOString(),
+          targetDateKey,
         }),
       });
       const body = (await response.json()) as { error?: { message?: string } };
