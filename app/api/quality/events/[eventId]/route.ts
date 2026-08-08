@@ -3,6 +3,7 @@ import { AccessDeniedError, assertSitePermission } from "@/lib/access-control";
 import { apiData, apiError } from "@/lib/api-response";
 import { authenticateRequest } from "@/lib/auth/request-auth";
 import { getCapaWorkspace } from "@/lib/quality/capa";
+import { getEightDWorkspace } from "@/lib/quality/eight-d";
 import {
   getQualityEvent,
   listQualityEventTimeline,
@@ -144,16 +145,27 @@ export async function PATCH(
     }
 
     if (parsed.data.action === "CLOSE") {
-      const workspace = await getCapaWorkspace({
+      const common = {
         organizationId: parsed.data.organizationId,
         siteId: parsed.data.siteId,
         eventId,
-      });
-      if (workspace?.capa && workspace.capa.status !== "CLOSED") {
+      };
+      const [capaWorkspace, eightDWorkspace] = await Promise.all([
+        getCapaWorkspace(common),
+        getEightDWorkspace(common),
+      ]);
+      if (capaWorkspace?.capa && capaWorkspace.capa.status !== "CLOSED") {
         return apiError(
           409,
           "CAPA_INCOMPLETE",
           "Close or resolve the active CAPA before closing this quality event",
+        );
+      }
+      if (eightDWorkspace?.eightD && eightDWorkspace.eightD.status !== "COMPLETED") {
+        return apiError(
+          409,
+          "EIGHT_D_INCOMPLETE",
+          "Complete the active 8D before closing this quality event",
         );
       }
     }
