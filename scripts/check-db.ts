@@ -6,7 +6,6 @@ import {
 import { PrismaConnectorCredentialRecordStore } from "@/lib/integrations/prisma-credential-store";
 
 const prisma = new PrismaClient();
-const CREDENTIAL_ID = "cred_db_smoke";
 const CONNECTOR_ID = "db-smoke-connector";
 
 function key(version: string, fill: number) {
@@ -33,10 +32,9 @@ async function main() {
   });
   if (!organization) throw new Error("Synthetic demo organization is unavailable");
 
-  await prisma.auditLog.deleteMany({
-    where: { entityType: "ConnectorCredential", entityId: CREDENTIAL_ID },
+  await prisma.connectorCredentialRecord.deleteMany({
+    where: { organizationId: organization.id, connectorId: CONNECTOR_ID },
   });
-  await prisma.connectorCredentialRecord.deleteMany({ where: { id: CREDENTIAL_ID } });
 
   const store = new PrismaConnectorCredentialRecordStore(prisma);
   const vault = new EncryptedConnectorCredentialVault(store, keyProvider("v1"));
@@ -44,13 +42,12 @@ async function main() {
   const created = await vault.put({
     organizationId: organization.id,
     connectorId: CONNECTOR_ID,
-    credentialId: CREDENTIAL_ID,
     label: "Synthetic DB smoke credential",
     secret: { kind: "bearer", token: firstSecret },
   });
 
   const persisted = await prisma.connectorCredentialRecord.findUnique({
-    where: { id: CREDENTIAL_ID },
+    where: { id: created.id },
   });
   if (!persisted || JSON.stringify(persisted).includes(firstSecret)) {
     throw new Error("Connector credential was not persisted safely");
@@ -96,7 +93,7 @@ async function main() {
   if (rotated.keyVersion !== "v2") throw new Error("Credential key rotation did not persist");
 
   const auditRows = await prisma.auditLog.findMany({
-    where: { entityType: "ConnectorCredential", entityId: CREDENTIAL_ID },
+    where: { entityType: "ConnectorCredential", entityId: created.id },
     orderBy: { createdAt: "asc" },
   });
   const auditJson = JSON.stringify(auditRows);
@@ -113,7 +110,7 @@ async function main() {
     connectorId: CONNECTOR_ID,
     credentialId: created.id,
   });
-  if (await prisma.connectorCredentialRecord.findUnique({ where: { id: CREDENTIAL_ID } })) {
+  if (await prisma.connectorCredentialRecord.findUnique({ where: { id: created.id } })) {
     throw new Error("Connector credential deletion did not persist");
   }
 
