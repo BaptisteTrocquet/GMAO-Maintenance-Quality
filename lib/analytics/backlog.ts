@@ -17,6 +17,7 @@ export async function buildBacklogDashboard(input: {
 }) {
   const now = input.now ?? new Date();
   const today = localCalendarDate(now, input.timeZone);
+  const dueSoonExclusive = localDateStartUtc(shiftCalendarDate(today, 7), input.timeZone);
   const sevenDayBoundary = localDateStartUtc(shiftCalendarDate(today, -6), input.timeZone);
   const thirtyDayBoundary = localDateStartUtc(shiftCalendarDate(today, -29), input.timeZone);
   const ninetyDayBoundary = localDateStartUtc(shiftCalendarDate(today, -89), input.timeZone);
@@ -36,6 +37,7 @@ export async function buildBacklogDashboard(input: {
     inProgress,
     blocked,
     overdue,
+    dueSoon,
     unplanned,
     urgent,
     age0To6,
@@ -50,6 +52,7 @@ export async function buildBacklogDashboard(input: {
     db.workOrder.count({ where: { ...scope, status: "IN_PROGRESS" } }),
     db.workOrder.count({ where: { ...scope, status: "BLOCKED" } }),
     db.workOrder.count({ where: { ...openScope, dueAt: { lt: now } } }),
+    db.workOrder.count({ where: { ...openScope, dueAt: { gte: now, lt: dueSoonExclusive } } }),
     db.workOrder.count({ where: { ...openScope, plannedStart: null } }),
     db.workOrder.count({ where: { ...openScope, priority: "URGENT" } }),
     db.workOrder.count({
@@ -86,6 +89,7 @@ export async function buildBacklogDashboard(input: {
     empty: totalOpen === 0,
     totalOpen,
     overdue,
+    dueSoon,
     unplanned,
     urgent,
     status: {
