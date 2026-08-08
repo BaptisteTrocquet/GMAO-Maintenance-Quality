@@ -1,12 +1,13 @@
 import type { MembershipRole } from "@prisma/client";
 import { db } from "@/lib/db";
 import { getReorderAlerts } from "@/lib/inventory/reorder";
-import { listActiveMaintenanceReminders } from "@/lib/maintenance/reminders";
 import { can } from "@/lib/permissions";
 
 export const NOTIFICATION_CENTER_LIMIT = 80;
 export const NOTIFICATION_QUALITY_SCAN_LIMIT = 500;
-const WORK_ORDER_LIMIT = 30;
+export const NOTIFICATION_WORK_ORDER_LIMIT = 30;
+export const NOTIFICATION_REMINDER_LIMIT = 30;
+export const NOTIFICATION_REORDER_LIMIT = 20;
 
 export type NotificationCenterKind =
   | "MAINTENANCE_REMINDER"
@@ -77,7 +78,7 @@ async function listRecentQualityNotifications(input: {
   organizationId: string;
   siteId: string;
 }) {
-  const marker = `"organizationId":"${input.organizationId}","siteId":"${input.siteId}"`;
+  const marker = `\"organizationId\":\"${input.organizationId}\",\"siteId\":\"${input.siteId}\"`;
   const logs = await db.auditLog.findMany({
     where: { entityType: "QualityEvent", afterJson: { contains: marker } },
     orderBy: { createdAt: "desc" },
@@ -108,9 +109,24 @@ export async function buildNotificationCenter(input: {
   const now = input.now ?? new Date();
   const [reminders, overdueWorkOrders, reorderAlerts, qualityEvents] = await Promise.all([
     can(input.role, "maintenance:read")
-      ? listActiveMaintenanceReminders({
-          organizationId: input.organizationId,
-          siteId: input.siteId,
+      ? db.maintenanceReminder.findMany({
+          where: {
+            siteId: input.siteId,
+            site: { organizationId: input.organizationId, active: true },
+            status: "ACTIVE",
+            remindAt: { lte: now },
+            workOrder: { status: { notIn: ["COMPLETED", "CANCELLED"] } },
+          },
+          select: {
+            id: true,
+            title: true,
+            assetCode: true,
+            dueAt: true,
+            remindAt: true,
+            workOrderId: true,
+          },
+          orderBy: { dueAt: "asc" },
+          take: NOTIFICATION_REMINDER_LIMIT,
         })
       : Promise.resolve([]),
     can(input.role, "work:read")
@@ -131,7 +147,7 @@ export async function buildNotificationCenter(input: {
             team: { select: { name: true } },
           },
           orderBy: [{ dueAt: "asc" }, { priority: "desc" }],
-          take: WORK_ORDER_LIMIT,
+          take: NOTIFICATION_WORK_ORDER_LIMIT,
         })
       : Promise.resolve([]),
     can(input.role, "inventory:read")
@@ -144,7 +160,7 @@ export async function buildNotificationCenter(input: {
 
   const items: NotificationCenterItem[] = [];
 
-  for (const reminder of reminders ?? []) {
+  for (const reminder of reminders) {
     items.push({
       id: `maintenance:${reminder.id}`,
       kind: "MAINTENANCE_REMINDER",
@@ -179,7 +195,7 @@ export async function buildNotificationCenter(input: {
     });
   }
 
-  for (const alert of reorderAlerts) {
+  for (const alert of reorderAlerts.slice(0, NOTIFICATION_REORDER_LIMIT)) {
     items.push({
       id: `reorder:${alert.policy.id}`,
       kind: "REORDER_ALERT",
