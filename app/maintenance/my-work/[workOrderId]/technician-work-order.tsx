@@ -3,6 +3,12 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import WorkOrderCameraAttachments from "@/app/maintenance/[workOrderId]/work-order-camera-attachments";
+import {
+  fetchTechnicianRead,
+  isOfflineReadPartition,
+  OFFLINE_CACHED_AT_HEADER,
+  OFFLINE_SOURCE_HEADER,
+} from "@/lib/pwa/technician-read-cache-client";
 
 type WorkOrderStatus =
   | "REQUESTED"
@@ -45,6 +51,8 @@ type ApiResponse<T> = {
   error?: { code?: string; message?: string };
 };
 
+const OFFLINE_PARTITION_HEADER = "x-opengmao-offline-partition";
+
 const buttonStyle = {
   minHeight: 44,
   padding: "10px 14px",
@@ -60,14 +68,25 @@ function formatDate(value: string | null) {
   }).format(new Date(value));
 }
 
+function cacheLabel(cachedAt: string) {
+  const parsed = Date.parse(cachedAt);
+  if (!Number.isFinite(parsed)) return "Offline copy";
+  return `Offline copy · cached ${new Intl.DateTimeFormat(undefined, {
+    dateStyle: "short",
+    timeStyle: "short",
+  }).format(new Date(parsed))}`;
+}
+
 export default function TechnicianWorkOrder({
   organizationId,
   siteId,
   workOrderId,
+  offlinePartition,
 }: {
   organizationId: string;
   siteId: string;
   workOrderId: string;
+  offlinePartition: string;
 }) {
   const [workOrder, setWorkOrder] = useState<TechnicianWorkOrderData | null>(null);
   const [laborMinutes, setLaborMinutes] = useState("0");
@@ -78,32 +97,54 @@ export default function TechnicianWorkOrder({
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [offlineRead, setOfflineRead] = useState(false);
+  const [cachedAt, setCachedAt] = useState("");
+  const [online, setOnline] = useState(true);
+  const [cachePartition, setCachePartition] = useState(offlinePartition);
+
+  useEffect(() => {
+    const update = () => setOnline(navigator.onLine);
+    update();
+    window.addEventListener("online", update);
+    window.addEventListener("offline", update);
+    return () => {
+      window.removeEventListener("online", update);
+      window.removeEventListener("offline", update);
+    };
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
     const query = new URLSearchParams({ organizationId, siteId });
+    const endpoint = `/api/work-orders/technician/${encodeURIComponent(workOrderId)}?${query.toString()}`;
     try {
-      const response = await fetch(
-        `/api/work-orders/technician/${encodeURIComponent(workOrderId)}?${query.toString()}`,
-        { cache: "no-store" },
-      );
+      const response = await fetchTechnicianRead(endpoint, cachePartition);
       const body = (await response.json()) as ApiResponse<{ workOrder: TechnicianWorkOrderData }>;
       if (!response.ok || !body.data) {
         throw new Error(body.error?.message ?? "Unable to load technician work order");
       }
+
+      const confirmedPartition = response.headers.get(OFFLINE_PARTITION_HEADER) ?? "";
+      if (isOfflineReadPartition(confirmedPartition) && confirmedPartition !== cachePartition) {
+        setCachePartition(confirmedPartition);
+      }
+
       const next = body.data.workOrder;
       setWorkOrder(next);
       setLaborMinutes(String(next.laborMinutes ?? 0));
       setDowntimeMinutes(String(next.downtimeMinutes ?? 0));
       setCompletionNote(next.completionNote ?? "");
       setCheckItems(next.checkItems);
+      const fromCache = response.headers.get(OFFLINE_SOURCE_HEADER) === "cache";
+      setOfflineRead(fromCache);
+      setCachedAt(fromCache ? response.headers.get(OFFLINE_CACHED_AT_HEADER) ?? "" : "");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Unable to load technician work order");
     } finally {
       setLoading(false);
     }
-  }, [organizationId, siteId, workOrderId]);
+  }, [cachePartition, organizationId, siteId, workOrderId]);
 
   useEffect(() => {
     void load();
@@ -122,8 +163,10 @@ export default function TechnicianWorkOrder({
     return result.data;
   }
 
+  const writesDisabled = !online || offlineRead;
+
   async function saveExecution(showSuccess = true) {
-    if (!workOrder || !["IN_PROGRESS", "BLOCKED"].includes(workOrder.status)) return false;
+    if (writesDisabled || !workOrder || !["IN_PROGRESS", "BLOCKED"].includes(workOrder.status)) return false;
     try {
       await patchJson(`/api/work-orders/${encodeURIComponent(workOrder.id)}/execution`, {
         organizationId,
@@ -146,7 +189,7 @@ export default function TechnicianWorkOrder({
   }
 
   async function transition(status: WorkOrderStatus) {
-    if (!workOrder || busy) return;
+    if (!workOrder || busy || writesDisabled) return;
     setBusy(true);
     setError("");
     setMessage("");
@@ -178,7 +221,7 @@ export default function TechnicianWorkOrder({
   }
 
   async function save() {
-    if (busy) return;
+    if (busy || writesDisabled) return;
     setBusy(true);
     setError("");
     setMessage("");
@@ -191,10 +234,11 @@ export default function TechnicianWorkOrder({
   }
 
   function updateCheckItem(id: string, patch: Partial<Pick<CheckItem, "completed" | "note">>) {
+    if (writesDisabled) return;
     setCheckItems((items) => items.map((item) => item.id === id ? { ...item, ...patch } : item));
   }
 
-  if (loading) {
+  if (loading && !workOrder) {
     return <section className="card"><p aria-live="polite">Loading work order…</p></section>;
   }
   if (error && !workOrder) {
@@ -205,9 +249,38 @@ export default function TechnicianWorkOrder({
   const active = workOrder.status === "IN_PROGRESS" || workOrder.status === "BLOCKED";
   const allChecklistComplete = checkItems.every((item) => item.completed);
   const canComplete = workOrder.status === "IN_PROGRESS" && allChecklistComplete && completionNote.trim().length > 0;
+  const cameraDisabled = writesDisabled || workOrder.status === "CANCELLED" || workOrder.status === "COMPLETED";
+  const cameraDisabledReason = writesDisabled
+    ? "Photo uploads require a network connection. Offline write queuing is not enabled yet."
+    : workOrder.status === "COMPLETED"
+      ? "Photos are disabled for completed work orders."
+      : workOrder.status === "CANCELLED"
+        ? "Photos are disabled for cancelled work orders."
+        : undefined;
 
   return (
     <div style={{ display: "grid", gap: 14 }}>
+      <section className="card" style={{ display: "flex", gap: 10, justifyContent: "space-between", alignItems: "center", flexWrap: "wrap" }}>
+        <div>
+          <strong aria-live="polite">{offlineRead ? cacheLabel(cachedAt) : online ? "Live" : "Offline"}</strong>
+          <div className="muted">
+            {writesDisabled
+              ? "Read-only mode. Reconnect and refresh before recording maintenance work."
+              : cachePartition
+                ? "This work order is cached after successful online reads."
+                : "Offline cache is armed after the first authenticated online read."}
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => void load()}
+          disabled={loading || busy}
+          style={buttonStyle}
+        >
+          {loading ? "Refreshing…" : "Refresh work order"}
+        </button>
+      </section>
+
       <section className="card" style={{ display: "grid", gap: 12 }}>
         <div style={{ display: "flex", gap: 8, justifyContent: "space-between", alignItems: "center", flexWrap: "wrap" }}>
           <h2 style={{ margin: 0 }}>{workOrder.number} · {workOrder.title}</h2>
@@ -233,22 +306,22 @@ export default function TechnicianWorkOrder({
         <h2 style={{ margin: 0 }}>Work controls</h2>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
           {(workOrder.status === "APPROVED" || workOrder.status === "PLANNED") ? (
-            <button type="button" disabled={busy} onClick={() => void transition("IN_PROGRESS")} style={buttonStyle}>
+            <button type="button" disabled={busy || writesDisabled} onClick={() => void transition("IN_PROGRESS")} style={buttonStyle}>
               {busy ? "Starting…" : "Start work"}
             </button>
           ) : null}
           {workOrder.status === "IN_PROGRESS" ? (
             <>
-              <button type="button" disabled={busy} onClick={() => void transition("BLOCKED")} style={buttonStyle}>
+              <button type="button" disabled={busy || writesDisabled} onClick={() => void transition("BLOCKED")} style={buttonStyle}>
                 Block work
               </button>
-              <button type="button" disabled={busy || !canComplete} onClick={() => void transition("COMPLETED")} style={buttonStyle}>
+              <button type="button" disabled={busy || writesDisabled || !canComplete} onClick={() => void transition("COMPLETED")} style={buttonStyle}>
                 Complete work
               </button>
             </>
           ) : null}
           {workOrder.status === "BLOCKED" ? (
-            <button type="button" disabled={busy} onClick={() => void transition("IN_PROGRESS")} style={buttonStyle}>
+            <button type="button" disabled={busy || writesDisabled} onClick={() => void transition("IN_PROGRESS")} style={buttonStyle}>
               Resume work
             </button>
           ) : null}
@@ -256,7 +329,9 @@ export default function TechnicianWorkOrder({
         {workOrder.status === "REQUESTED" ? <p className="muted">Waiting for approval before work can start.</p> : null}
         {workOrder.status === "COMPLETED" ? <p className="muted">This work order is completed.</p> : null}
         {workOrder.status === "CANCELLED" ? <p className="muted">This work order is cancelled.</p> : null}
-        {workOrder.status === "IN_PROGRESS" && !canComplete ? (
+        {writesDisabled ? (
+          <p className="muted">Offline read cache is active. Status changes are intentionally disabled.</p>
+        ) : workOrder.status === "IN_PROGRESS" && !canComplete ? (
           <p className="muted">Complete every checklist item and add a completion note before closing.</p>
         ) : null}
       </section>
@@ -272,6 +347,7 @@ export default function TechnicianWorkOrder({
                 min="0"
                 inputMode="numeric"
                 value={laborMinutes}
+                disabled={writesDisabled}
                 onChange={(event) => setLaborMinutes(event.target.value)}
                 style={{ minHeight: 44, padding: 10 }}
               />
@@ -283,6 +359,7 @@ export default function TechnicianWorkOrder({
                 min="0"
                 inputMode="numeric"
                 value={downtimeMinutes}
+                disabled={writesDisabled}
                 onChange={(event) => setDowntimeMinutes(event.target.value)}
                 style={{ minHeight: 44, padding: 10 }}
               />
@@ -297,6 +374,7 @@ export default function TechnicianWorkOrder({
                   <input
                     type="checkbox"
                     checked={item.completed}
+                    disabled={writesDisabled}
                     onChange={(event) => updateCheckItem(item.id, { completed: event.target.checked })}
                   />
                   <strong>{item.label}</strong>
@@ -304,6 +382,7 @@ export default function TechnicianWorkOrder({
                 <input
                   aria-label={`Note for ${item.label}`}
                   value={item.note ?? ""}
+                  disabled={writesDisabled}
                   onChange={(event) => updateCheckItem(item.id, { note: event.target.value })}
                   placeholder="Optional checklist note"
                   style={{ minHeight: 44, padding: 10 }}
@@ -316,6 +395,7 @@ export default function TechnicianWorkOrder({
             <span>Completion note</span>
             <textarea
               value={completionNote}
+              disabled={writesDisabled}
               onChange={(event) => setCompletionNote(event.target.value)}
               rows={5}
               maxLength={5000}
@@ -324,7 +404,7 @@ export default function TechnicianWorkOrder({
             />
           </label>
 
-          <button type="button" disabled={busy} onClick={() => void save()} style={buttonStyle}>
+          <button type="button" disabled={busy || writesDisabled} onClick={() => void save()} style={buttonStyle}>
             {busy ? "Saving…" : "Save progress"}
           </button>
         </section>
@@ -336,7 +416,8 @@ export default function TechnicianWorkOrder({
           organizationId={organizationId}
           siteId={siteId}
           workOrderId={workOrder.id}
-          disabled={workOrder.status === "CANCELLED" || workOrder.status === "COMPLETED"}
+          disabled={cameraDisabled}
+          disabledReason={cameraDisabledReason}
         />
       </section>
 

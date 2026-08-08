@@ -19,11 +19,13 @@ export default function WorkOrderCameraAttachments({
   siteId,
   workOrderId,
   disabled = false,
+  disabledReason,
 }: {
   organizationId: string;
   siteId: string;
   workOrderId: string;
   disabled?: boolean;
+  disabledReason?: string;
 }) {
   const router = useRouter();
   const cameraInputRef = useRef<HTMLInputElement>(null);
@@ -31,9 +33,14 @@ export default function WorkOrderCameraAttachments({
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [state, setState] = useState<UploadState>("idle");
-  const [message, setMessage] = useState(
-    disabled ? "Photos are disabled for cancelled work orders." : "Take a photo or choose an existing image.",
-  );
+  const defaultMessage = disabled
+    ? disabledReason ?? "Photos are disabled for this work order."
+    : "Take a photo or choose an existing image.";
+  const [message, setMessage] = useState(defaultMessage);
+
+  useEffect(() => {
+    if (disabled) setMessage(disabledReason ?? "Photos are disabled for this work order.");
+  }, [disabled, disabledReason]);
 
   useEffect(() => {
     if (!file) {
@@ -48,7 +55,7 @@ export default function WorkOrderCameraAttachments({
   function resetSelection() {
     setFile(null);
     setState("idle");
-    setMessage("Take a photo or choose an existing image.");
+    setMessage(disabled ? disabledReason ?? "Photos are disabled for this work order." : "Take a photo or choose an existing image.");
     if (cameraInputRef.current) cameraInputRef.current.value = "";
     if (galleryInputRef.current) galleryInputRef.current.value = "";
   }
@@ -83,7 +90,7 @@ export default function WorkOrderCameraAttachments({
   }
 
   async function uploadPhoto() {
-    if (!file || state === "uploading") return;
+    if (!file || state === "uploading" || disabled) return;
     setState("uploading");
     setMessage("Uploading photo…");
 
@@ -170,7 +177,7 @@ export default function WorkOrderCameraAttachments({
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             <button
               type="button"
-              disabled={busy}
+              disabled={busy || disabled}
               onClick={() => void uploadPhoto()}
               style={{ minHeight: 44, padding: "10px 14px", borderRadius: 9, cursor: "pointer" }}
             >

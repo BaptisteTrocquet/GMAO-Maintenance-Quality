@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { headers } from "next/headers";
+import { offlineReadPartitionFromAuthorization } from "@/lib/pwa/offline-read-cache";
 import TechnicianWorkOrder from "./technician-work-order";
 
 export default async function TechnicianWorkOrderPage({
@@ -11,6 +12,9 @@ export default async function TechnicianWorkOrderPage({
   const requestHeaders = await headers();
   const organizationId = requestHeaders.get("x-organization-id") ?? "";
   const siteId = requestHeaders.get("x-site-id") ?? "";
+  const offlinePartition = offlineReadPartitionFromAuthorization(
+    requestHeaders.get("authorization"),
+  );
 
   return (
     <>
@@ -31,6 +35,7 @@ export default async function TechnicianWorkOrderPage({
           organizationId={organizationId}
           siteId={siteId}
           workOrderId={workOrderId}
+          offlinePartition={offlinePartition}
         />
       )}
     </>

@@ -1,10 +1,14 @@
 import { headers } from "next/headers";
+import { offlineReadPartitionFromAuthorization } from "@/lib/pwa/offline-read-cache";
 import TechnicianWorkQueue from "./technician-work-queue";
 
 export default async function TechnicianWorkQueuePage() {
   const requestHeaders = await headers();
   const organizationId = requestHeaders.get("x-organization-id") ?? "";
   const siteId = requestHeaders.get("x-site-id") ?? "";
+  const offlinePartition = offlineReadPartitionFromAuthorization(
+    requestHeaders.get("authorization"),
+  );
 
   return (
     <>
@@ -20,7 +24,11 @@ export default async function TechnicianWorkQueuePage() {
           <p>Select an organization and site to open technician mode.</p>
         </section>
       ) : (
-        <TechnicianWorkQueue organizationId={organizationId} siteId={siteId} />
+        <TechnicianWorkQueue
+          organizationId={organizationId}
+          siteId={siteId}
+          offlinePartition={offlinePartition}
+        />
       )}
     </>
   );
