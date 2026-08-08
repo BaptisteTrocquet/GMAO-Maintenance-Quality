@@ -14,15 +14,31 @@ export type QualityEventType =
   | "OTHER";
 
 export type QualitySeverity = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
-export type QualityEventStatus = "OPEN" | "CONTAINMENT" | "CONTAINED";
+export type QualityEventStatus = "OPEN" | "CONTAINED" | "INVESTIGATING" | "CLOSED";
+
+export type QualityAssetSnapshot = {
+  id: string;
+  code: string;
+  name: string;
+};
+
+export type QualityWorkOrderSnapshot = {
+  id: string;
+  number: string;
+  title: string;
+};
+
+export type QualityDocumentSnapshot = {
+  id: string;
+  code: string;
+  title: string;
+};
 
 export type QualityContainmentSnapshot = {
   summary: string;
   ownerId: string;
   dueAt: string | null;
-  startedAt: string;
   completedAt: string | null;
-  completionNote: string | null;
 };
 
 export type QualityEventSnapshot = {
@@ -41,19 +57,29 @@ export type QualityEventSnapshot = {
   detectedAt: string;
   detectedById: string;
   containment: QualityContainmentSnapshot | null;
+  asset: QualityAssetSnapshot | null;
+  workOrder: QualityWorkOrderSnapshot | null;
+  documents: QualityDocumentSnapshot[];
+  resolutionSummary: string | null;
   createdAt: string;
   updatedAt: string;
+  closedAt: string | null;
 };
 
 export class QualityEventError extends Error {
   constructor(
     public readonly code:
       | "SITE_NOT_FOUND"
+      | "ASSET_NOT_FOUND"
+      | "WORK_ORDER_NOT_FOUND"
+      | "DOCUMENT_NOT_FOUND"
       | "QUALITY_EVENT_NOT_FOUND"
       | "CONTAINMENT_OWNER_NOT_FOUND"
       | "IDEMPOTENCY_CONFLICT"
       | "INVALID_STATUS_TRANSITION"
-      | "EVENT_LOCKED",
+      | "CONTAINMENT_REQUIRED"
+      | "RESOLUTION_REQUIRED"
+      | "EVENT_CLOSED",
     message: string,
   ) {
     super(message);
@@ -74,6 +100,9 @@ function createRequestHash(input: {
   title: string;
   description?: string | null;
   occurredAt?: Date | null;
+  assetId?: string | null;
+  workOrderId?: string | null;
+  documentIds?: string[];
 }) {
   return createHash("sha256")
     .update(
@@ -86,26 +115,12 @@ function createRequestHash(input: {
         title: input.title,
         description: input.description ?? null,
         occurredAt: input.occurredAt?.toISOString() ?? null,
+        assetId: input.assetId ?? null,
+        workOrderId: input.workOrderId ?? null,
+        documentIds: [...(input.documentIds ?? [])].sort(),
       }),
     )
     .digest("hex");
-}
-
-function parseContainment(value: unknown): QualityContainmentSnapshot | null {
-  if (value === null) return null;
-  if (!value || typeof value !== "object") return null;
-  const parsed = value as Partial<QualityContainmentSnapshot>;
-  if (
-    typeof parsed.summary !== "string" ||
-    typeof parsed.ownerId !== "string" ||
-    !(parsed.dueAt === null || typeof parsed.dueAt === "string") ||
-    typeof parsed.startedAt !== "string" ||
-    !(parsed.completedAt === null || typeof parsed.completedAt === "string") ||
-    !(parsed.completionNote === null || typeof parsed.completionNote === "string")
-  ) {
-    return null;
-  }
-  return parsed as QualityContainmentSnapshot;
 }
 
 function parseSnapshot(value: string | null): QualityEventSnapshot | null {
@@ -124,6 +139,7 @@ function parseSnapshot(value: string | null): QualityEventSnapshot | null {
       !(parsed.occurredAt === null || typeof parsed.occurredAt === "string") ||
       typeof parsed.detectedAt !== "string" ||
       typeof parsed.detectedById !== "string" ||
+      !Array.isArray(parsed.documents) ||
       typeof parsed.createdAt !== "string" ||
       typeof parsed.updatedAt !== "string" ||
       (parsed.type !== "NONCONFORMITY" &&
@@ -136,14 +152,14 @@ function parseSnapshot(value: string | null): QualityEventSnapshot | null {
         parsed.severity !== "MEDIUM" &&
         parsed.severity !== "HIGH" &&
         parsed.severity !== "CRITICAL") ||
-      (parsed.status !== "OPEN" && parsed.status !== "CONTAINMENT" && parsed.status !== "CONTAINED")
+      (parsed.status !== "OPEN" &&
+        parsed.status !== "CONTAINED" &&
+        parsed.status !== "INVESTIGATING" &&
+        parsed.status !== "CLOSED")
     ) {
       return null;
     }
-
-    const containment = parseContainment(parsed.containment);
-    if (parsed.containment !== null && !containment) return null;
-    return { ...parsed, containment } as QualityEventSnapshot;
+    return parsed as QualityEventSnapshot;
   } catch {
     return null;
   }
@@ -176,6 +192,25 @@ async function appendSnapshot(
       afterJson: JSON.stringify(snapshot),
     },
   });
+}
+
+function retryable(error: unknown) {
+  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034";
+}
+
+async function serializable<T>(work: (tx: Prisma.TransactionClient) => Promise<T>) {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= MAX_TRANSACTION_ATTEMPTS; attempt += 1) {
+    try {
+      return await db.$transaction(work, {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      });
+    } catch (error) {
+      lastError = error;
+      if (!retryable(error) || attempt === MAX_TRANSACTION_ATTEMPTS) throw error;
+    }
+  }
+  throw lastError;
 }
 
 async function validateSite(
@@ -212,23 +247,62 @@ async function validateOwner(
   }
 }
 
-function retryable(error: unknown) {
-  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034";
-}
-
-async function serializable<T>(work: (tx: Prisma.TransactionClient) => Promise<T>) {
-  let lastError: unknown;
-  for (let attempt = 1; attempt <= MAX_TRANSACTION_ATTEMPTS; attempt += 1) {
-    try {
-      return await db.$transaction(work, {
-        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
-      });
-    } catch (error) {
-      lastError = error;
-      if (!retryable(error) || attempt === MAX_TRANSACTION_ATTEMPTS) throw error;
-    }
+async function resolveLinks(
+  tx: Prisma.TransactionClient,
+  input: {
+    organizationId: string;
+    siteId: string;
+    assetId?: string | null;
+    workOrderId?: string | null;
+    documentIds?: string[];
+  },
+) {
+  const asset = input.assetId
+    ? await tx.asset.findFirst({
+        where: { id: input.assetId, siteId: input.siteId },
+        select: { id: true, code: true, name: true },
+      })
+    : null;
+  if (input.assetId && !asset) {
+    throw new QualityEventError("ASSET_NOT_FOUND", "Asset not found in site scope");
   }
-  throw lastError;
+
+  const workOrder = input.workOrderId
+    ? await tx.workOrder.findFirst({
+        where: { id: input.workOrderId, siteId: input.siteId },
+        select: { id: true, number: true, title: true },
+      })
+    : null;
+  if (input.workOrderId && !workOrder) {
+    throw new QualityEventError("WORK_ORDER_NOT_FOUND", "Work order not found in site scope");
+  }
+
+  const documentIds = [...new Set(input.documentIds ?? [])];
+  const documents = documentIds.length
+    ? await tx.document.findMany({
+        where: { id: { in: documentIds }, organizationId: input.organizationId },
+        select: { id: true, code: true, title: true },
+      })
+    : [];
+  if (documents.length !== documentIds.length) {
+    throw new QualityEventError(
+      "DOCUMENT_NOT_FOUND",
+      "One or more controlled documents were not found in organization scope",
+    );
+  }
+  const documentById = new Map(documents.map((document) => [document.id, document]));
+
+  return {
+    asset: asset ? { id: asset.id, code: asset.code, name: asset.name } : null,
+    workOrder: workOrder
+      ? { id: workOrder.id, number: workOrder.number, title: workOrder.title }
+      : null,
+    documents: documentIds.map((id) => {
+      const document = documentById.get(id);
+      if (!document) throw new QualityEventError("DOCUMENT_NOT_FOUND", "Controlled document not found");
+      return { id: document.id, code: document.code, title: document.title };
+    }),
+  };
 }
 
 function requireEventScope(
@@ -250,6 +324,9 @@ export async function createQualityEvent(input: {
   title: string;
   description?: string | null;
   occurredAt?: Date | null;
+  assetId?: string | null;
+  workOrderId?: string | null;
+  documentIds?: string[];
   actorId: string;
 }) {
   const id = stableEventId(input.organizationId, input.siteId, input.eventKey);
@@ -268,6 +345,7 @@ export async function createQualityEvent(input: {
     }
 
     await validateSite(tx, input);
+    const links = await resolveLinks(tx, input);
     const timestamp = new Date().toISOString();
     const snapshot: QualityEventSnapshot = {
       id,
@@ -285,72 +363,39 @@ export async function createQualityEvent(input: {
       detectedAt: timestamp,
       detectedById: input.actorId,
       containment: null,
+      asset: links.asset,
+      workOrder: links.workOrder,
+      documents: links.documents,
+      resolutionSummary: null,
       createdAt: timestamp,
       updatedAt: timestamp,
+      closedAt: null,
     };
     await appendSnapshot(tx, snapshot, { actorId: input.actorId, action: "CREATED" });
     return { qualityEvent: snapshot, idempotent: false } as const;
   });
 }
 
-export async function updateQualityEvent(input: {
-  organizationId: string;
-  siteId: string;
-  eventId: string;
-  type?: QualityEventType;
-  severity?: QualitySeverity;
-  title?: string;
-  description?: string | null;
-  occurredAt?: Date | null;
-  actorId: string;
-}) {
-  return serializable(async (tx) => {
-    const previous = requireEventScope(await latestQualityEvent(tx, input.eventId), input);
-    if (previous.status === "CONTAINED") {
-      throw new QualityEventError("EVENT_LOCKED", "Contained quality events cannot be edited");
-    }
-
-    const snapshot: QualityEventSnapshot = {
-      ...previous,
-      type: input.type ?? previous.type,
-      severity: input.severity ?? previous.severity,
-      title: input.title ?? previous.title,
-      description: input.description === undefined ? previous.description : input.description,
-      occurredAt:
-        input.occurredAt === undefined
-          ? previous.occurredAt
-          : input.occurredAt?.toISOString() ?? null,
-      updatedAt: new Date().toISOString(),
-    };
-    await appendSnapshot(tx, snapshot, { actorId: input.actorId, action: "UPDATED", previous });
-    return snapshot;
-  });
-}
-
-export async function startOrUpdateContainment(input: {
+export async function setImmediateContainment(input: {
   organizationId: string;
   siteId: string;
   eventId: string;
   summary: string;
   ownerId?: string | null;
   dueAt?: Date | null;
+  completedAt?: Date | null;
   actorId: string;
 }) {
   return serializable(async (tx) => {
     const previous = requireEventScope(await latestQualityEvent(tx, input.eventId), input);
-    if (previous.status === "CONTAINED") {
-      throw new QualityEventError(
-        "INVALID_STATUS_TRANSITION",
-        "Completed containment cannot be reopened in this workflow stage",
-      );
+    if (previous.status === "CLOSED") {
+      throw new QualityEventError("EVENT_CLOSED", "Closed quality events cannot be modified");
     }
 
     const ownerId = input.ownerId ?? previous.containment?.ownerId ?? input.actorId;
     await validateOwner(tx, { organizationId: input.organizationId, ownerId });
-    const timestamp = new Date().toISOString();
     const snapshot: QualityEventSnapshot = {
       ...previous,
-      status: "CONTAINMENT",
       containment: {
         summary: input.summary,
         ownerId,
@@ -358,53 +403,97 @@ export async function startOrUpdateContainment(input: {
           input.dueAt === undefined
             ? previous.containment?.dueAt ?? null
             : input.dueAt?.toISOString() ?? null,
-        startedAt: previous.containment?.startedAt ?? timestamp,
-        completedAt: null,
-        completionNote: null,
+        completedAt:
+          input.completedAt === undefined
+            ? previous.containment?.completedAt ?? null
+            : input.completedAt?.toISOString() ?? null,
       },
-      updatedAt: timestamp,
+      status: previous.status === "OPEN" ? "CONTAINED" : previous.status,
+      updatedAt: new Date().toISOString(),
     };
     await appendSnapshot(tx, snapshot, {
       actorId: input.actorId,
-      action: previous.containment ? "CONTAINMENT_UPDATED" : "CONTAINMENT_STARTED",
+      action: previous.containment ? "CONTAINMENT_UPDATED" : "CONTAINMENT_RECORDED",
       previous,
     });
     return snapshot;
   });
 }
 
-export async function completeContainment(input: {
+function transitionStatus(
+  previous: QualityEventSnapshot,
+  action: "START_INVESTIGATION" | "CLOSE" | "REOPEN",
+  resolutionSummary?: string | null,
+) {
+  if (
+    action === "START_INVESTIGATION" &&
+    (previous.status === "OPEN" || previous.status === "CONTAINED")
+  ) {
+    return {
+      status: "INVESTIGATING" as const,
+      resolutionSummary: previous.resolutionSummary,
+      closedAt: null,
+    };
+  }
+
+  if (action === "CLOSE" && (previous.status === "CONTAINED" || previous.status === "INVESTIGATING")) {
+    if (!previous.containment) {
+      throw new QualityEventError(
+        "CONTAINMENT_REQUIRED",
+        "Immediate containment must be recorded before closing a quality event",
+      );
+    }
+    const resolution = resolutionSummary?.trim();
+    if (!resolution) {
+      throw new QualityEventError(
+        "RESOLUTION_REQUIRED",
+        "A resolution summary is required before closing a quality event",
+      );
+    }
+    return {
+      status: "CLOSED" as const,
+      resolutionSummary: resolution,
+      closedAt: new Date().toISOString(),
+    };
+  }
+
+  if (action === "REOPEN" && previous.status === "CLOSED") {
+    return {
+      status: "INVESTIGATING" as const,
+      resolutionSummary: previous.resolutionSummary,
+      closedAt: null,
+    };
+  }
+
+  throw new QualityEventError(
+    "INVALID_STATUS_TRANSITION",
+    `Cannot ${action.toLowerCase()} quality event from ${previous.status}`,
+  );
+}
+
+export async function transitionQualityEvent(input: {
   organizationId: string;
   siteId: string;
   eventId: string;
-  completionNote?: string | null;
+  action: "START_INVESTIGATION" | "CLOSE" | "REOPEN";
+  resolutionSummary?: string | null;
   actorId: string;
 }) {
   return serializable(async (tx) => {
     const previous = requireEventScope(await latestQualityEvent(tx, input.eventId), input);
-    if (previous.status !== "CONTAINMENT" || !previous.containment) {
-      throw new QualityEventError(
-        "INVALID_STATUS_TRANSITION",
-        "Containment must be started before it can be completed",
-      );
-    }
-
-    const timestamp = new Date().toISOString();
+    const transition = transitionStatus(previous, input.action, input.resolutionSummary);
     const snapshot: QualityEventSnapshot = {
       ...previous,
-      status: "CONTAINED",
-      containment: {
-        ...previous.containment,
-        completedAt: timestamp,
-        completionNote: input.completionNote ?? null,
-      },
-      updatedAt: timestamp,
+      ...transition,
+      updatedAt: new Date().toISOString(),
     };
-    await appendSnapshot(tx, snapshot, {
-      actorId: input.actorId,
-      action: "CONTAINMENT_COMPLETED",
-      previous,
-    });
+    const action =
+      input.action === "START_INVESTIGATION"
+        ? "INVESTIGATION_STARTED"
+        : input.action === "CLOSE"
+          ? "CLOSED"
+          : "REOPENED";
+    await appendSnapshot(tx, snapshot, { actorId: input.actorId, action, previous });
     return snapshot;
   });
 }
@@ -431,7 +520,7 @@ export async function listQualityEvents(input: {
   type?: QualityEventType;
   severity?: QualitySeverity;
 }) {
-  const marker = `\"organizationId\":\"${input.organizationId}\",\"siteId\":\"${input.siteId}\"`;
+  const marker = `"organizationId":"${input.organizationId}","siteId":"${input.siteId}"`;
   const logs = await db.auditLog.findMany({
     where: { entityType: ENTITY_TYPE, afterJson: { contains: marker } },
     orderBy: { createdAt: "asc" },
@@ -458,9 +547,19 @@ export async function listQualityEventTimeline(input: {
 }) {
   const current = await getQualityEvent(input);
   if (!current) return null;
-  return db.auditLog.findMany({
+
+  const logs = await db.auditLog.findMany({
     where: { entityType: ENTITY_TYPE, entityId: input.eventId },
     include: { actor: { select: { displayName: true } } },
     orderBy: { createdAt: "asc" },
   });
+
+  return logs.map((log) => ({
+    id: log.id,
+    action: log.action,
+    actorName: log.actor?.displayName ?? "System",
+    createdAt: log.createdAt,
+    before: parseSnapshot(log.beforeJson),
+    after: parseSnapshot(log.afterJson),
+  }));
 }
