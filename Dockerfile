@@ -14,6 +14,24 @@ FROM base AS deps
 COPY package.json package-lock.json ./
 RUN npm ci --no-audit --no-fund
 
+FROM base AS migration
+
+ENV NODE_ENV=production \
+    HOME=/tmp
+
+COPY --from=deps /app/node_modules ./node_modules
+COPY package.json package-lock.json ./
+COPY prisma ./prisma
+
+RUN groupadd --system --gid 1001 nodejs \
+  && useradd --system --uid 1001 --gid nodejs --home-dir /tmp --shell /usr/sbin/nologin nextjs \
+  && rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack /opt/yarn-v* \
+  && rm -f /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack /usr/local/bin/yarn /usr/local/bin/yarnpkg /usr/local/bin/pnpm /usr/local/bin/pnpx
+
+USER nextjs
+
+CMD ["./node_modules/.bin/prisma", "migrate", "deploy"]
+
 FROM base AS builder
 
 ENV NODE_ENV=production \
@@ -24,21 +42,6 @@ COPY . .
 
 RUN npm run prisma:generate \
   && npm run build
-
-FROM builder AS migration
-
-ENV NODE_ENV=production \
-    HOME=/tmp \
-    GMAO_DOCKER_BUILDER=
-
-RUN groupadd --system --gid 1001 nodejs \
-  && useradd --system --uid 1001 --gid nodejs --home-dir /tmp --shell /usr/sbin/nologin nextjs \
-  && rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack /opt/yarn-v* \
-  && rm -f /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack /usr/local/bin/yarn /usr/local/bin/yarnpkg /usr/local/bin/pnpm /usr/local/bin/pnpx
-
-USER nextjs
-
-CMD ["./node_modules/.bin/prisma", "migrate", "deploy"]
 
 FROM base AS runner
 
