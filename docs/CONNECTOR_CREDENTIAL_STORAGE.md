@@ -61,4 +61,6 @@ Before removing a previous key version, rotate/re-save every credential still en
 
 ## Verification
 
-The normal database smoke check exercises the durable store against PostgreSQL: create, encrypted-at-rest inspection, vault re-instantiation, exact connector-scope rejection, key rotation, metadata-only audit verification and deletion.
+`npm run test:db` remains a read-only connectivity smoke check suitable for restore/upgrade validation. Credential persistence is exercised separately by `npm run test:credential-store:db` in the `Connector credential store` GitHub Actions workflow against disposable PostgreSQL.
+
+That isolated drill covers create, encrypted-at-rest inspection, vault re-instantiation, exact connector-scope rejection, key rotation, metadata-only audit verification, deletion and cleanup of its synthetic records.
