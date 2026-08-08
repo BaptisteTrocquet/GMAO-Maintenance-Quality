@@ -7,6 +7,13 @@ import { db } from "@/lib/db";
 import type { Permission } from "@/lib/permissions";
 import { canExecuteWorkOrder } from "@/lib/work-orders/authorization";
 import {
+  commitIdempotentWorkOrderMutation,
+  IDEMPOTENT_REPLAY_HEADER,
+  lookupWorkOrderIdempotencyReplay,
+  prepareWorkOrderIdempotency,
+  WorkOrderIdempotencyError,
+} from "@/lib/work-orders/idempotency";
+import {
   assertTransitionRequirements,
   deriveTransitionDates,
   transitionPermission,
@@ -49,6 +56,13 @@ function accessError(error: unknown) {
   throw error;
 }
 
+function idempotencyError(error: unknown) {
+  if (error instanceof WorkOrderIdempotencyError) {
+    return apiError(error.status, error.code, error.message);
+  }
+  throw error;
+}
+
 export async function PATCH(
   request: Request,
   context: { params: Promise<{ workOrderId: string }> },
@@ -79,6 +93,33 @@ export async function PATCH(
   });
   if (!existing) {
     return apiError(404, "WORK_ORDER_NOT_FOUND", "Work order not found in site scope");
+  }
+
+  // A replay may arrive after the original transition has already changed state.
+  // Require current read access before returning a prior authenticated response.
+  try {
+    assertSitePermission(auth.tenant.scope, existing.siteId, "work:read");
+  } catch (error) {
+    return accessError(error);
+  }
+
+  let idempotency = null;
+  try {
+    idempotency = prepareWorkOrderIdempotency({
+      request,
+      actorId: auth.session.user.id,
+      organizationId: parsed.data.organizationId,
+      siteId: parsed.data.siteId,
+      workOrderId,
+      operation: "WORK_ORDER_PATCH",
+      payload: parsed.data,
+    });
+    const replay = await lookupWorkOrderIdempotencyReplay<unknown>(idempotency);
+    if (replay !== null) {
+      return apiData(replay, { headers: { [IDEMPOTENT_REPLAY_HEADER]: "true" } });
+    }
+  } catch (error) {
+    return idempotencyError(error);
   }
 
   const triageFields = ["priority", "type", "assigneeId", "teamId", "plannedStart", "dueAt"];
@@ -236,30 +277,57 @@ export async function PATCH(
     }
   }
 
-  const updated = await db.workOrder.update({ where: { id: existing.id }, data });
   const completedWithSignature = parsed.data.status === "COMPLETED" && signedAt;
+  const auditAction = completedWithSignature
+    ? "COMPLETED_SIGNED"
+    : isReopen
+      ? "REOPENED"
+      : isCancel
+        ? "CANCELLED"
+        : hasStatusTransition
+          ? "STATUS_CHANGED"
+          : "TRIAGED";
+  const auditAfter = (updated: unknown) => ({
+    workOrder: updated,
+    note: parsed.data.statusNote ?? null,
+    ...(completedWithSignature
+      ? { signature: { signedById: auth.session.user.id, signedAt } }
+      : {}),
+  });
+
+  if (idempotency) {
+    try {
+      const result = await commitIdempotentWorkOrderMutation({
+        context: idempotency,
+        mutate: async (transaction) => {
+          const updated = await transaction.workOrder.update({ where: { id: existing.id }, data });
+          return {
+            value: updated,
+            audit: {
+              action: auditAction,
+              beforeJson: JSON.stringify(existing),
+              after: auditAfter(updated),
+            },
+          };
+        },
+      });
+      return apiData(result.value, {
+        headers: { [IDEMPOTENT_REPLAY_HEADER]: result.replayed ? "true" : "false" },
+      });
+    } catch (error) {
+      return idempotencyError(error);
+    }
+  }
+
+  const updated = await db.workOrder.update({ where: { id: existing.id }, data });
   await db.auditLog.create({
     data: {
       actorId: auth.session.user.id,
       entityType: "WorkOrder",
       entityId: existing.id,
-      action: completedWithSignature
-        ? "COMPLETED_SIGNED"
-        : isReopen
-          ? "REOPENED"
-          : isCancel
-            ? "CANCELLED"
-            : hasStatusTransition
-              ? "STATUS_CHANGED"
-              : "TRIAGED",
+      action: auditAction,
       beforeJson: JSON.stringify(existing),
-      afterJson: JSON.stringify({
-        workOrder: updated,
-        note: parsed.data.statusNote ?? null,
-        ...(completedWithSignature
-          ? { signature: { signedById: auth.session.user.id, signedAt } }
-          : {}),
-      }),
+      afterJson: JSON.stringify(auditAfter(updated)),
     },
   });
 
