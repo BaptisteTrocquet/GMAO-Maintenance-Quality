@@ -211,7 +211,7 @@ async function main() {
     ]);
 
     const totalMedianMs = Number(
-      results.reduce((sum, result) => sum + result.medianMs, 0).toFixed(1)),
+      results.reduce((sum, result) => sum + result.medianMs, 0).toFixed(1),
     );
     if (totalMedianMs > 20_000) {
       throw new Error(`Analytics median suite exceeded 20000ms budget: ${totalMedianMs}ms`);
