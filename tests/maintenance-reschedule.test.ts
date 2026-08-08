@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildSchedulePatch,
+  buildWorkOrderRescheduleRequest,
   parseLocalDateKey,
   rescheduleInstantToLocalDate,
 } from "@/lib/maintenance/reschedule";
@@ -49,5 +50,27 @@ describe("maintenance schedule rescheduling", () => {
         timeZone: "UTC",
       }),
     ).toEqual({ plannedStart: "2026-08-09T08:00:00.000Z" });
+  });
+
+  it("routes moves through the existing tenant-scoped WorkOrder PATCH endpoint", () => {
+    expect(
+      buildWorkOrderRescheduleRequest({
+        workOrderId: "wo/unsafe id",
+        organizationId: "org-a",
+        siteId: "site-a",
+        field: "plannedStart",
+        instant: new Date("2026-08-08T08:00:00.000Z"),
+        targetDateKey: "2026-08-09",
+        timeZone: "UTC",
+      }),
+    ).toEqual({
+      url: "/api/work-orders/wo%2Funsafe%20id",
+      method: "PATCH",
+      body: {
+        organizationId: "org-a",
+        siteId: "site-a",
+        plannedStart: "2026-08-09T08:00:00.000Z",
+      },
+    });
   });
 });
