@@ -57,6 +57,12 @@ function post(csv: string, mode?: "validate" | "upsert") {
   return POST(new Request(endpoint(mode), { method: "POST", body: csv }));
 }
 
+async function requiredResponse(value: Response | undefined | Promise<Response | undefined>) {
+  const response = await value;
+  if (!response) throw new Error("Expected CSV API response");
+  return response;
+}
+
 describe("asset CSV integration API", () => {
   beforeEach(() => {
     vi.resetAllMocks();
@@ -119,7 +125,7 @@ describe("asset CSV integration API", () => {
       },
     ]);
 
-    const response = await GET(new Request(endpoint()));
+    const response = await requiredResponse(GET(new Request(endpoint())));
     const csv = await response.text();
 
     expect(response.status).toBe(200);
@@ -140,7 +146,7 @@ describe("asset CSV integration API", () => {
       throw new mocks.AccessDeniedError("Missing permission");
     });
 
-    const response = await post("code,name\nA-1,Pump", "validate");
+    const response = await requiredResponse(post("code,name\nA-1,Pump", "validate"));
 
     expect(response.status).toBe(403);
     expect(mocks.siteFindFirst).not.toHaveBeenCalled();
@@ -154,9 +160,11 @@ describe("asset CSV integration API", () => {
     ]);
     mocks.locationFindMany.mockResolvedValue([{ id: "location-1", code: "LINE-1" }]);
 
-    const response = await post(
-      "code,name,locationCode\nA-1,Updated pump,LINE-1\nA-2,New pump,LINE-1",
-      "validate",
+    const response = await requiredResponse(
+      post(
+        "code,name,locationCode\nA-1,Updated pump,LINE-1\nA-2,New pump,LINE-1",
+        "validate",
+      ),
     );
     const body = await response.json();
 
@@ -166,9 +174,11 @@ describe("asset CSV integration API", () => {
   });
 
   it("rejects references outside the selected site", async () => {
-    const response = await post(
-      "code,name,locationCode,parentAssetCode\nA-2,Child,OTHER-SITE,OTHER-ASSET",
-      "validate",
+    const response = await requiredResponse(
+      post(
+        "code,name,locationCode,parentAssetCode\nA-2,Child,OTHER-SITE,OTHER-ASSET",
+        "validate",
+      ),
     );
     const body = await response.json();
 
@@ -181,9 +191,11 @@ describe("asset CSV integration API", () => {
   });
 
   it("creates batch parents first and audits one atomic upsert", async () => {
-    const response = await post(
-      "code,name,parentAssetCode,status\nCHILD,Child,PARENT,active\nPARENT,Parent,,active",
-      "upsert",
+    const response = await requiredResponse(
+      post(
+        "code,name,parentAssetCode,status\nCHILD,Child,PARENT,active\nPARENT,Parent,,active",
+        "upsert",
+      ),
     );
     const body = await response.json();
 
