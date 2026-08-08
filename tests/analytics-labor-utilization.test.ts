@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   assetFindFirst: vi.fn(),
   queryRaw: vi.fn(),
+  listLaborCapacityProfiles: vi.fn(),
 }));
 
 vi.mock("@/lib/db", () => ({
@@ -11,6 +12,10 @@ vi.mock("@/lib/db", () => ({
     $queryRaw: mocks.queryRaw,
   },
 }));
+vi.mock("@/lib/analytics/labor-capacity", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/analytics/labor-capacity")>();
+  return { ...actual, listLaborCapacityProfiles: mocks.listLaborCapacityProfiles };
+});
 
 import {
   buildLaborUtilizationDashboard,
@@ -31,6 +36,7 @@ describe("labor utilization analytics", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.assetFindFirst.mockResolvedValue({ id: "asset-a" });
+    mocks.listLaborCapacityProfiles.mockResolvedValue([]);
     mocks.queryRaw
       .mockResolvedValueOnce([
         {
@@ -56,7 +62,7 @@ describe("labor utilization analytics", () => {
       ]);
   });
 
-  it("calculates recording coverage and recorded-labor distribution without inventing capacity", async () => {
+  it("keeps recorded-labor distribution explicit when no capacity baseline exists", async () => {
     const result = await buildLaborUtilizationDashboard({
       organizationId: "org-a",
       siteId: "site-a",
@@ -71,13 +77,57 @@ describe("labor utilization analytics", () => {
     expect(result.recordingCoveragePercent).toBe(75);
     expect(result.laborHours).toBe(10);
     expect(result.unassignedSharePercent).toBe(20);
+    expect(result.capacityMode).toBe("RECORDED_ONLY");
+    expect(result.utilizationPercent).toBeNull();
     expect(result.assignees[0]).toMatchObject({
       displayName: "Synthetic Technician",
       workOrderCount: 2,
       laborHours: 6,
       recordedLaborSharePercent: 60,
+      capacityMinutes: null,
+      utilizationPercent: null,
     });
-    expect(result.definition).toMatch(/does not divide by workforce capacity/i);
+    expect(result.definition).toMatch(/configure a weekly capacity baseline/i);
+  });
+
+  it("calculates utilization from recorded labor covered by configured weekday capacity", async () => {
+    mocks.listLaborCapacityProfiles.mockResolvedValue([
+      {
+        id: "profile-a",
+        organizationId: "org-a",
+        siteId: "site-a",
+        userId: "user-a",
+        displayName: "Synthetic Technician",
+        weeklyCapacityMinutes: 2100,
+        active: true,
+        updatedAt: "2026-08-01T00:00:00.000Z",
+      },
+    ]);
+
+    const result = await buildLaborUtilizationDashboard({
+      organizationId: "org-a",
+      siteId: "site-a",
+      timeZone: "UTC",
+      from: "2026-08-03",
+      to: "2026-08-07",
+      now,
+    });
+
+    expect(result.capacityMode).toBe("CONFIGURED_BASELINE");
+    expect(result.businessDays).toBe(5);
+    expect(result.configuredCapacityUsers).toBe(1);
+    expect(result.capacityMinutes).toBe(2100);
+    expect(result.capacityHours).toBe(35);
+    expect(result.capacityCoveredLaborMinutes).toBe(360);
+    expect(result.capacityCoveragePercent).toBe(75);
+    expect(result.utilizationPercent).toBeCloseTo((360 / 2100) * 100);
+    expect(result.assignees[0]).toMatchObject({
+      assigneeId: "user-a",
+      weeklyCapacityMinutes: 2100,
+      capacityMinutes: 2100,
+    });
+    expect(result.assignees[0]?.utilizationPercent).toBeCloseTo((360 / 2100) * 100);
+    expect(result.definition).toMatch(/configured baseline labor utilization/i);
   });
 
   it("uses bounded tenant/site aggregate queries and only positive labor for distribution", async () => {
@@ -114,6 +164,7 @@ describe("labor utilization analytics", () => {
 
     expect(result.range.from).toBe("2026-03-28T23:00:00.000Z");
     expect(result.range.toExclusive).toBe("2026-03-29T22:00:00.000Z");
+    expect(result.businessDays).toBe(0);
   });
 
   it("returns explicit empty semantics for a future-only window without querying", async () => {
@@ -135,6 +186,8 @@ describe("labor utilization analytics", () => {
       recordingCoveragePercent: null,
       laborHours: 0,
       unassignedSharePercent: null,
+      capacityMode: "RECORDED_ONLY",
+      utilizationPercent: null,
       assignees: [],
     });
     expect(mocks.queryRaw).not.toHaveBeenCalled();
