@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { headers } from "next/headers";
-import { queryQualityEvents } from "@/lib/quality/queries";
+import { listQualityEvents } from "@/lib/quality/events";
 
 function formatDate(value: string | null | undefined) {
   return value ? value.replace("T", " ").slice(0, 16) : "—";
@@ -27,11 +27,12 @@ export default async function QualityPage() {
     );
   }
 
-  const events = await queryQualityEvents({ organizationId, siteId });
+  const events = await listQualityEvents({ organizationId, siteId });
   const counts = {
     OPEN: events.filter((event) => event.status === "OPEN").length,
-    CONTAINMENT: events.filter((event) => event.status === "CONTAINMENT").length,
     CONTAINED: events.filter((event) => event.status === "CONTAINED").length,
+    INVESTIGATING: events.filter((event) => event.status === "INVESTIGATING").length,
+    CLOSED: events.filter((event) => event.status === "CLOSED").length,
   };
 
   return (
@@ -39,23 +40,17 @@ export default async function QualityPage() {
       <div className="header">
         <div>
           <div className="title">Quality</div>
-          <div className="muted">Nonconformities and immediate containment for the selected site.</div>
+          <div className="muted">
+            Nonconformities, immediate containment and investigations for the selected site.
+          </div>
         </div>
       </div>
 
       <div className="grid asset-summary-grid">
-        <section className="card">
-          <div className="muted">Open</div>
-          <div className="title">{counts.OPEN}</div>
-        </section>
-        <section className="card">
-          <div className="muted">In containment</div>
-          <div className="title">{counts.CONTAINMENT}</div>
-        </section>
-        <section className="card">
-          <div className="muted">Contained</div>
-          <div className="title">{counts.CONTAINED}</div>
-        </section>
+        <section className="card"><div className="muted">Open</div><div className="title">{counts.OPEN}</div></section>
+        <section className="card"><div className="muted">Contained</div><div className="title">{counts.CONTAINED}</div></section>
+        <section className="card"><div className="muted">Investigating</div><div className="title">{counts.INVESTIGATING}</div></section>
+        <section className="card"><div className="muted">Closed</div><div className="title">{counts.CLOSED}</div></section>
       </div>
 
       <section className="card responsive-table section">
@@ -71,6 +66,8 @@ export default async function QualityPage() {
                 <th>Title</th>
                 <th>Severity</th>
                 <th>Status</th>
+                <th>Asset</th>
+                <th>Work order</th>
                 <th>Detected</th>
                 <th>Containment due</th>
               </tr>
@@ -83,6 +80,8 @@ export default async function QualityPage() {
                   <td>{event.title}</td>
                   <td><span className="badge">{event.severity}</span></td>
                   <td><span className="badge">{event.status}</span></td>
+                  <td>{event.asset?.code ?? "—"}</td>
+                  <td>{event.workOrder?.number ?? "—"}</td>
                   <td>{formatDate(event.detectedAt)}</td>
                   <td>{formatDate(event.containment?.dueAt)}</td>
                 </tr>
