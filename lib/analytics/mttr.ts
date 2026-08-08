@@ -12,6 +12,7 @@ export type MttrResult = MttrCounts & {
   mttrMinutes: number | null;
   mttrHours: number | null;
   empty: boolean;
+  insufficientData: boolean;
   from: string;
   to: string;
   generatedAt: string;
@@ -39,7 +40,8 @@ export function calculateMttr(
     ...counts,
     mttrMinutes,
     mttrHours: mttrMinutes === null ? null : mttrMinutes / 60,
-    empty: counts.validRepairs === 0,
+    empty: counts.completedCorrective === 0,
+    insufficientData: counts.completedCorrective > 0 && counts.validRepairs === 0,
     from: input.from.toISOString(),
     to: input.to.toISOString(),
     generatedAt: input.generatedAt.toISOString(),
