@@ -47,17 +47,26 @@ export default function CommandPalette({
   const [activeIndex, setActiveIndex] = useState(0);
 
   useEffect(() => {
+    function dismissFromKeyboard() {
+      setOpen(false);
+      setQuery("");
+      setResults([]);
+      setError(null);
+      window.requestAnimationFrame(() => triggerRef.current?.focus());
+    }
+
     function onGlobalKeyDown(event: globalThis.KeyboardEvent) {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
-        setOpen((value) => !value);
-      } else if (event.key === "Escape") {
-        setOpen(false);
+        if (open) dismissFromKeyboard();
+        else setOpen(true);
+      } else if (event.key === "Escape" && open) {
+        dismissFromKeyboard();
       }
     }
     window.addEventListener("keydown", onGlobalKeyDown);
     return () => window.removeEventListener("keydown", onGlobalKeyDown);
-  }, []);
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
