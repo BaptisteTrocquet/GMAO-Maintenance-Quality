@@ -30,13 +30,16 @@ function formatDate(value: string | null) {
 export default function NotificationCenterClient({ organizationId, siteId }: Props) {
   const [items, setItems] = useState<SerializedNotification[]>([]);
   const [loading, setLoading] = useState(false);
+  const [dismissing, setDismissing] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [status, setStatus] = useState<string | null>(null);
 
   useEffect(() => {
     if (!organizationId || !siteId) {
       setItems([]);
       setLoading(false);
       setError(null);
+      setStatus(null);
       return;
     }
 
@@ -44,6 +47,7 @@ export default function NotificationCenterClient({ organizationId, siteId }: Pro
     const params = new URLSearchParams({ organizationId, siteId });
     setLoading(true);
     setError(null);
+    setStatus(null);
     void fetch(`/api/notifications?${params.toString()}`, { signal: controller.signal })
       .then(async (response) => {
         const body = (await response.json()) as NotificationResponse;
@@ -71,6 +75,28 @@ export default function NotificationCenterClient({ organizationId, siteId }: Pro
     return map;
   }, [items]);
 
+  async function dismiss(item: SerializedNotification) {
+    if (!item.dismissible || !item.reminderId) return;
+    setDismissing(item.key);
+    setError(null);
+    setStatus(null);
+    try {
+      const response = await fetch(`/api/maintenance-reminders/${item.reminderId}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ organizationId, siteId }),
+      });
+      const body = (await response.json()) as { error?: { message?: string } };
+      if (!response.ok) throw new Error(body.error?.message ?? "Reminder could not be dismissed");
+      setItems((current) => current.filter((candidate) => candidate.key !== item.key));
+      setStatus(`${item.title} dismissed.`);
+    } catch (dismissError) {
+      setError(dismissError instanceof Error ? dismissError.message : "Reminder could not be dismissed");
+    } finally {
+      setDismissing(null);
+    }
+  }
+
   if (!organizationId || !siteId) {
     return <section className="card"><p>Select an organization and site to view notifications.</p></section>;
   }
@@ -82,6 +108,7 @@ export default function NotificationCenterClient({ organizationId, siteId }: Pro
         <div className="muted">Operational signals are filtered by your role and selected site.</div>
       </section>
 
+      {status ? <section className="card section" role="status">{status}</section> : null}
       {error ? <section className="card section" role="alert">{error}</section> : null}
       {!loading && !error && items.length === 0 ? (
         <section className="card section" role="status">No active operational notifications.</section>
@@ -98,12 +125,26 @@ export default function NotificationCenterClient({ organizationId, siteId }: Pro
             </div>
             <div className="stack-list" style={{ marginTop: 12 }}>
               {group.map((item) => (
-                <article key={item.key} style={{ display: "grid", gap: 4 }}>
-                  <Link className="table-link" href={item.href}><strong>{item.title}</strong></Link>
-                  <div>{item.description}</div>
-                  <div className="muted">
-                    {item.kind.replaceAll("_", " ")}
-                    {item.dueAt ? ` · due ${formatDate(item.dueAt)}` : ""}
+                <article key={item.key} style={{ display: "grid", gap: 6 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "start", flexWrap: "wrap" }}>
+                    <div style={{ display: "grid", gap: 4 }}>
+                      <Link className="table-link" href={item.href}><strong>{item.title}</strong></Link>
+                      <div>{item.description}</div>
+                      <div className="muted">
+                        {item.kind.replaceAll("_", " ")}
+                        {item.dueAt ? ` · due ${formatDate(item.dueAt)}` : ""}
+                      </div>
+                    </div>
+                    {item.dismissible && item.reminderId ? (
+                      <button
+                        type="button"
+                        onClick={() => void dismiss(item)}
+                        disabled={dismissing !== null}
+                        aria-label={`Dismiss ${item.title}`}
+                      >
+                        {dismissing === item.key ? "Dismissing…" : "Dismiss"}
+                      </button>
+                    ) : null}
                   </div>
                 </article>
               ))}
