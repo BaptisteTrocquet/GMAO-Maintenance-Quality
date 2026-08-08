@@ -2,6 +2,7 @@ import { z } from "zod";
 import { AccessDeniedError, assertSitePermission } from "@/lib/access-control";
 import { apiData, apiError } from "@/lib/api-response";
 import { authenticateRequest } from "@/lib/auth/request-auth";
+import { getCapa } from "@/lib/quality/capa";
 import {
   CapaEffectivenessError,
   getCapaEffectiveness,
@@ -71,11 +72,14 @@ export async function GET(
   const denied = authorize(auth.tenant.scope, siteId, "quality:read");
   if (denied) return denied;
 
-  const effectiveness = await getCapaEffectiveness({ organizationId, siteId, eventId });
-  if (effectiveness === null) {
+  const capa = await getCapa({ organizationId, siteId, eventId });
+  if (!capa) {
     return apiError(404, "QUALITY_EVENT_NOT_FOUND", "Quality event not found in site scope");
   }
-  const timeline = await listCapaEffectivenessTimeline({ organizationId, siteId, eventId });
+  const effectiveness = await getCapaEffectiveness({ organizationId, siteId, eventId });
+  const timeline = effectiveness
+    ? await listCapaEffectivenessTimeline({ organizationId, siteId, eventId })
+    : [];
   return apiData({ effectiveness, timeline: timeline ?? [] });
 }
 
