@@ -3,7 +3,9 @@ import {
   buildCalendarGrid,
   buildPlanningCalendar,
   calendarSearchRange,
+  dateKeyInTimeZone,
   parseCalendarMonth,
+  rescheduleWorkOrderForDate,
   shiftCalendarMonth,
 } from "@/lib/maintenance/planning-calendar";
 
@@ -111,6 +113,43 @@ describe("maintenance planning calendar", () => {
 
     expect(calendar.find((day) => day.dateKey === "2026-10-25")?.items[0]?.plannedTime).toBe("00:30");
     expect(calendar.find((day) => day.dateKey === "2026-10-26")?.items[0]?.plannedTime).toBe("00:30");
+  });
+
+  it("reschedules planned work by local calendar days across DST", () => {
+    const schedule = rescheduleWorkOrderForDate({
+      plannedStart: new Date("2026-10-23T06:30:00.000Z"),
+      dueAt: new Date("2026-10-24T15:00:00.000Z"),
+      targetDateKey: "2026-10-25",
+      timeZone: "Europe/Paris",
+    });
+
+    expect(dateKeyInTimeZone(schedule.plannedStart, "Europe/Paris")).toBe("2026-10-25");
+    expect(schedule.plannedStart.toISOString()).toBe("2026-10-25T07:30:00.000Z");
+    expect(schedule.dueAt?.toISOString()).toBe("2026-10-26T16:00:00.000Z");
+  });
+
+  it("schedules previously unplanned work at 08:00 local while retaining its due date", () => {
+    const dueAt = new Date("2026-08-15T14:00:00.000Z");
+    const schedule = rescheduleWorkOrderForDate({
+      plannedStart: null,
+      dueAt,
+      targetDateKey: "2026-08-10",
+      timeZone: "Europe/Paris",
+    });
+
+    expect(schedule.plannedStart.toISOString()).toBe("2026-08-10T06:00:00.000Z");
+    expect(schedule.dueAt).toEqual(dueAt);
+  });
+
+  it("rejects invalid target dates before a calendar move is sent", () => {
+    expect(() =>
+      rescheduleWorkOrderForDate({
+        plannedStart: null,
+        dueAt: null,
+        targetDateKey: "2026-02-30",
+        timeZone: "Europe/Paris",
+      }),
+    ).toThrow("Invalid target date");
   });
 
   it("merges planned and due markers when both fall on the same local day", () => {
