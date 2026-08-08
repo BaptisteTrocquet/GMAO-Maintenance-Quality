@@ -14,6 +14,7 @@ ENV NODE_ENV=production
 FROM base AS runner
 ENV NODE_ENV=production \\
     STORAGE_LOCAL_DIR=/app/data/documents
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack /opt/yarn-v*
 USER nextjs
 VOLUME ["/app/data"]
 CMD ["node", "server.js"]
@@ -56,6 +57,21 @@ describe("production hardening policy", () => {
       expect.arrayContaining([
         "production container must run as USER nextjs",
         "production container must declare /app/data as the persistence boundary",
+      ]),
+    );
+  });
+
+  it("requires build-only package managers to be absent from the production runtime", () => {
+    const input = compliant();
+    input.dockerfile = input.dockerfile.replace(
+      "RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack /opt/yarn-v*\n",
+      "",
+    );
+
+    expect(validateProductionHardening(input)).toEqual(
+      expect.arrayContaining([
+        "production runtime must remove the global npm package manager after build",
+        "production runtime must remove bundled Yarn after build",
       ]),
     );
   });
