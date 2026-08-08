@@ -7,6 +7,7 @@ import {
   buildUnscheduledWorkOrderWhere,
   currentPlanningMonth,
   groupPlanningEvents,
+  localDateKey,
   monthGridDays,
   parsePlanningMonth,
   planningMonthKey,
@@ -312,7 +313,7 @@ export default async function MaintenanceCalendarPage({
                   <td>{workOrder.title}</td>
                   <td><span className="badge">{workOrder.status}</span></td>
                   <td>{workOrder.assignee?.displayName ?? workOrder.team?.name ?? "Unassigned"}</td>
-                  <td>{workOrder.dueAt ? workOrder.dueAt.toISOString().slice(0, 10) : "—"}</td>
+                  <td>{workOrder.dueAt ? localDateKey(workOrder.dueAt, timeZone) : "—"}</td>
                 </tr>
               ))}
               {unscheduledWorkOrders.length === 0 ? (
