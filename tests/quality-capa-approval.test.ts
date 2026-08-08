@@ -55,17 +55,42 @@ const draft = {
   readyForEffectivenessAt: null,
 };
 
-function mockApprovalReads(lastDraftEditorId = "quality-author") {
-  mocks.auditFindFirst
-    .mockResolvedValueOnce({ afterJson: JSON.stringify(event) })
-    .mockResolvedValueOnce({ afterJson: JSON.stringify(rootCause) })
-    .mockResolvedValueOnce({ afterJson: JSON.stringify(draft) })
-    .mockResolvedValueOnce({ actorId: lastDraftEditorId });
+let rootCauseStatus: "DRAFT" | "CONFIRMED";
+let lastDraftEditorId: string | null;
+
+function installApprovalReads() {
+  mocks.auditFindFirst.mockImplementation(
+    async ({ where }: { where: { entityType: string; action?: unknown } }) => {
+      if (where.entityType === "QualityEvent") {
+        return { afterJson: JSON.stringify(event) };
+      }
+      if (where.entityType === "QualityRootCause") {
+        return { afterJson: JSON.stringify({ ...rootCause, status: rootCauseStatus }) };
+      }
+      if (where.entityType === "QualityCapa" && where.action) {
+        return lastDraftEditorId ? { actorId: lastDraftEditorId } : null;
+      }
+      if (where.entityType === "QualityCapa") {
+        return { afterJson: JSON.stringify(draft) };
+      }
+      return null;
+    },
+  );
 }
 
 describe("CAPA approval separation", () => {
   beforeEach(() => {
-    vi.resetAllMocks();
+    vi.clearAllMocks();
+    mocks.auditFindFirst.mockReset();
+    mocks.auditCreate.mockReset();
+    mocks.membershipFindFirst.mockReset();
+    mocks.membershipFindMany.mockReset();
+    mocks.transaction.mockReset();
+
+    rootCauseStatus = "CONFIRMED";
+    lastDraftEditorId = "quality-author";
+    installApprovalReads();
+
     mocks.transaction.mockImplementation(
       async (callback: (transaction: typeof tx) => Promise<unknown>) => callback(tx),
     );
@@ -75,8 +100,6 @@ describe("CAPA approval separation", () => {
   });
 
   it("approves a draft only after confirmed RCA and records approver audit", async () => {
-    mockApprovalReads();
-
     const approved = await approveCapa({
       organizationId: "org-a",
       siteId: "site-a",
@@ -98,7 +121,7 @@ describe("CAPA approval separation", () => {
       },
       select: { id: true, role: true },
     });
-    expect(mocks.auditFindFirst).toHaveBeenNthCalledWith(4, {
+    expect(mocks.auditFindFirst).toHaveBeenCalledWith({
       where: {
         entityType: "QualityCapa",
         entityId: "event-1",
@@ -141,7 +164,7 @@ describe("CAPA approval separation", () => {
   });
 
   it("rejects approval by the user who last authored or edited the CAPA draft", async () => {
-    mockApprovalReads("quality-approver");
+    lastDraftEditorId = "quality-approver";
 
     await expect(
       approveCapa({
@@ -155,7 +178,6 @@ describe("CAPA approval separation", () => {
   });
 
   it("rejects approvers without an active quality/admin/owner membership or site access", async () => {
-    mockApprovalReads();
     mocks.membershipFindFirst.mockResolvedValue(null);
 
     await expect(
@@ -169,7 +191,6 @@ describe("CAPA approval separation", () => {
   });
 
   it("revalidates action owners and their site access at approval time", async () => {
-    mockApprovalReads();
     mocks.membershipFindMany.mockResolvedValue([]);
 
     await expect(
@@ -183,9 +204,7 @@ describe("CAPA approval separation", () => {
   });
 
   it("rejects approval until root cause is confirmed", async () => {
-    mocks.auditFindFirst
-      .mockResolvedValueOnce({ afterJson: JSON.stringify(event) })
-      .mockResolvedValueOnce({ afterJson: JSON.stringify({ ...rootCause, status: "DRAFT" }) });
+    rootCauseStatus = "DRAFT";
 
     await expect(
       approveCapa({
