@@ -108,6 +108,40 @@ describe("saved views", () => {
     });
   });
 
+  it("rejects unsupported Kanban filter keys and values before writing", async () => {
+    await expect(
+      createSavedView({
+        ...scope,
+        name: "Injected",
+        filters: { status: "COMPLETED" },
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_VIEW_FILTERS" });
+
+    await expect(
+      createSavedView({
+        ...scope,
+        name: "Bad due",
+        filters: { due: "DROP_TABLE" },
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_VIEW_FILTERS" });
+
+    expect(mocks.create).not.toHaveBeenCalled();
+  });
+
+  it("ignores malformed or legacy snapshots with unsupported filters", async () => {
+    mocks.findMany.mockResolvedValue([
+      {
+        entityId: "legacy",
+        afterJson: JSON.stringify(snapshot({ id: "legacy", filters: { status: "COMPLETED" } })),
+      },
+      { entityId: "view-1", afterJson: JSON.stringify(snapshot()) },
+    ]);
+
+    const views = await listSavedViews(scope);
+
+    expect(views.map((view) => view.id)).toEqual(["view-1"]);
+  });
+
   it("does not allow another user to update a saved view", async () => {
     mocks.findFirst.mockResolvedValue({
       afterJson: JSON.stringify(snapshot({ userId: "user-other" })),
