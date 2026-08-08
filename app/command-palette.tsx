@@ -73,6 +73,11 @@ export default function CommandPalette({
       return;
     }
 
+    // Never leave results from the previous query selectable while the next request is debounced.
+    setResults([]);
+    setLoading(true);
+    setError(null);
+
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
       const params = new URLSearchParams({
@@ -80,8 +85,6 @@ export default function CommandPalette({
         siteId,
         q: query.trim(),
       });
-      setLoading(true);
-      setError(null);
       void fetch(`/api/search?${params.toString()}`, { signal: controller.signal })
         .then(async (response) => {
           const body = (await response.json()) as SearchResponse;
