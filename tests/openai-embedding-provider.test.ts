@@ -27,31 +27,34 @@ async function embedWith(provider: OpenAiEmbeddingProvider, inputs = [
 }
 
 describe("OpenAI embedding provider", () => {
-  it("returns the normal disabled provider when embeddings are unconfigured", () => {
-    const provider = createOpenAiEmbeddingProviderFromEnv({});
-    const registry = new EmbeddingProviderRegistry([provider]);
+  it("returns the normal disabled provider when the embedding model is unconfigured", () => {
+    for (const env of [{}, { OPENAI_API_KEY: "shared-openai-key", OPENAI_LLM_MODEL: "gpt-example" }]) {
+      const provider = createOpenAiEmbeddingProviderFromEnv(env);
+      const registry = new EmbeddingProviderRegistry([provider]);
 
-    expect(registry.get("openai")).toEqual({
-      id: "openai",
-      displayName: "OpenAI embeddings",
-      enabled: false,
-      defaultModel: null,
-      dimensions: null,
-    });
+      expect(registry.get("openai")).toEqual({
+        id: "openai",
+        displayName: "OpenAI embeddings",
+        enabled: false,
+        defaultModel: null,
+        dimensions: null,
+      });
+    }
   });
 
-  it("rejects partial configuration instead of silently enabling an unusable provider", () => {
-    expect(() =>
-      createOpenAiEmbeddingProviderFromEnv({
-        OPENAI_API_KEY: "synthetic-key",
-      }),
-    ).toThrow("require both OPENAI_API_KEY and OPENAI_EMBEDDING_MODEL");
-
+  it("rejects embedding-specific partial configuration", () => {
     expect(() =>
       createOpenAiEmbeddingProviderFromEnv({
         OPENAI_EMBEDDING_MODEL: "text-embedding-example",
       }),
-    ).toThrow("require both OPENAI_API_KEY and OPENAI_EMBEDDING_MODEL");
+    ).toThrow("require OPENAI_API_KEY");
+
+    expect(() =>
+      createOpenAiEmbeddingProviderFromEnv({
+        OPENAI_API_KEY: "synthetic-key",
+        OPENAI_EMBEDDING_DIMENSIONS: "256",
+      }),
+    ).toThrow("OPENAI_EMBEDDING_MODEL is required");
   });
 
   it("sends a batched float request and maps provider indexes back to stable input ids", async () => {
