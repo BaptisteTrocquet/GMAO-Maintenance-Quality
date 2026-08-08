@@ -5,9 +5,9 @@ const mocks = vi.hoisted(() => ({
   deliver: vi.fn(),
   deliveryId: vi.fn(),
   listSubscriptions: vi.fn(),
-  sourceFindMany: vi.fn(),
+  listPendingEvents: vi.fn(),
+  markProcessed: vi.fn(),
   deliveryFindFirst: vi.fn(),
-  workOrderFindUnique: vi.fn(),
 }));
 
 vi.mock("@/lib/webhooks/delivery", () => ({
@@ -18,27 +18,43 @@ vi.mock("@/lib/webhooks/delivery", () => ({
 vi.mock("@/lib/webhooks/registry", () => ({
   listAllWebhookSubscriptions: mocks.listSubscriptions,
 }));
+vi.mock("@/lib/integrations/event-log", () => ({
+  listPendingIntegrationEvents: mocks.listPendingEvents,
+  markIntegrationEventProcessed: mocks.markProcessed,
+}));
 vi.mock("@/lib/db", () => ({
   db: {
-    auditLog: {
-      findMany: mocks.sourceFindMany,
-      findFirst: mocks.deliveryFindFirst,
-    },
-    workOrder: { findUnique: mocks.workOrderFindUnique },
+    auditLog: { findFirst: mocks.deliveryFindFirst },
   },
 }));
 
 import { processWebhookQueue } from "@/lib/webhooks/worker";
 
-const source = {
-  id: "audit-work-order-1",
-  actorId: null,
-  entityType: "WorkOrder",
-  entityId: "wo-1",
-  action: "PUBLIC_REQUEST_CREATED",
-  beforeJson: null,
-  afterJson: null,
-  createdAt: new Date("2026-08-07T20:00:00.000Z"),
+const sourceEvent = {
+  version: 1 as const,
+  id: "e".repeat(64),
+  organizationId: "org-a",
+  siteId: "site-a",
+  direction: "OUTBOUND" as const,
+  channel: "webhook",
+  eventType: "work_order.created",
+  sourceId: "audit-work-order-1",
+  correlationId: "wo-1",
+  causationId: null,
+  subjectType: "WorkOrder",
+  subjectId: "wo-1",
+  occurredAt: "2026-08-05T20:00:00.000Z",
+  payloadHash: "f".repeat(64),
+  payload: {
+    workOrder: {
+      id: "wo-1",
+      number: "WO-P-DEMO",
+      title: "Unexpected vibration",
+      status: "REQUESTED",
+      requestedAt: "2026-08-05T20:00:00.000Z",
+      assetCode: "ASSET-100",
+    },
+  },
 };
 
 const subscription = {
@@ -49,7 +65,7 @@ const subscription = {
   url: "https://hooks.example.test/opengmao",
   eventTypes: ["work_order.created"] as const,
   createdById: "manager-1",
-  createdAt: new Date("2026-08-07T19:00:00.000Z"),
+  createdAt: new Date("2026-08-01T19:00:00.000Z"),
   revokedAt: null,
 };
 
@@ -58,48 +74,37 @@ describe("webhook worker", () => {
     vi.clearAllMocks();
     mocks.retryFailed.mockResolvedValue([]);
     mocks.listSubscriptions.mockResolvedValue([subscription]);
-    mocks.sourceFindMany.mockResolvedValue([source]);
-    mocks.workOrderFindUnique.mockResolvedValue({
-      id: "wo-1",
-      number: "WO-P-DEMO",
-      title: "Unexpected vibration",
-      status: "REQUESTED",
-      requestedAt: new Date("2026-08-07T20:00:00.000Z"),
-      siteId: "site-a",
-      site: { organizationId: "org-a" },
-      asset: { code: "ASSET-100" },
-    });
+    mocks.listPendingEvents.mockResolvedValue([sourceEvent]);
+    mocks.markProcessed.mockResolvedValue({ processed: true });
     mocks.deliveryId.mockReturnValue("delivery-1");
     mocks.deliveryFindFirst.mockResolvedValue(null);
     mocks.deliver.mockResolvedValue({ delivered: true, deliveryId: "delivery-1" });
   });
 
-  it("delivers a new work-order event only to matching site subscriptions", async () => {
-    const result = await processWebhookQueue({ now: new Date("2026-08-07T20:05:00.000Z") });
+  it("delivers durable events older than the former 24-hour audit window", async () => {
+    const now = new Date("2026-08-08T20:05:00.000Z");
+    const result = await processWebhookQueue({ now });
 
     expect(result.processedEvents).toBe(1);
+    expect(mocks.listPendingEvents).toHaveBeenCalledWith({
+      direction: "OUTBOUND",
+      channel: "webhook",
+      limit: 200,
+    });
     expect(mocks.deliver).toHaveBeenCalledWith({
       subscription,
       event: {
-        id: "audit-work-order-1",
+        id: sourceEvent.id,
         type: "work_order.created",
-        createdAt: "2026-08-07T20:00:00.000Z",
-        data: {
-          workOrder: {
-            id: "wo-1",
-            number: "WO-P-DEMO",
-            title: "Unexpected vibration",
-            status: "REQUESTED",
-            requestedAt: "2026-08-07T20:00:00.000Z",
-            assetCode: "ASSET-100",
-          },
-        },
+        createdAt: sourceEvent.occurredAt,
+        data: sourceEvent.payload,
       },
-      now: new Date("2026-08-07T20:05:00.000Z"),
+      now,
     });
+    expect(mocks.markProcessed).toHaveBeenCalledWith({ event: sourceEvent, processedAt: now });
   });
 
-  it("does not redeliver an event that already has delivery state", async () => {
+  it("does not redeliver an event that already has delivery state but still closes queue processing", async () => {
     mocks.deliveryFindFirst.mockResolvedValue({
       id: "audit-delivery",
       entityType: "WebhookDelivery",
@@ -108,9 +113,10 @@ describe("webhook worker", () => {
       createdAt: new Date(),
     });
 
-    await processWebhookQueue({ now: new Date("2026-08-07T20:05:00.000Z") });
+    await processWebhookQueue({ now: new Date("2026-08-08T20:05:00.000Z") });
 
     expect(mocks.deliver).not.toHaveBeenCalled();
+    expect(mocks.markProcessed).toHaveBeenCalledTimes(1);
   });
 
   it("does not cross organization or site boundaries", async () => {
@@ -119,8 +125,20 @@ describe("webhook worker", () => {
       { ...subscription, id: "sub-org-b", organizationId: "org-b" },
     ]);
 
-    await processWebhookQueue({ now: new Date("2026-08-07T20:05:00.000Z") });
+    await processWebhookQueue({ now: new Date("2026-08-08T20:05:00.000Z") });
 
     expect(mocks.deliver).not.toHaveBeenCalled();
+    expect(mocks.markProcessed).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not send historical events to subscriptions created after the event occurred", async () => {
+    mocks.listSubscriptions.mockResolvedValue([
+      { ...subscription, createdAt: new Date("2026-08-06T00:00:00.000Z") },
+    ]);
+
+    await processWebhookQueue({ now: new Date("2026-08-08T20:05:00.000Z") });
+
+    expect(mocks.deliver).not.toHaveBeenCalled();
+    expect(mocks.markProcessed).toHaveBeenCalledTimes(1);
   });
 });

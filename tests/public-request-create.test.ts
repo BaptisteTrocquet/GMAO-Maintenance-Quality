@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   txSubmissionCreate: vi.fn(),
   txTokenUpdate: vi.fn(),
   txAuditCreate: vi.fn(),
+  recordIntegrationEvent: vi.fn(),
 }));
 
 const tx = {
@@ -38,6 +39,9 @@ vi.mock("@/lib/db", () => ({
     asset: { findFirst: mocks.assetFindFirst },
     $transaction: mocks.transaction,
   },
+}));
+vi.mock("@/lib/integrations/event-log", () => ({
+  recordIntegrationEventInTransaction: mocks.recordIntegrationEvent,
 }));
 
 import { createPublicMaintenanceRequest } from "@/lib/public-requests/create-request";
@@ -79,18 +83,20 @@ describe("public maintenance request creation", () => {
     mocks.txWorkOrderCreate.mockResolvedValue({
       id: "wo-1",
       number: "WO-P-DEMO-0001",
+      title: "Machine noise reported",
       status: "REQUESTED",
       requestedAt: new Date("2026-08-07T12:00:00.000Z"),
     });
     mocks.txSubmissionCreate.mockResolvedValue({ id: "submission-1" });
     mocks.txTokenUpdate.mockResolvedValue({ id: "token-1" });
     mocks.txAuditCreate.mockResolvedValue({ id: "audit-1" });
+    mocks.recordIntegrationEvent.mockResolvedValue({ event: { id: "event-1" }, replayed: false });
     mocks.transaction.mockImplementation(
       async (callback: (transaction: typeof tx) => Promise<unknown>) => callback(tx),
     );
   });
 
-  it("creates a normal-priority requested corrective WO and returns its scoped tracking id", async () => {
+  it("creates the WO, business audit and outbound event in one transaction", async () => {
     const result = await createPublicMaintenanceRequest(input);
 
     expect(result.idempotent).toBe(false);
@@ -104,7 +110,7 @@ describe("public maintenance request creation", () => {
         status: "REQUESTED",
         priority: "NORMAL",
       }),
-      select: { id: true, number: true, status: true, requestedAt: true },
+      select: { id: true, number: true, title: true, status: true, requestedAt: true },
     });
     expect(mocks.txSubmissionCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({
@@ -124,6 +130,18 @@ describe("public maintenance request creation", () => {
         afterJson: expect.stringContaining("submission-1"),
       }),
     });
+    expect(mocks.recordIntegrationEvent).toHaveBeenCalledWith(
+      tx,
+      expect.objectContaining({
+        organizationId: "org-a",
+        siteId: "site-a",
+        direction: "OUTBOUND",
+        channel: "webhook",
+        eventType: "work_order.created",
+        sourceId: "audit-1",
+        subjectId: "wo-1",
+      }),
+    );
   });
 
   it("returns the same tracking id without a second write on idempotent retry", async () => {
@@ -146,6 +164,7 @@ describe("public maintenance request creation", () => {
     expect(result.trackingId).toBe("submission-1");
     expect(mocks.submissionCount).not.toHaveBeenCalled();
     expect(mocks.transaction).not.toHaveBeenCalled();
+    expect(mocks.recordIntegrationEvent).not.toHaveBeenCalled();
   });
 
   it("rate limits a token after 30 requests in one hour", async () => {
@@ -166,8 +185,16 @@ describe("public maintenance request creation", () => {
     });
     expect(mocks.txWorkOrderCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({ assetId: "asset-1" }),
-      select: { id: true, number: true, status: true, requestedAt: true },
+      select: { id: true, number: true, title: true, status: true, requestedAt: true },
     });
+    expect(mocks.recordIntegrationEvent).toHaveBeenCalledWith(
+      tx,
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          workOrder: expect.objectContaining({ assetCode: "A-100" }),
+        }),
+      }),
+    );
   });
 
   it("rejects an unknown asset code instead of crossing site boundaries", async () => {
