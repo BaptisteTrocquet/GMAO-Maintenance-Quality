@@ -6,21 +6,26 @@ const mocks = vi.hoisted(() => {
       super(message);
     }
   }
+  class CapaClosureError extends Error {
+    constructor(public readonly code: "CAPA_INCOMPLETE", message: string) {
+      super(message);
+    }
+  }
   return {
     authenticateRequest: vi.fn(),
-    getCapaWorkspace: vi.fn(),
     listQualityEvents: vi.fn(),
     createQualityEvent: vi.fn(),
     getQualityEvent: vi.fn(),
     listQualityEventTimeline: vi.fn(),
     setImmediateContainment: vi.fn(),
     transitionQualityEvent: vi.fn(),
+    assertEffectiveCapaForEvent: vi.fn(),
     QualityEventError,
+    CapaClosureError,
   };
 });
 
 vi.mock("@/lib/auth/request-auth", () => ({ authenticateRequest: mocks.authenticateRequest }));
-vi.mock("@/lib/quality/capa", () => ({ getCapaWorkspace: mocks.getCapaWorkspace }));
 vi.mock("@/lib/quality/events", () => ({
   listQualityEvents: mocks.listQualityEvents,
   createQualityEvent: mocks.createQualityEvent,
@@ -29,6 +34,10 @@ vi.mock("@/lib/quality/events", () => ({
   setImmediateContainment: mocks.setImmediateContainment,
   transitionQualityEvent: mocks.transitionQualityEvent,
   QualityEventError: mocks.QualityEventError,
+}));
+vi.mock("@/lib/quality/capa-closure", () => ({
+  assertEffectiveCapaForEvent: mocks.assertEffectiveCapaForEvent,
+  CapaClosureError: mocks.CapaClosureError,
 }));
 
 import { GET as listEvents, POST as createEvent } from "@/app/api/quality/events/route";
@@ -69,11 +78,7 @@ const eventContext = { params: Promise.resolve({ eventId: "event-1" }) };
 describe("quality event APIs", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.getCapaWorkspace.mockResolvedValue({
-      event: { organizationId: "org-a", siteId: "site-a" },
-      rootCause: null,
-      capa: null,
-    });
+    mocks.assertEffectiveCapaForEvent.mockResolvedValue(undefined);
     mocks.listQualityEvents.mockResolvedValue([]);
     mocks.createQualityEvent.mockResolvedValue({
       idempotent: false,
@@ -236,7 +241,7 @@ describe("quality event APIs", () => {
       eventContext,
     );
     expectStatus(close, 200);
-    expect(mocks.getCapaWorkspace).toHaveBeenCalledWith({
+    expect(mocks.assertEffectiveCapaForEvent).toHaveBeenCalledWith({
       organizationId: "org-a",
       siteId: "site-a",
       eventId: "event-1",
@@ -249,6 +254,33 @@ describe("quality event APIs", () => {
       resolutionSummary: "Synthetic issue resolved.",
       actorId: "quality-1",
     });
+  });
+
+  it("blocks quality-event closure while CAPA effectiveness is incomplete", async () => {
+    mocks.authenticateRequest.mockResolvedValue(auth("QUALITY_MANAGER"));
+    mocks.assertEffectiveCapaForEvent.mockRejectedValue(
+      new mocks.CapaClosureError(
+        "CAPA_INCOMPLETE",
+        "Quality event cannot close until CAPA effectiveness is verified as effective",
+      ),
+    );
+
+    const response = await patchEvent(
+      new Request("http://localhost/api/quality/events/event-1", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          organizationId: "org-a",
+          siteId: "site-a",
+          action: "CLOSE",
+          resolutionSummary: "Synthetic issue resolved.",
+        }),
+      }),
+      eventContext,
+    );
+
+    expectStatus(response, 409);
+    expect(mocks.transitionQualityEvent).not.toHaveBeenCalled();
   });
 
   it("rejects malformed workflow transitions", async () => {

@@ -13,52 +13,73 @@ const tx = {
   },
 };
 
-vi.mock("@/lib/db", () => ({
-  db: {
-    $transaction: mocks.transaction,
-  },
-}));
+vi.mock("@/lib/db", () => ({ db: { $transaction: mocks.transaction } }));
 
-import { completeCapaAction, verifyCapaEffectiveness } from "@/lib/quality/capa";
+import { transitionCapaAction } from "@/lib/quality/capa";
+import { verifyCapaEffectiveness } from "@/lib/quality/effectiveness";
 
 const event = { organizationId: "org-a", siteId: "site-a", status: "INVESTIGATING" };
-const rootCause = { organizationId: "org-a", siteId: "site-a", status: "CONFIRMED" };
 
-function snapshot(actionStatus: "OPEN" | "COMPLETED") {
+function activeCapa() {
   return {
     eventId: "event-1",
     organizationId: "org-a",
     siteId: "site-a",
     status: "ACTIVE",
-    planSummary: "Synthetic CAPA plan",
+    objective: "Remove confirmed synthetic cause",
     actions: [
       {
         id: "action-1",
+        actionKey: "corrective-1",
         type: "CORRECTIVE",
         title: "Synthetic corrective action",
         description: null,
-        ownerId: "owner-1",
+        ownerId: "quality-owner",
         dueAt: "2026-08-20T00:00:00.000Z",
-        status: actionStatus,
-        completionNote: actionStatus === "COMPLETED" ? "Implemented with evidence." : null,
-        completedById: actionStatus === "COMPLETED" ? "quality-2" : null,
-        completedAt: actionStatus === "COMPLETED" ? "2026-08-15T00:00:00.000Z" : null,
+        status: "PLANNED",
+        completionNote: null,
+        completedAt: null,
       },
     ],
-    approvedById: "quality-approver",
-    approvedAt: "2026-08-10T00:00:00.000Z",
-    effectivenessChecks: [],
     createdAt: "2026-08-08T00:00:00.000Z",
-    updatedAt: "2026-08-15T00:00:00.000Z",
-    closedAt: null,
+    updatedAt: "2026-08-10T00:00:00.000Z",
+    activatedAt: "2026-08-10T00:00:00.000Z",
+    readyForEffectivenessAt: null,
   };
 }
 
-function installContext(capa: ReturnType<typeof snapshot>) {
-  mocks.auditFindFirst
-    .mockResolvedValueOnce({ afterJson: JSON.stringify(event) })
-    .mockResolvedValueOnce({ afterJson: JSON.stringify(rootCause) })
-    .mockResolvedValueOnce({ afterJson: JSON.stringify(capa) });
+function readyCapa() {
+  return {
+    ...activeCapa(),
+    status: "READY_FOR_EFFECTIVENESS",
+    actions: [
+      {
+        ...activeCapa().actions[0],
+        status: "COMPLETED",
+        completionNote: "Implemented with synthetic evidence.",
+        completedAt: "2026-08-15T00:00:00.000Z",
+      },
+    ],
+    readyForEffectivenessAt: "2026-08-16T00:00:00.000Z",
+  };
+}
+
+function pendingEffectiveness() {
+  return {
+    eventId: "event-1",
+    organizationId: "org-a",
+    siteId: "site-a",
+    status: "PENDING",
+    criteria: "No recurrence during the synthetic observation window.",
+    verifierId: "quality-verifier",
+    verifierName: "Synthetic Verifier",
+    dueAt: "2026-09-01T00:00:00.000Z",
+    result: null,
+    summary: null,
+    createdAt: "2026-08-16T00:00:00.000Z",
+    updatedAt: "2026-08-16T00:00:00.000Z",
+    verifiedAt: null,
+  };
 }
 
 describe("CAPA required evidence", () => {
@@ -71,23 +92,29 @@ describe("CAPA required evidence", () => {
   });
 
   it("rejects action completion without a non-empty completion note", async () => {
-    installContext(snapshot("OPEN"));
+    mocks.auditFindFirst
+      .mockResolvedValueOnce({ afterJson: JSON.stringify(event) })
+      .mockResolvedValueOnce({ afterJson: JSON.stringify(activeCapa()) });
 
     await expect(
-      completeCapaAction({
+      transitionCapaAction({
         organizationId: "org-a",
         siteId: "site-a",
         eventId: "event-1",
         actionId: "action-1",
+        transition: "COMPLETE",
         completionNote: "   ",
-        actorId: "quality-2",
+        actorId: "quality-owner",
       }),
     ).rejects.toMatchObject({ code: "ACTION_COMPLETION_NOTE_REQUIRED" });
     expect(mocks.auditCreate).not.toHaveBeenCalled();
   });
 
-  it("rejects effectiveness verification without an evidence-based note", async () => {
-    installContext(snapshot("COMPLETED"));
+  it("rejects effectiveness verification without an evidence summary", async () => {
+    mocks.auditFindFirst
+      .mockResolvedValueOnce({ afterJson: JSON.stringify(event) })
+      .mockResolvedValueOnce({ afterJson: JSON.stringify(readyCapa()) })
+      .mockResolvedValueOnce({ afterJson: JSON.stringify(pendingEffectiveness()) });
 
     await expect(
       verifyCapaEffectiveness({
@@ -95,10 +122,10 @@ describe("CAPA required evidence", () => {
         siteId: "site-a",
         eventId: "event-1",
         result: "EFFECTIVE",
-        note: "   ",
+        summary: "   ",
         actorId: "quality-verifier",
       }),
-    ).rejects.toMatchObject({ code: "EFFECTIVENESS_NOTE_REQUIRED" });
+    ).rejects.toMatchObject({ code: "INVALID_EFFECTIVENESS_DATA" });
     expect(mocks.auditCreate).not.toHaveBeenCalled();
   });
 });

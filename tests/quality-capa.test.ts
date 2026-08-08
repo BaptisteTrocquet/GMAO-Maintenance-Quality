@@ -5,7 +5,7 @@ const mocks = vi.hoisted(() => ({
   auditFindFirst: vi.fn(),
   auditFindMany: vi.fn(),
   auditCreate: vi.fn(),
-  membershipFindFirst: vi.fn(),
+  membershipFindMany: vi.fn(),
 }));
 
 const tx = {
@@ -14,7 +14,7 @@ const tx = {
     findMany: mocks.auditFindMany,
     create: mocks.auditCreate,
   },
-  organizationMembership: { findFirst: mocks.membershipFindFirst },
+  organizationMembership: { findMany: mocks.membershipFindMany },
 };
 
 vi.mock("@/lib/db", () => ({
@@ -28,58 +28,46 @@ vi.mock("@/lib/db", () => ({
 }));
 
 import {
-  approveCapa,
-  completeCapaAction,
-  getCapaWorkspace,
+  activateCapa,
+  markCapaReadyForEffectiveness,
   saveCapaDraft,
-  verifyCapaEffectiveness,
+  transitionCapaAction,
 } from "@/lib/quality/capa";
 
-const event = {
-  organizationId: "org-a",
-  siteId: "site-a",
-  status: "INVESTIGATING",
-};
+const event = { organizationId: "org-a", siteId: "site-a", status: "INVESTIGATING" };
+const confirmedRootCause = { organizationId: "org-a", siteId: "site-a", status: "CONFIRMED" };
 
-const rootCause = {
-  organizationId: "org-a",
-  siteId: "site-a",
-  status: "CONFIRMED",
-};
-
-const baseInput = {
+const draftInput = {
   organizationId: "org-a",
   siteId: "site-a",
   eventId: "event-1",
-  planSummary: "Remove the confirmed failure mechanism and prevent recurrence.",
+  objective: "Remove the confirmed cause and prevent recurrence.",
   actions: [
     {
+      actionKey: "corrective-1",
       type: "CORRECTIVE" as const,
-      title: "Replace synthetic worn fixture",
-      description: "Restore the equipment to the validated condition.",
-      ownerId: "owner-1",
-      dueAt: new Date("2026-08-20T10:00:00.000Z"),
+      title: "Replace the synthetic worn clamp",
+      description: "Synthetic corrective action.",
+      ownerId: "quality-2",
+      dueAt: new Date("2026-08-20T00:00:00.000Z"),
     },
     {
+      actionKey: "preventive-1",
       type: "PREVENTIVE" as const,
-      title: "Add periodic retention check",
-      ownerId: "owner-2",
-      dueAt: new Date("2026-08-25T10:00:00.000Z"),
+      title: "Add clamp verification to setup standard",
+      ownerId: "quality-3",
+      dueAt: new Date("2026-08-25T00:00:00.000Z"),
     },
   ],
   actorId: "quality-1",
 };
 
-function mockContext(rootStatus: "DRAFT" | "CONFIRMED" = "CONFIRMED") {
-  mocks.auditFindFirst
-    .mockResolvedValueOnce({ afterJson: JSON.stringify(event) })
-    .mockResolvedValueOnce({ afterJson: JSON.stringify({ ...rootCause, status: rootStatus }) });
+function mockJson(value: unknown) {
+  mocks.auditFindFirst.mockResolvedValueOnce({ afterJson: JSON.stringify(value) });
 }
 
-function mockCapa(snapshot: unknown | null) {
-  mocks.auditFindFirst.mockResolvedValueOnce(
-    snapshot ? { afterJson: JSON.stringify(snapshot) } : null,
-  );
+function mockNoRecord() {
+  mocks.auditFindFirst.mockResolvedValueOnce(null);
 }
 
 describe("quality CAPA workflow", () => {
@@ -88,269 +76,223 @@ describe("quality CAPA workflow", () => {
     mocks.transaction.mockImplementation(
       async (callback: (transaction: typeof tx) => Promise<unknown>) => callback(tx),
     );
-    mocks.membershipFindFirst.mockResolvedValue({ id: "membership-1" });
     mocks.auditCreate.mockResolvedValue({ id: "audit-1" });
     mocks.auditFindMany.mockResolvedValue([]);
+    mocks.membershipFindMany.mockResolvedValue([
+      { userId: "quality-2" },
+      { userId: "quality-3" },
+    ]);
   });
 
-  it("creates a draft with corrective and preventive actions, owners and due dates", async () => {
-    mockContext();
-    mockCapa(null);
+  it("creates a draft with corrective/preventive actions, owners and due dates", async () => {
+    mockJson(event);
+    mockNoRecord();
 
-    const result = await saveCapaDraft(baseInput);
+    const draft = await saveCapaDraft(draftInput);
 
-    expect(result.status).toBe("DRAFT");
-    expect(result.actions).toHaveLength(2);
-    expect(result.actions[0]).toMatchObject({
+    expect(draft.status).toBe("DRAFT");
+    expect(draft.actions).toHaveLength(2);
+    expect(draft.actions[0]).toMatchObject({
+      actionKey: "corrective-1",
       type: "CORRECTIVE",
-      ownerId: "owner-1",
-      status: "OPEN",
-      dueAt: "2026-08-20T10:00:00.000Z",
+      ownerId: "quality-2",
+      dueAt: "2026-08-20T00:00:00.000Z",
+      status: "PLANNED",
     });
-    expect(result.actions[1]).toMatchObject({ type: "PREVENTIVE", ownerId: "owner-2" });
     expect(mocks.auditCreate).toHaveBeenCalledWith({
-      data: expect.objectContaining({
-        entityType: "QualityCapa",
-        entityId: "event-1",
-        action: "CREATED",
+      data: expect.objectContaining({ entityType: "QualityCapa", action: "CAPA_DRAFT_CREATED" }),
+    });
+  });
+
+  it("rejects duplicate action keys", async () => {
+    mockJson(event);
+    mockNoRecord();
+
+    await expect(
+      saveCapaDraft({
+        ...draftInput,
+        actions: [draftInput.actions[0], { ...draftInput.actions[1], actionKey: "corrective-1" }],
       }),
-    });
+    ).rejects.toMatchObject({ code: "DUPLICATE_ACTION_KEY" });
   });
 
-  it("requires confirmed root-cause analysis before CAPA planning", async () => {
-    mockContext("DRAFT");
+  it("rejects action owners outside active organization membership", async () => {
+    mockJson(event);
+    mockNoRecord();
+    mocks.membershipFindMany.mockResolvedValue([{ userId: "quality-2" }]);
 
-    await expect(saveCapaDraft(baseInput)).rejects.toMatchObject({
-      code: "ROOT_CAUSE_REQUIRED",
-    });
-    expect(mocks.auditCreate).not.toHaveBeenCalled();
-  });
-
-  it("rejects action owners without active site access", async () => {
-    mockContext();
-    mockCapa(null);
-    mocks.membershipFindFirst.mockResolvedValueOnce(null);
-
-    await expect(saveCapaDraft(baseInput)).rejects.toMatchObject({
+    await expect(saveCapaDraft(draftInput)).rejects.toMatchObject({
       code: "ACTION_OWNER_NOT_FOUND",
     });
   });
 
-  it("approves a complete draft and freezes plan edits", async () => {
-    mockContext();
-    mockCapa(null);
-    const draft = await saveCapaDraft(baseInput);
+  it("requires confirmed RCA before CAPA activation", async () => {
+    mockJson(event);
+    mockNoRecord();
+    const draft = await saveCapaDraft(draftInput);
 
-    mockContext();
-    mockCapa(draft);
-    const approved = await approveCapa({
-      organizationId: "org-a",
-      siteId: "site-a",
-      eventId: "event-1",
-      actorId: "quality-2",
-    });
+    mockJson(event);
+    mockJson({ ...confirmedRootCause, status: "DRAFT" });
 
-    expect(approved).toMatchObject({
-      status: "ACTIVE",
-      approvedById: "quality-2",
-    });
-    expect(approved.approvedAt).toBeTruthy();
-
-    mockContext();
-    mockCapa(approved);
-    await expect(saveCapaDraft(baseInput)).rejects.toMatchObject({ code: "CAPA_LOCKED" });
-  });
-
-  it("requires at least one action before approval", async () => {
-    mockContext();
-    mockCapa(null);
-    const draft = await saveCapaDraft({ ...baseInput, actions: [] });
-
-    mockContext();
-    mockCapa(draft);
     await expect(
-      approveCapa({
+      activateCapa({
         organizationId: "org-a",
         siteId: "site-a",
         eventId: "event-1",
         actorId: "quality-1",
       }),
-    ).rejects.toMatchObject({ code: "ACTION_REQUIRED" });
+    ).rejects.toMatchObject({ code: "ROOT_CAUSE_CONFIRMATION_REQUIRED" });
+
+    expect(draft.status).toBe("DRAFT");
   });
 
-  it("completes an approved action with an immutable completion record", async () => {
-    mockContext();
-    mockCapa(null);
-    const draft = await saveCapaDraft({ ...baseInput, actions: [baseInput.actions[0]] });
-    mockContext();
-    mockCapa(draft);
-    const approved = await approveCapa({
+  it("activates CAPA after confirmed RCA", async () => {
+    mockJson(event);
+    mockNoRecord();
+    const draft = await saveCapaDraft(draftInput);
+
+    mockJson(event);
+    mockJson(confirmedRootCause);
+    mockJson(draft);
+    const active = await activateCapa({
       organizationId: "org-a",
       siteId: "site-a",
       eventId: "event-1",
       actorId: "quality-1",
     });
 
-    mockContext();
-    mockCapa(approved);
-    const completed = await completeCapaAction({
-      organizationId: "org-a",
-      siteId: "site-a",
-      eventId: "event-1",
-      actionId: approved.actions[0].id,
-      completionNote: "Fixture replaced and setup verification passed.",
-      actorId: "quality-2",
-    });
-
-    expect(completed.actions[0]).toMatchObject({
-      status: "COMPLETED",
-      completedById: "quality-2",
-      completionNote: "Fixture replaced and setup verification passed.",
-    });
-    expect(completed.actions[0].completedAt).toBeTruthy();
+    expect(active.status).toBe("ACTIVE");
+    expect(active.activatedAt).toBeTruthy();
   });
 
-  it("blocks effectiveness verification until every action is complete", async () => {
-    mockContext();
-    mockCapa(null);
-    const draft = await saveCapaDraft(baseInput);
-    mockContext();
-    mockCapa(draft);
-    const approved = await approveCapa({
-      organizationId: "org-a",
-      siteId: "site-a",
-      eventId: "event-1",
-      actorId: "quality-1",
-    });
+  it("requires a completion note when completing an action", async () => {
+    const active = {
+      ...latestCapabase(),
+      status: "ACTIVE" as const,
+    };
+    mockJson(event);
+    mockJson(active);
 
-    mockContext();
-    mockCapa(approved);
     await expect(
-      verifyCapaEffectiveness({
+      transitionCapaAction({
         organizationId: "org-a",
         siteId: "site-a",
         eventId: "event-1",
-        result: "EFFECTIVE",
-        note: "No recurrence detected.",
-        actorId: "quality-3",
+        actionId: active.actions[0].id,
+        transition: "COMPLETE",
+        completionNote: " ",
+        actorId: "quality-1",
       }),
-    ).rejects.toMatchObject({ code: "ACTIONS_INCOMPLETE" });
+    ).rejects.toMatchObject({ code: "ACTION_COMPLETION_NOTE_REQUIRED" });
   });
 
-  it("closes CAPA only after an effective verification", async () => {
-    mockContext();
-    mockCapa(null);
-    const draft = await saveCapaDraft({ ...baseInput, actions: [baseInput.actions[0]] });
-    mockContext();
-    mockCapa(draft);
-    const approved = await approveCapa({
+  it("moves action execution from planned to in-progress to completed", async () => {
+    const active = { ...latestCapabase(), status: "ACTIVE" as const };
+    mockJson(event);
+    mockJson(active);
+    const started = await transitionCapaAction({
+      organizationId: "org-a",
+      siteId: "site-a",
+      eventId: "event-1",
+      actionId: active.actions[0].id,
+      transition: "START",
+      actorId: "quality-1",
+    });
+    expect(started.actions[0].status).toBe("IN_PROGRESS");
+
+    mockJson(event);
+    mockJson(started);
+    const completed = await transitionCapaAction({
+      organizationId: "org-a",
+      siteId: "site-a",
+      eventId: "event-1",
+      actionId: active.actions[0].id,
+      transition: "COMPLETE",
+      completionNote: "Synthetic action completed and evidence recorded.",
+      actorId: "quality-1",
+    });
+    expect(completed.actions[0]).toMatchObject({
+      status: "COMPLETED",
+      completionNote: "Synthetic action completed and evidence recorded.",
+    });
+  });
+
+  it("blocks effectiveness readiness while open actions remain", async () => {
+    const active = { ...latestCapabase(), status: "ACTIVE" as const };
+    mockJson(event);
+    mockJson(active);
+
+    await expect(
+      markCapaReadyForEffectiveness({
+        organizationId: "org-a",
+        siteId: "site-a",
+        eventId: "event-1",
+        actorId: "quality-1",
+      }),
+    ).rejects.toMatchObject({ code: "OPEN_ACTIONS_REMAIN" });
+  });
+
+  it("moves CAPA to effectiveness only after every action is dispositioned", async () => {
+    const active = {
+      ...latestCapabase(),
+      status: "ACTIVE" as const,
+      actions: latestCapabase().actions.map((action, index) => ({
+        ...action,
+        status: index === 0 ? ("COMPLETED" as const) : ("CANCELLED" as const),
+        completedAt: index === 0 ? "2026-08-18T00:00:00.000Z" : null,
+        completionNote: "Synthetic disposition",
+      })),
+    };
+    mockJson(event);
+    mockJson(active);
+
+    const ready = await markCapaReadyForEffectiveness({
       organizationId: "org-a",
       siteId: "site-a",
       eventId: "event-1",
       actorId: "quality-1",
     });
-    mockContext();
-    mockCapa(approved);
-    const completed = await completeCapaAction({
-      organizationId: "org-a",
-      siteId: "site-a",
-      eventId: "event-1",
-      actionId: approved.actions[0].id,
-      completionNote: "Action implemented.",
-      actorId: "quality-2",
-    });
-
-    mockContext();
-    mockCapa(completed);
-    const verified = await verifyCapaEffectiveness({
-      organizationId: "org-a",
-      siteId: "site-a",
-      eventId: "event-1",
-      result: "EFFECTIVE",
-      note: "Three follow-up checks remained within acceptance criteria.",
-      actorId: "quality-3",
-    });
-
-    expect(verified.status).toBe("CLOSED");
-    expect(verified.closedAt).toBeTruthy();
-    expect(verified.effectivenessChecks.at(-1)).toMatchObject({
-      result: "EFFECTIVE",
-      verifiedById: "quality-3",
-    });
-  });
-
-  it("returns ineffective CAPA to draft while preserving verification history", async () => {
-    const completed = {
-      eventId: "event-1",
-      organizationId: "org-a",
-      siteId: "site-a",
-      status: "ACTIVE" as const,
-      planSummary: "Synthetic CAPA",
-      actions: [
-        {
-          id: "dd1f1863-0c8d-48a4-a4f8-3a25771626ea",
-          type: "CORRECTIVE" as const,
-          title: "Synthetic action",
-          description: null,
-          ownerId: "owner-1",
-          dueAt: "2026-08-20T10:00:00.000Z",
-          status: "COMPLETED" as const,
-          completionNote: "Done",
-          completedById: "quality-2",
-          completedAt: "2026-08-15T10:00:00.000Z",
-        },
-      ],
-      approvedById: "quality-1",
-      approvedAt: "2026-08-10T10:00:00.000Z",
-      effectivenessChecks: [],
-      createdAt: "2026-08-09T10:00:00.000Z",
-      updatedAt: "2026-08-15T10:00:00.000Z",
-      closedAt: null,
-    };
-    mockContext();
-    mockCapa(completed);
-
-    const result = await verifyCapaEffectiveness({
-      organizationId: "org-a",
-      siteId: "site-a",
-      eventId: "event-1",
-      result: "INEFFECTIVE",
-      note: "The failure recurred during follow-up inspection.",
-      actorId: "quality-3",
-    });
-
-    expect(result.status).toBe("DRAFT");
-    expect(result.approvedAt).toBeNull();
-    expect(result.effectivenessChecks).toHaveLength(1);
-    expect(result.effectivenessChecks[0].result).toBe("INEFFECTIVE");
-  });
-
-  it("does not expose CAPA data through mismatched tenant scope", async () => {
-    mocks.auditFindFirst
-      .mockResolvedValueOnce({ afterJson: JSON.stringify(event) })
-      .mockResolvedValueOnce({ afterJson: JSON.stringify(rootCause) })
-      .mockResolvedValueOnce({
-        afterJson: JSON.stringify({
-          eventId: "event-1",
-          organizationId: "org-other",
-          siteId: "site-a",
-          status: "DRAFT",
-          planSummary: "Other tenant",
-          actions: [],
-          approvedById: null,
-          approvedAt: null,
-          effectivenessChecks: [],
-          createdAt: "2026-08-08T00:00:00.000Z",
-          updatedAt: "2026-08-08T00:00:00.000Z",
-          closedAt: null,
-        }),
-      });
-
-    const workspace = await getCapaWorkspace({
-      organizationId: "org-a",
-      siteId: "site-a",
-      eventId: "event-1",
-    });
-    expect(workspace).toBeNull();
+    expect(ready.status).toBe("READY_FOR_EFFECTIVENESS");
+    expect(ready.readyForEffectivenessAt).toBeTruthy();
   });
 });
+
+function latestCapabase() {
+  return {
+    eventId: "event-1",
+    organizationId: "org-a",
+    siteId: "site-a",
+    status: "DRAFT" as const,
+    objective: "Remove confirmed cause",
+    actions: [
+      {
+        id: "action-1",
+        actionKey: "corrective-1",
+        type: "CORRECTIVE" as const,
+        title: "Correct synthetic cause",
+        description: null,
+        ownerId: "quality-2",
+        dueAt: "2026-08-20T00:00:00.000Z",
+        status: "PLANNED" as const,
+        completionNote: null,
+        completedAt: null,
+      },
+      {
+        id: "action-2",
+        actionKey: "preventive-1",
+        type: "PREVENTIVE" as const,
+        title: "Prevent synthetic recurrence",
+        description: null,
+        ownerId: "quality-3",
+        dueAt: "2026-08-25T00:00:00.000Z",
+        status: "PLANNED" as const,
+        completionNote: null,
+        completedAt: null,
+      },
+    ],
+    createdAt: "2026-08-08T00:00:00.000Z",
+    updatedAt: "2026-08-08T00:00:00.000Z",
+    activatedAt: null,
+    readyForEffectivenessAt: null,
+  };
+}
