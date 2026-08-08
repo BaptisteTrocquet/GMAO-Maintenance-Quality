@@ -2,6 +2,7 @@ import { z } from "zod";
 import { AccessDeniedError, assertSitePermission } from "@/lib/access-control";
 import { apiData, apiError } from "@/lib/api-response";
 import { authenticateRequest } from "@/lib/auth/request-auth";
+import { getQualityEvent } from "@/lib/quality/events";
 import {
   finalizeQualityRca,
   getQualityRca,
@@ -79,6 +80,11 @@ export async function GET(
   if ("error" in auth) return auth.error;
   const denied = authorize(auth.tenant.scope, siteId, "quality:read");
   if (denied) return denied;
+
+  const qualityEvent = await getQualityEvent({ organizationId, siteId, eventId });
+  if (!qualityEvent) {
+    return apiError(404, "QUALITY_EVENT_NOT_FOUND", "Quality event not found in site scope");
+  }
 
   const rca = await getQualityRca({ organizationId, siteId, eventId });
   if (!rca) return apiData({ rca: null, timeline: [] });
