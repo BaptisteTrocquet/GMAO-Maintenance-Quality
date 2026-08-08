@@ -146,8 +146,8 @@ export async function listLaborCapacityProfiles(input: {
     where: {
       entityType: ENTITY_TYPE,
       AND: [
-        { afterJson: { contains: `\"organizationId\":\"${input.organizationId}\"` } },
-        { afterJson: { contains: `\"siteId\":\"${input.siteId}\"` } },
+        { afterJson: { contains: `"organizationId":"${input.organizationId}"` } },
+        { afterJson: { contains: `"siteId":"${input.siteId}"` } },
       ],
     },
     orderBy: { createdAt: "asc" },
