@@ -15,7 +15,7 @@ export type ReliabilityDashboard = {
     toExclusive: string;
   };
   assetId: string | null;
-  mttr: ReliabilityMetric;
+  mttr: ReliabilityMetric & { excludedIncomplete: number };
   mtbf: ReliabilityMetric & { assetCount: number };
   definitions: {
     mttr: string;
@@ -25,6 +25,7 @@ export type ReliabilityDashboard = {
 
 type MttrRow = {
   sampleCount: number;
+  excludedIncomplete: number;
   hours: number | null;
 };
 
@@ -109,8 +110,23 @@ export async function buildReliabilityDashboard(input: {
   const [mttrRows, mtbfRows] = await Promise.all([
     db.$queryRaw<MttrRow[]>(Prisma.sql`
       SELECT
-        COUNT(*)::int AS "sampleCount",
-        AVG(EXTRACT(EPOCH FROM (wo."completedAt" - wo."startedAt")) / 3600.0)::double precision AS "hours"
+        COUNT(*) FILTER (
+          WHERE wo."startedAt" IS NOT NULL
+            AND wo."startedAt" >= wo."requestedAt"
+            AND wo."completedAt" >= wo."startedAt"
+        )::int AS "sampleCount",
+        COUNT(*) FILTER (
+          WHERE wo."startedAt" IS NULL
+            OR wo."startedAt" < wo."requestedAt"
+            OR wo."completedAt" < wo."startedAt"
+        )::int AS "excludedIncomplete",
+        AVG(
+          EXTRACT(EPOCH FROM (wo."completedAt" - wo."startedAt")) / 3600.0
+        ) FILTER (
+          WHERE wo."startedAt" IS NOT NULL
+            AND wo."startedAt" >= wo."requestedAt"
+            AND wo."completedAt" >= wo."startedAt"
+        )::double precision AS "hours"
       FROM "WorkOrder" wo
       INNER JOIN "Site" site ON site.id = wo."siteId"
       WHERE wo."siteId" = ${input.siteId}
@@ -118,9 +134,7 @@ export async function buildReliabilityDashboard(input: {
         AND site.active = true
         AND wo.type = 'CORRECTIVE'
         AND wo.status = 'COMPLETED'
-        AND wo."startedAt" IS NOT NULL
         AND wo."completedAt" IS NOT NULL
-        AND wo."completedAt" >= wo."startedAt"
         ${mttrFromFilter}
         AND wo."completedAt" < ${toExclusive}
         ${assetFilter}
@@ -162,7 +176,7 @@ export async function buildReliabilityDashboard(input: {
     `),
   ]);
 
-  const mttr = mttrRows[0] ?? { sampleCount: 0, hours: null };
+  const mttr = mttrRows[0] ?? { sampleCount: 0, excludedIncomplete: 0, hours: null };
   const mtbf = mtbfRows[0] ?? { intervalCount: 0, assetCount: 0, hours: null };
 
   return {
@@ -176,6 +190,7 @@ export async function buildReliabilityDashboard(input: {
     mttr: {
       hours: finiteOrNull(mttr.hours),
       sampleCount: mttr.sampleCount,
+      excludedIncomplete: mttr.excludedIncomplete,
     },
     mtbf: {
       hours: finiteOrNull(mtbf.hours),
@@ -184,9 +199,9 @@ export async function buildReliabilityDashboard(input: {
     },
     definitions: {
       mttr:
-        "Average elapsed hours from startedAt to completedAt for completed corrective work orders whose completion falls inside the reporting window.",
+        "Average elapsed hours from startedAt to completedAt for completed corrective work orders whose completion falls inside the reporting window. Missing or chronologically invalid startedAt values are excluded and counted separately.",
       mtbf:
-        "Average elapsed hours between successive non-cancelled corrective work-order request events on the same asset. The later event must fall inside the reporting window; the prior event may precede it.",
+        "Corrective-event interval proxy: average elapsed hours between successive non-cancelled corrective requestedAt events on the same asset. The later event must fall inside the reporting window; the prior event may precede it. This is a proxy until explicit failure and operating-hours telemetry exists.",
     },
   };
 }
