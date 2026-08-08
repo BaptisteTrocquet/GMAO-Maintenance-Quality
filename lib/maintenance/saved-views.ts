@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import type { WorkOrderDueFilter } from "@/lib/maintenance/board";
 
@@ -89,7 +90,11 @@ function parseSnapshot(value: string | null): SavedMaintenanceViewSnapshot | nul
   }
 }
 
-function scopeWhere(input: { organizationId: string; siteId: string; userId: string }) {
+function scopeWhere(input: {
+  organizationId: string;
+  siteId: string;
+  userId: string;
+}): Prisma.AuditLogWhereInput {
   return {
     entityType: ENTITY_TYPE,
     actorId: input.userId,
@@ -98,7 +103,7 @@ function scopeWhere(input: { organizationId: string; siteId: string; userId: str
       { afterJson: { contains: `"siteId":"${input.siteId}"` } },
       { afterJson: { contains: `"userId":"${input.userId}"` } },
     ],
-  } as const;
+  };
 }
 
 export async function listSavedMaintenanceViews(input: {
