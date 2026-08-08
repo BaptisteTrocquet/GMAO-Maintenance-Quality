@@ -3,7 +3,6 @@ import { AccessDeniedError, assertSitePermission } from "@/lib/access-control";
 import { apiData, apiError } from "@/lib/api-response";
 import { authenticateRequest } from "@/lib/auth/request-auth";
 import {
-  approveCapa,
   CapaError,
   completeCapaAction,
   getCapaWorkspace,
@@ -12,6 +11,10 @@ import {
   saveCapaDraft,
   verifyCapaEffectiveness,
 } from "@/lib/quality/capa";
+import {
+  approveCapaGoverned,
+  CapaApprovalError,
+} from "@/lib/quality/capa-approval";
 
 const scopeSchema = z.object({
   organizationId: z.string().min(1),
@@ -79,6 +82,18 @@ function capaError(error: CapaError) {
   return apiError(status, error.code, error.message);
 }
 
+function approvalError(error: CapaApprovalError) {
+  const status =
+    error.code === "QUALITY_EVENT_NOT_FOUND" ||
+    error.code === "CAPA_NOT_FOUND" ||
+    error.code === "ACTION_OWNER_NOT_FOUND"
+      ? 404
+      : error.code === "CAPA_APPROVER_NOT_ALLOWED"
+        ? 403
+        : 409;
+  return apiError(status, error.code, error.message);
+}
+
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ eventId: string }> },
@@ -142,11 +157,11 @@ export async function PATCH(
 
     if (parsed.data.action === "APPROVE") {
       return apiData(
-        await approveCapa({
+        await approveCapaGoverned({
           organizationId: parsed.data.organizationId,
           siteId: parsed.data.siteId,
           eventId,
-          actorId: auth.session.user.id,
+          approverId: auth.session.user.id,
         }),
       );
     }
@@ -186,6 +201,7 @@ export async function PATCH(
       }),
     );
   } catch (error) {
+    if (error instanceof CapaApprovalError) return approvalError(error);
     if (error instanceof CapaError) return capaError(error);
     throw error;
   }
