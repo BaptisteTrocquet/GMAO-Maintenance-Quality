@@ -289,6 +289,22 @@ export type SaveCapaActionInput = {
   dueAt: Date;
 };
 
+function actionMeaningChanged(existing: CapaAction, next: {
+  type: CapaActionType;
+  title: string;
+  description: string | null;
+  ownerId: string;
+  dueAt: string;
+}) {
+  return (
+    existing.type !== next.type ||
+    existing.title !== next.title ||
+    existing.description !== next.description ||
+    existing.ownerId !== next.ownerId ||
+    existing.dueAt !== next.dueAt
+  );
+}
+
 export async function saveCapaDraft(input: {
   organizationId: string;
   siteId: string;
@@ -323,17 +339,21 @@ export async function saveCapaDraft(input: {
       }
       ids.add(id);
       const existing = previousById.get(id);
-      actions.push({
-        id,
+      const nextMeaning = {
         type: rawAction.type,
         title,
         description: rawAction.description?.trim() || null,
         ownerId: rawAction.ownerId,
         dueAt: rawAction.dueAt.toISOString(),
-        status: existing?.status ?? "OPEN",
-        completionNote: existing?.completionNote ?? null,
-        completedById: existing?.completedById ?? null,
-        completedAt: existing?.completedAt ?? null,
+      };
+      const preserveCompletion = Boolean(existing && !actionMeaningChanged(existing, nextMeaning));
+      actions.push({
+        id,
+        ...nextMeaning,
+        status: preserveCompletion ? existing!.status : "OPEN",
+        completionNote: preserveCompletion ? existing!.completionNote : null,
+        completedById: preserveCompletion ? existing!.completedById : null,
+        completedAt: preserveCompletion ? existing!.completedAt : null,
       });
     }
 
