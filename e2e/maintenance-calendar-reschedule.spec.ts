@@ -32,7 +32,9 @@ test("calendar schedule handles are keyboard reachable", async ({ page }) => {
   const response = await page.goto("/maintenance/calendar?month=2026-02");
   expect(response?.ok()).toBe(true);
 
-  const startHandle = page.getByRole("button", { name: /Move WO-000001 start/i }).first();
+  const startHandle = page
+    .getByRole("button", { name: /Move WO-000001 planned start/i })
+    .first();
   await expect(startHandle).toBeVisible();
   await startHandle.focus();
   await expect(startHandle).toBeFocused();
