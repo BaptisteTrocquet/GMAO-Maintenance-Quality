@@ -5,21 +5,22 @@ import { authenticateRequest } from "@/lib/auth/request-auth";
 import { db } from "@/lib/db";
 import {
   deleteSavedView,
-  SAVED_VIEW_SURFACES,
   SavedViewError,
   updateSavedView,
 } from "@/lib/saved-views";
 
-const surfaceSchema = z.enum(SAVED_VIEW_SURFACES);
+const dueFilterSchema = z.enum(["ALL", "OVERDUE", "DUE_7_DAYS", "NO_DUE_DATE"]);
 const filtersSchema = z
-  .record(z.string().min(1).max(50), z.string().max(200))
-  .refine((filters) => Object.keys(filters).length <= 20, "At most 20 filters can be saved");
-
-const updateSchema = z
-  .object({
-    organizationId: z.string().min(1),
-    siteId: z.string().min(1),
-    surface: surfaceSchema,
+  .object({ due: dueFilterSchema.optional() })
+  .strict()
+  .transform((filters) => ({ due: filters.due ?? "ALL" }));
+const scopeSchema = z.object({
+  organizationId: z.string().min(1),
+  siteId: z.string().min(1),
+  surface: z.literal("WORK_ORDER_KANBAN"),
+});
+const updateSchema = scopeSchema
+  .extend({
     name: z.string().min(1).max(80).optional(),
     filters: filtersSchema.optional(),
   })
@@ -88,17 +89,11 @@ export async function DELETE(
   context: { params: Promise<{ viewId: string }> },
 ) {
   const url = new URL(request.url);
-  const parsed = z
-    .object({
-      organizationId: z.string().min(1),
-      siteId: z.string().min(1),
-      surface: surfaceSchema,
-    })
-    .safeParse({
-      organizationId: url.searchParams.get("organizationId"),
-      siteId: url.searchParams.get("siteId"),
-      surface: url.searchParams.get("surface"),
-    });
+  const parsed = scopeSchema.safeParse({
+    organizationId: url.searchParams.get("organizationId"),
+    siteId: url.searchParams.get("siteId"),
+    surface: url.searchParams.get("surface"),
+  });
   if (!parsed.success) {
     return apiError(400, "INVALID_QUERY", "organizationId, siteId and a supported surface are required");
   }
