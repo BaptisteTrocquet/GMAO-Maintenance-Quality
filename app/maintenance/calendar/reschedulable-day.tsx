@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState, type DragEvent } from "react";
 import { useRouter } from "next/navigation";
-import { buildSchedulePatch } from "@/lib/maintenance/reschedule";
+import { buildWorkOrderRescheduleRequest } from "@/lib/maintenance/reschedule";
 
 const DRAG_MIME = "application/x-gmao-work-order-schedule";
 
@@ -89,16 +89,19 @@ export default function ReschedulableCalendarDay({
     setBusy(payload.workOrderId);
     setFeedback(null);
     try {
-      const patch = buildSchedulePatch({
+      const request = buildWorkOrderRescheduleRequest({
+        workOrderId: payload.workOrderId,
+        organizationId,
+        siteId,
         field: "plannedStart",
         instant: new Date(payload.sourceInstant),
         targetDateKey,
         timeZone,
       });
-      const response = await fetch(`/api/work-orders/${payload.workOrderId}`, {
-        method: "PATCH",
+      const response = await fetch(request.url, {
+        method: request.method,
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ organizationId, siteId, ...patch }),
+        body: JSON.stringify(request.body),
       });
       const body = (await response.json()) as { error?: { message?: string } };
       if (!response.ok) {
