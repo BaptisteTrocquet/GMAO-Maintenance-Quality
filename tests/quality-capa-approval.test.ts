@@ -55,12 +55,12 @@ const draft = {
   readyForEffectivenessAt: null,
 };
 
-function mockApprovalReads(authorId = "quality-author") {
+function mockApprovalReads(lastDraftEditorId = "quality-author") {
   mocks.auditFindFirst
     .mockResolvedValueOnce({ afterJson: JSON.stringify(event) })
     .mockResolvedValueOnce({ afterJson: JSON.stringify(rootCause) })
     .mockResolvedValueOnce({ afterJson: JSON.stringify(draft) })
-    .mockResolvedValueOnce({ actorId: authorId });
+    .mockResolvedValueOnce({ actorId: lastDraftEditorId });
 }
 
 describe("CAPA approval separation", () => {
@@ -98,6 +98,15 @@ describe("CAPA approval separation", () => {
       },
       select: { id: true, role: true },
     });
+    expect(mocks.auditFindFirst).toHaveBeenNthCalledWith(4, {
+      where: {
+        entityType: "QualityCapa",
+        entityId: "event-1",
+        action: { in: ["CAPA_DRAFT_CREATED", "CAPA_DRAFT_UPDATED"] },
+      },
+      orderBy: { createdAt: "desc" },
+      select: { actorId: true },
+    });
     expect(mocks.membershipFindMany).toHaveBeenCalledWith({
       where: {
         organizationId: "org-a",
@@ -131,7 +140,7 @@ describe("CAPA approval separation", () => {
     );
   });
 
-  it("rejects self approval by the CAPA draft author", async () => {
+  it("rejects approval by the user who last authored or edited the CAPA draft", async () => {
     mockApprovalReads("quality-approver");
 
     await expect(
