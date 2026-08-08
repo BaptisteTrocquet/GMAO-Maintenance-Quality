@@ -83,7 +83,7 @@ function authorize(
   scope: Parameters<typeof assertSitePermission>[0],
   siteId: string,
   permission: "quality:read" | "quality:manage",
-) {
+): Response | null {
   try {
     assertSitePermission(scope, siteId, permission);
     return null;
