@@ -21,7 +21,9 @@ export async function GET(request: Request): Promise<Response> {
   }
 
   const auth = await authenticateRequest(request, organizationId);
-  if ("error" in auth) return auth.error;
+  if ("error" in auth) {
+    return auth.error ?? apiError(401, "UNAUTHENTICATED", "Authentication required");
+  }
 
   if (!hasSiteAccess(auth.tenant.scope, siteId)) {
     return apiError(403, "ACCESS_DENIED", "Site access denied");
