@@ -32,7 +32,7 @@ export async function buildPersonalDashboard(input: {
   const through = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
   const baseWork = assignedWorkWhere(input);
   const canReadWork = can(input.role, "work:read");
-  const canReadDocuments = can(input.role, "document:read");
+  const canApproveDocuments = can(input.role, "document:approve");
 
   const [openWork, blockedWork, overdueWork, dueSoonWork, urgentWork, workOrders, approvalCount, approvals] =
     await Promise.all([
@@ -69,7 +69,7 @@ export async function buildPersonalDashboard(input: {
             take: PERSONAL_DASHBOARD_WORK_LIMIT,
           })
         : Promise.resolve([]),
-      canReadDocuments
+      canApproveDocuments
         ? db.documentApproval.count({
             where: {
               approverId: input.userId,
@@ -78,7 +78,7 @@ export async function buildPersonalDashboard(input: {
             },
           })
         : Promise.resolve(0),
-      canReadDocuments
+      canApproveDocuments
         ? db.documentApproval.findMany({
             where: {
               approverId: input.userId,
