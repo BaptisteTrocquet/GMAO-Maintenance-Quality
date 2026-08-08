@@ -21,6 +21,12 @@ function request(query = "pump", siteId = "site-a") {
   return new Request(`http://localhost/api/search?${params.toString()}`);
 }
 
+function requireResponse(response: Response | undefined) {
+  expect(response).toBeDefined();
+  if (!response) throw new Error("expected response");
+  return response;
+}
+
 function auth(overrides: Record<string, unknown> = {}) {
   return {
     session: { user: { id: "user-1" } },
@@ -55,7 +61,7 @@ describe("global search API", () => {
   });
 
   it("rejects short queries before authentication or database search", async () => {
-    const response = await GET(request("x"));
+    const response = requireResponse(await GET(request("x")));
 
     expect(response.status).toBe(400);
     expect(mocks.authenticateRequest).not.toHaveBeenCalled();
@@ -63,7 +69,7 @@ describe("global search API", () => {
   });
 
   it("passes the authenticated role and selected tenant/site scope to search", async () => {
-    const response = await GET(request());
+    const response = requireResponse(await GET(request()));
 
     expect(response.status).toBe(200);
     expect(mocks.authenticateRequest).toHaveBeenCalledWith(expect.any(Request), "org-a");
@@ -82,7 +88,7 @@ describe("global search API", () => {
   });
 
   it("rejects a site outside the membership before any category query", async () => {
-    const response = await GET(request("pump", "site-b"));
+    const response = requireResponse(await GET(request("pump", "site-b")));
 
     expect(response.status).toBe(403);
     expect(mocks.searchGlobal).not.toHaveBeenCalled();
@@ -93,7 +99,7 @@ describe("global search API", () => {
       auth({ role: "QUALITY_MANAGER", allSites: true, siteIds: [] }),
     );
 
-    const response = await GET(request("audit", "site-b"));
+    const response = requireResponse(await GET(request("audit", "site-b")));
 
     expect(response.status).toBe(200);
     expect(mocks.searchGlobal).toHaveBeenCalledWith({
@@ -105,7 +111,7 @@ describe("global search API", () => {
   });
 
   it("normalizes whitespace before invoking the search engine", async () => {
-    const response = await GET(request("  pump   seal  "));
+    const response = requireResponse(await GET(request("  pump   seal  ")));
 
     expect(response.status).toBe(200);
     expect(mocks.searchGlobal).toHaveBeenCalledWith(
@@ -121,7 +127,7 @@ describe("global search API", () => {
       }),
     });
 
-    const response = await GET(request());
+    const response = requireResponse(await GET(request()));
 
     expect(response.status).toBe(401);
     expect(mocks.searchGlobal).not.toHaveBeenCalled();
