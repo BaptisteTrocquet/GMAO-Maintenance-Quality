@@ -26,7 +26,7 @@ describe("maintenance calendar rescheduling", () => {
     expect(planned.toISOString()).toBe("2026-08-12T06:00:00.000Z");
   });
 
-  it("builds a field-specific API patch without changing the other schedule field", () => {
+  it("builds a field-specific due-date API patch", () => {
     expect(
       buildSchedulePatch({
         field: "dueAt",
@@ -35,6 +35,21 @@ describe("maintenance calendar rescheduling", () => {
         timeZone: "Europe/Paris",
       }),
     ).toEqual({ dueAt: "2026-08-14T14:15:00.000Z" });
+  });
+
+  it("can preserve the planned-to-due calendar offset when both timestamps move together", () => {
+    expect(
+      buildSchedulePatch({
+        field: "plannedStart",
+        instant: new Date("2026-10-23T06:30:00.000Z"),
+        dueAt: new Date("2026-10-24T15:00:00.000Z"),
+        targetDateKey: "2026-10-25",
+        timeZone: "Europe/Paris",
+      }),
+    ).toEqual({
+      plannedStart: "2026-10-25T07:30:00.000Z",
+      dueAt: "2026-10-26T16:00:00.000Z",
+    });
   });
 
   it("rejects invalid local calendar dates", () => {
