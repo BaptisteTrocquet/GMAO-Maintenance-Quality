@@ -32,6 +32,10 @@ function localParts(date: Date, timeZone: string): LocalDateTime {
   };
 }
 
+function dateKey(parts: Pick<LocalDateTime, "year" | "month" | "day">) {
+  return `${parts.year}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}`;
+}
+
 function localDateTimeToUtc(value: LocalDateTime, timeZone: string) {
   const targetAsUtc = Date.UTC(
     value.year,
@@ -89,6 +93,32 @@ export function parseLocalDateKey(value: string) {
   return { year, month, day };
 }
 
+function localDayDifference(fromDateKey: string, toDateKey: string) {
+  const from = parseLocalDateKey(fromDateKey);
+  const to = parseLocalDateKey(toDateKey);
+  return Math.round(
+    (Date.UTC(to.year, to.month - 1, to.day) -
+      Date.UTC(from.year, from.month - 1, from.day)) /
+      86_400_000,
+  );
+}
+
+function addLocalDays(value: Date, days: number, timeZone: string) {
+  const original = localParts(value, timeZone);
+  const shifted = new Date(Date.UTC(original.year, original.month - 1, original.day + days));
+  return localDateTimeToUtc(
+    {
+      year: shifted.getUTCFullYear(),
+      month: shifted.getUTCMonth() + 1,
+      day: shifted.getUTCDate(),
+      hour: original.hour,
+      minute: original.minute,
+      second: original.second,
+    },
+    timeZone,
+  );
+}
+
 export function rescheduleInstantToLocalDate(input: {
   instant: Date;
   targetDateKey: string;
@@ -125,11 +155,27 @@ export function scheduleLocalDateAtHour(input: {
 export function buildSchedulePatch(input: {
   field: WorkOrderScheduleField;
   instant: Date | null;
+  dueAt?: Date | null;
   targetDateKey: string;
   timeZone: string;
   defaultHour?: number;
 }) {
-  const value = input.instant
+  if (input.field === "dueAt") {
+    const dueAt = input.instant
+      ? rescheduleInstantToLocalDate({
+          instant: input.instant,
+          targetDateKey: input.targetDateKey,
+          timeZone: input.timeZone,
+        })
+      : scheduleLocalDateAtHour({
+          targetDateKey: input.targetDateKey,
+          timeZone: input.timeZone,
+          hour: input.defaultHour,
+        });
+    return { dueAt: dueAt.toISOString() };
+  }
+
+  const plannedStart = input.instant
     ? rescheduleInstantToLocalDate({
         instant: input.instant,
         targetDateKey: input.targetDateKey,
@@ -140,5 +186,16 @@ export function buildSchedulePatch(input: {
         timeZone: input.timeZone,
         hour: input.defaultHour,
       });
-  return { [input.field]: value.toISOString() } as Record<WorkOrderScheduleField, string>;
+
+  if (!input.instant || !input.dueAt) {
+    return { plannedStart: plannedStart.toISOString() };
+  }
+
+  const originalStartDateKey = dateKey(localParts(input.instant, input.timeZone));
+  const deltaDays = localDayDifference(originalStartDateKey, input.targetDateKey);
+  const dueAt = addLocalDays(input.dueAt, deltaDays, input.timeZone);
+  return {
+    plannedStart: plannedStart.toISOString(),
+    dueAt: dueAt.toISOString(),
+  };
 }
