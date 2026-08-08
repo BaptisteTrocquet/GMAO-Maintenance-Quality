@@ -44,10 +44,11 @@ export default async function QualityEventDetailPage({
 
   const qualityEvent = await getQualityEvent({ organizationId, siteId, eventId });
   if (!qualityEvent) notFound();
-  const [timeline, rootCause] = await Promise.all([
+  const [timelineResult, rootCause] = await Promise.all([
     listQualityEventTimeline({ organizationId, siteId, eventId }),
     getRootCauseAnalysis({ organizationId, siteId, eventId }),
   ]);
+  const timeline = timelineResult ?? [];
 
   const userIds = [qualityEvent.detectedById, qualityEvent.containment?.ownerId].filter(
     (value): value is string => Boolean(value),
