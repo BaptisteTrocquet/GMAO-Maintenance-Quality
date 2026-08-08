@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 
 const ENTITY_TYPE = "SavedView";
 export const SAVED_VIEW_LIMIT = 25;
+const SAVED_VIEW_HISTORY_LIMIT = 1000;
 
 export const SAVED_VIEW_SURFACES = ["WORK_ORDER_KANBAN"] as const;
 export type SavedViewSurface = (typeof SAVED_VIEW_SURFACES)[number];
@@ -132,9 +133,11 @@ async function listScopedSnapshots(input: {
   const logs = await db.auditLog.findMany({
     where: {
       entityType: ENTITY_TYPE,
+      actorId: input.userId,
       AND: markers.map((marker) => ({ afterJson: { contains: marker } })),
     },
-    orderBy: { createdAt: "asc" },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    take: SAVED_VIEW_HISTORY_LIMIT,
     select: { entityId: true, afterJson: true },
   });
 
@@ -149,10 +152,10 @@ async function listScopedSnapshots(input: {
     .sort((left, right) => left.name.localeCompare(right.name));
 }
 
-async function latestView(viewId: string) {
+async function latestView(viewId: string, userId: string) {
   const log = await db.auditLog.findFirst({
-    where: { entityType: ENTITY_TYPE, entityId: viewId },
-    orderBy: { createdAt: "desc" },
+    where: { entityType: ENTITY_TYPE, entityId: viewId, actorId: userId },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     select: { afterJson: true },
   });
   return parseSnapshot(log?.afterJson ?? null);
@@ -247,7 +250,7 @@ export async function updateSavedView(input: {
   name?: string;
   filters?: Record<string, string>;
 }) {
-  const previous = await latestView(input.viewId);
+  const previous = await latestView(input.viewId, input.userId);
   if (
     !previous ||
     !previous.active ||
@@ -292,7 +295,7 @@ export async function deleteSavedView(input: {
   siteId: string;
   surface: SavedViewSurface;
 }) {
-  const previous = await latestView(input.viewId);
+  const previous = await latestView(input.viewId, input.userId);
   if (
     !previous ||
     !previous.active ||
