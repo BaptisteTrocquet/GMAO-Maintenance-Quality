@@ -32,6 +32,16 @@ export default async function InventoryPage() {
             asset: { select: { code: true, siteId: true } },
           },
         },
+        supplierReferences: {
+          where: {
+            active: true,
+            supplier: { organizationId, active: true },
+          },
+          include: {
+            supplier: { select: { id: true, code: true, name: true } },
+          },
+          orderBy: [{ preferred: "desc" }, { supplier: { name: "asc" } }],
+        },
       },
       orderBy: { sku: "asc" },
     }),
@@ -73,19 +83,38 @@ export default async function InventoryPage() {
               <th>Part</th>
               <th>Organization stock</th>
               <th>Legacy reorder point</th>
+              <th>Preferred supplier</th>
+              <th>Supplier reference</th>
+              <th>Lead time / MOQ</th>
               <th>Assets</th>
             </tr>
           </thead>
           <tbody>
-            {parts.map((part) => (
-              <tr key={part.id}>
-                <td>{part.sku}</td>
-                <td>{part.name}</td>
-                <td>{part.quantityOnHand} {part.unit}</td>
-                <td>{part.reorderPoint}</td>
-                <td>{part.assetParts.map((link) => link.asset.code).join(", ") || "—"}</td>
-              </tr>
-            ))}
+            {parts.map((part) => {
+              const supplierReference =
+                part.supplierReferences.find((reference) => reference.preferred) ??
+                part.supplierReferences[0];
+              return (
+                <tr key={part.id}>
+                  <td>{part.sku}</td>
+                  <td>{part.name}</td>
+                  <td>{part.quantityOnHand} {part.unit}</td>
+                  <td>{part.reorderPoint}</td>
+                  <td>
+                    {supplierReference
+                      ? `${supplierReference.supplier.code} · ${supplierReference.supplier.name}`
+                      : "—"}
+                  </td>
+                  <td>{supplierReference?.supplierPartNumber ?? "—"}</td>
+                  <td>
+                    {supplierReference
+                      ? `${supplierReference.leadTimeDays ?? "—"} d / ${supplierReference.minOrderQuantity ?? "—"} ${part.unit}`
+                      : "—"}
+                  </td>
+                  <td>{part.assetParts.map((link) => link.asset.code).join(", ") || "—"}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>

@@ -148,6 +148,7 @@ model Organization {
   updatedAt   DateTime                 @updatedAt
   sites       Site[]
   parts       Part[]
+  suppliers   Supplier[]
   documents   Document[]
   memberships OrganizationMembership[]
   invitations OrganizationInvitation[]
@@ -465,9 +466,49 @@ model Part {
   workOrderConsumptions WorkOrderPartConsumption[]
   stockBalances         StockBalance[]
   stockMovements        StockMovement[]
+  supplierReferences    PartSupplier[]
 
   @@unique([organizationId, sku])
   @@index([organizationId, active])
+}
+
+model Supplier {
+  id             String         @id @default(cuid())
+  organizationId String
+  code           String
+  name           String
+  contactName    String?
+  email          String?
+  phone          String?
+  website        String?
+  active         Boolean        @default(true)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  partReferences PartSupplier[]
+
+  @@unique([organizationId, code])
+  @@index([organizationId, active])
+}
+
+model PartSupplier {
+  partId             String
+  supplierId         String
+  supplierPartNumber String
+  preferred          Boolean   @default(false)
+  leadTimeDays       Int?
+  minOrderQuantity   Float?
+  unitCost           Decimal?  @db.Decimal(14, 4)
+  currency           String    @default("EUR")
+  active             Boolean   @default(true)
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  part               Part      @relation(fields: [partId], references: [id], onDelete: Cascade)
+  supplier           Supplier  @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+
+  @@id([partId, supplierId])
+  @@index([supplierId, active])
+  @@index([partId, preferred, active])
 }
 
 model Warehouse {
