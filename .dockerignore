@@ -9,5 +9,4 @@ test-results
 *.log
 .env
 .env.*
-Dockerfile*
 docker-compose*.yml
