@@ -1,4 +1,5 @@
 type DeploymentExamples = {
+  dockerfile: string;
   compose: string;
   kubernetesApp: string;
   kubernetesMigration: string;
@@ -29,6 +30,14 @@ function composeService(compose: string, service: string) {
   return nextService < 0 ? remainder : remainder.slice(0, nextService);
 }
 
+function dockerStage(dockerfile: string, marker: RegExp) {
+  const match = marker.exec(dockerfile);
+  if (!match || match.index === undefined) return "";
+  const remainder = dockerfile.slice(match.index + match[0].length);
+  const nextStage = remainder.search(/\nFROM\s+/i);
+  return nextStage < 0 ? remainder : remainder.slice(0, nextStage);
+}
+
 function assertNoCommittedSecrets(label: string, content: string) {
   const forbidden: Array<[RegExp, string]> = [
     [/postgres(?:ql)?:\/\/[^\s:$/{]+:[^\s@${}]+@/i, "literal PostgreSQL credentials"],
@@ -47,11 +56,30 @@ function assertNoCommittedSecrets(label: string, content: string) {
   }
 }
 
+function assertDockerfile(dockerfile: string) {
+  const migration = dockerStage(dockerfile, /FROM\s+builder\s+AS\s+migration\s*\n/i);
+  if (!migration) throw new DeploymentExamplePolicyError("Dockerfile must define a migration target");
+
+  requirePattern(migration, /HOME=\/tmp/, "migration image must use writable /tmp as HOME");
+  requirePattern(migration, /^\s*USER\s+nextjs\s*$/m, "migration image must run as non-root nextjs user");
+  requirePattern(
+    migration,
+    /CMD\s*\["\.\/node_modules\/\.bin\/prisma",\s*"migrate",\s*"deploy"\]/,
+    "migration image must default to prisma migrate deploy",
+  );
+  requirePattern(
+    migration,
+    /rm\s+-rf[^\n]*\/usr\/local\/lib\/node_modules\/npm/,
+    "migration runtime must remove the global npm package manager",
+  );
+}
+
 function assertCompose(compose: string) {
   const db = composeService(compose, "db");
   const migrate = composeService(compose, "migrate");
   const app = composeService(compose, "app");
 
+  requirePattern(db, /POSTGRES_IMAGE:\?/, "Compose must require an operator-selected PostgreSQL image");
   requirePattern(
     db,
     /POSTGRES_PASSWORD:\s*\$\{POSTGRES_PASSWORD:\?/,
@@ -59,6 +87,11 @@ function assertCompose(compose: string) {
   );
   forbidPattern(db, /^\s{4}ports:/m, "Compose must not publish PostgreSQL on the host");
 
+  requirePattern(
+    migrate,
+    /OPENGMAO_MIGRATION_IMAGE:\?/,
+    "Compose must require the migration image for the reviewed release",
+  );
   requirePattern(
     migrate,
     /DATABASE_URL:\s*\$\{DATABASE_URL:\?/,
@@ -71,15 +104,19 @@ function assertCompose(compose: string) {
   );
   requirePattern(
     migrate,
-    /command:\s*\["npm",\s*"run",\s*"prisma:deploy"\]/,
-    "Compose migration service must use the committed prisma:deploy workflow",
+    /command:\s*\["\.\/node_modules\/\.bin\/prisma",\s*"migrate",\s*"deploy"\]/,
+    "Compose migration service must run prisma migrate deploy directly",
   );
+  requirePattern(migrate, /user:\s*"1001:1001"/, "Compose migration service must run as UID/GID 1001");
+  requirePattern(migrate, /read_only:\s*true/, "Compose migration service must use a read-only root filesystem");
 
+  requirePattern(app, /OPENGMAO_IMAGE:\?/, "Compose must require the reviewed application image");
   requirePattern(
     app,
     /DATABASE_URL:\s*\$\{DATABASE_URL:\?/,
     "Compose application must require DATABASE_URL from the runtime environment",
   );
+  requirePattern(app, /user:\s*"1001:1001"/, "Compose application must run as UID/GID 1001");
   requirePattern(
     app,
     /OPENGMAO_BIND_ADDRESS:-127\.0\.0\.1/,
@@ -91,6 +128,7 @@ function assertCompose(compose: string) {
     "Compose must keep application rate limiting enabled by default",
   );
   requirePattern(app, /opengmao_documents:\/app\/data/, "Compose must persist local controlled-document storage");
+  requirePattern(app, /\/api\/health/, "Compose application healthcheck must use /api/health");
 
   for (const [name, service] of [
     ["migrate", migrate],
@@ -108,14 +146,15 @@ function assertKubernetesApp(app: string) {
   forbidPattern(app, /image:\s*\S+:latest\b/i, "Kubernetes example must not use latest image tags");
   requirePattern(
     app,
-    /image:\s*ghcr\.io\/example\/gmao-maintenance-quality:REPLACE_WITH_RELEASE/,
-    "Kubernetes app image must remain an explicit replace-me release placeholder",
+    /image:\s*ghcr\.io\/example\/gmao-maintenance-quality@sha256:0{64}/,
+    "Kubernetes app image must remain an explicit replace-me digest placeholder",
   );
   requirePattern(app, /replicas:\s*1\b/, "local-storage Kubernetes example must default to one replica");
-  requirePattern(app, /strategy:\s*\n\s*type:\s*Recreate/, "local-storage deployment must use Recreate");
+  requirePattern(app, /strategy:\s*[\s\S]{0,180}type:\s*Recreate/, "local-storage deployment must use Recreate");
   requirePattern(app, /automountServiceAccountToken:\s*false/, "Kubernetes pod must disable service-account token mounting");
   requirePattern(app, /runAsNonRoot:\s*true/, "Kubernetes pod must run as non-root");
   requirePattern(app, /runAsUser:\s*1001/, "Kubernetes pod must match the production image UID");
+  requirePattern(app, /seccompProfile:\s*\n\s*type:\s*RuntimeDefault/, "Kubernetes pod must use RuntimeDefault seccomp");
   requirePattern(app, /allowPrivilegeEscalation:\s*false/, "Kubernetes app must disable privilege escalation");
   requirePattern(app, /capabilities:\s*\n\s*drop:\s*\n\s*- ALL/, "Kubernetes app must drop Linux capabilities");
   requirePattern(
@@ -139,8 +178,8 @@ function assertKubernetesMigration(migration: string) {
   requirePattern(migration, /kind:\s*Job/, "Kubernetes migrations must run as an explicit Job");
   requirePattern(
     migration,
-    /image:\s*ghcr\.io\/example\/gmao-maintenance-quality-migrations:REPLACE_WITH_RELEASE/,
-    "Kubernetes migration image must remain an explicit replace-me release placeholder",
+    /image:\s*ghcr\.io\/example\/gmao-maintenance-quality-migrations@sha256:0{64}/,
+    "Kubernetes migration image must remain an explicit replace-me digest placeholder",
   );
   requirePattern(
     migration,
@@ -154,6 +193,7 @@ function assertKubernetesMigration(migration: string) {
   );
   requirePattern(migration, /automountServiceAccountToken:\s*false/, "Kubernetes migration job must disable service-account token mounting");
   requirePattern(migration, /runAsNonRoot:\s*true/, "Kubernetes migration job must run as non-root");
+  requirePattern(migration, /runAsUser:\s*1001/, "Kubernetes migration job must use the migration image UID");
   requirePattern(migration, /readOnlyRootFilesystem:\s*true/, "Kubernetes migration job must use a read-only root filesystem");
   requirePattern(migration, /allowPrivilegeEscalation:\s*false/, "Kubernetes migration job must disable privilege escalation");
   requirePattern(migration, /capabilities:\s*\n\s*drop:\s*\n\s*- ALL/, "Kubernetes migration job must drop Linux capabilities");
@@ -163,6 +203,7 @@ export function assertDeploymentExamples(input: DeploymentExamples) {
   assertNoCommittedSecrets("Compose example", input.compose);
   assertNoCommittedSecrets("Kubernetes application example", input.kubernetesApp);
   assertNoCommittedSecrets("Kubernetes migration example", input.kubernetesMigration);
+  assertDockerfile(input.dockerfile);
   assertCompose(input.compose);
   assertKubernetesApp(input.kubernetesApp);
   assertKubernetesMigration(input.kubernetesMigration);
