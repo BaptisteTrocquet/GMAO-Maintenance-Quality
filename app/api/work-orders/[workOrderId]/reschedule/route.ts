@@ -103,6 +103,13 @@ export async function PATCH(
           );
         }
 
+        if (
+          workOrder.plannedStart &&
+          workOrder.plannedStart.getTime() === plannedStart.getTime()
+        ) {
+          return workOrder;
+        }
+
         if (workOrder.dueAt && workOrder.dueAt.getTime() < plannedStart.getTime()) {
           throw new RescheduleError(
             "INVALID_PLANNING",
