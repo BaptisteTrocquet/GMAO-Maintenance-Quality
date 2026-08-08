@@ -33,7 +33,7 @@ export default async function PmCompliancePage() {
         <div>
           <div className="title">PM compliance</div>
           <div className="muted">
-            Preventive work completed on or before its due date, scoped to the selected site.
+            Scheduler-generated preventive work completed on or before its due date, scoped to the selected site.
           </div>
         </div>
       </div>
