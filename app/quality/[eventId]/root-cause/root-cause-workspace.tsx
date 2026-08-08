@@ -79,7 +79,7 @@ export default function RootCauseWorkspace({
     [fiveWhys],
   );
 
-  async function patch(payload: Record<string, unknown>) {
+  async function patch(payload: Record<string, unknown>): Promise<RootCauseSnapshot | null> {
     setBusy(true);
     setFeedback(null);
     try {
@@ -98,18 +98,20 @@ export default function RootCauseWorkspace({
       setRootCause(body.data);
       setFeedback({ kind: "success", message: "Root-cause workspace updated." });
       router.refresh();
+      return body.data;
     } catch (error) {
       setFeedback({
         kind: "error",
         message: error instanceof Error ? error.message : "Root-cause update failed",
       });
+      return null;
     } finally {
       setBusy(false);
     }
   }
 
   async function save() {
-    await patch({
+    return patch({
       action: "SAVE",
       method,
       problemStatement,
@@ -280,7 +282,7 @@ export default function RootCauseWorkspace({
                   key={item.key}
                   style={{
                     display: "grid",
-                    gridTemplateColumns: "170px minmax(220px, 1fr) minmax(220px, 1fr) auto",
+                    gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
                     gap: 10,
                     alignItems: "center",
                   }}
@@ -366,8 +368,8 @@ export default function RootCauseWorkspace({
               <button
                 type="button"
                 onClick={async () => {
-                  await save();
-                  if (!busy) await patch({ action: "CONFIRM" });
+                  const saved = await save();
+                  if (saved) await patch({ action: "CONFIRM" });
                 }}
                 disabled={!canInvestigate || busy || !rootCauseSummary.trim()}
                 style={{ ...buttonStyle, background: "#111827", color: "white", borderColor: "#111827" }}
