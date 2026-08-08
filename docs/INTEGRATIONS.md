@@ -147,7 +147,9 @@ Provider/network/parser exceptions are converted to a failed verification (`null
 
 ## Connector credential vault
 
-`lib/integrations/credential-vault.ts` separates encrypted secret handling from connector definitions and from the eventual persistence technology. The vault depends on a `ConnectorCredentialRecordStore` interface, so a database, managed secret service or another durable store can implement persistence without changing connector code or exposing plaintext credentials to that store.
+`lib/integrations/credential-vault.ts` separates encrypted secret handling from connector definitions. The vault depends on a `ConnectorCredentialRecordStore` interface so persistence remains replaceable, while the repository-provided production baseline now uses `PrismaConnectorCredentialRecordStore` from `lib/integrations/prisma-credential-store.ts`.
+
+`createPrismaConnectorCredentialVault()` composes that durable PostgreSQL store with the existing environment key provider and AES-256-GCM vault. Operational setup, backup/key coupling and rotation procedure are documented in `docs/CONNECTOR_CREDENTIAL_STORAGE.md`.
 
 The vault currently supports the runtime credential shapes consumed by the generic REST connector:
 
@@ -156,17 +158,19 @@ The vault currently supports the runtime credential shapes consumed by the gener
 
 Plaintext is encrypted before the record store is called. Encryption uses AES-256-GCM with a fresh 96-bit IV and authenticated additional data binding the ciphertext to `organizationId`, `connectorId`, credential ID, credential kind and key version. Moving an encrypted record to another tenant/connector or altering those fields makes decryption fail closed.
 
-The public metadata returned by `put()` and `list()` includes only ID, tenant/connector scope, label, kind, key version and timestamps. It never includes plaintext, ciphertext, IV or authentication tags. `resolve()` is the only operation that returns secret material, and it produces the existing `RestConnectorCredential` shape with the organization scope attached for the connector's own tenant check.
+The durable Prisma record stores only encrypted secret material plus bounded metadata. The public metadata returned by `put()` and `list()` includes only ID, tenant/connector scope, label, kind, key version and timestamps. It never includes plaintext, ciphertext, IV or authentication tags. `resolve()` is the only operation that returns secret material, and it produces the existing `RestConnectorCredential` shape with the organization scope attached for the connector's own tenant check.
 
 Key material is supplied by a `CredentialEncryptionKeyProvider`. `createCredentialEncryptionKeyProviderFromEnv()` requires a 32-byte base64 master key and supports one previous key version during rotation. New or updated credentials are always encrypted with the current key; old records remain decryptable while the previous key is configured and can be re-saved to migrate them.
 
 Store exceptions are converted to a generic `STORE_ERROR`, and corruption/decryption failures use a generic `DECRYPTION_FAILED` message. Upstream/store error messages are never propagated, reducing the risk that a vendor SDK or persistence layer places a credential into application logs. The vault itself performs no logging.
 
-Tenant isolation is enforced twice: store operations always receive organization/connector scope, and returned records are independently checked before metadata is returned or ciphertext is decrypted. Cross-organization and cross-connector credential IDs therefore cannot resolve or delete another tenant's credentials.
+Tenant isolation is enforced twice: store operations always receive organization/connector scope, and returned records are independently checked before metadata is returned or ciphertext is decrypted. Cross-organization and cross-connector credential IDs therefore cannot resolve or delete another tenant's credentials. The durable store also refuses to move an existing credential ID to a different organization/connector scope.
 
-`tests/credential-vault.test.ts` verifies encryption at rest, safe metadata, runtime credential resolution, organization/connector isolation, authenticated-data tamper resistance, key rotation, previous-key reads, scoped deletion, unsafe credential rejection and redacted store/decryption failures.
+Create, update and delete operations write `ConnectorCredential` audit records containing metadata only. Plaintext, ciphertext, IV and authentication tags are intentionally excluded from audit JSON.
 
-The vault is deliberately an abstraction rather than a hard-coded database table. A later durable store implementation can add operational persistence/audit policy without weakening the encryption and tenant-isolation contract.
+`tests/credential-vault.test.ts` verifies encryption at rest, safe metadata, runtime credential resolution, organization/connector isolation, authenticated-data tamper resistance, key rotation, previous-key reads, scoped deletion, unsafe credential rejection and redacted store/decryption failures. The separate `Connector credential store` GitHub Actions workflow runs the durable implementation against disposable PostgreSQL and verifies persistence across vault re-instantiation, rotation, scope rejection, metadata-only audit and deletion.
+
+The interface remains pluggable: deployments may replace the Prisma store with a managed secret service without changing the encryption and tenant-isolation contract.
 
 ## Retry policy
 
