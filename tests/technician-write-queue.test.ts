@@ -14,6 +14,7 @@ function queuedWrite(
     siteId: "site-a",
     workOrderId: "wo-1",
     endpoint: "/api/work-orders/wo-1",
+    sequence: 1,
     createdAt: "2026-08-08T06:00:00.000Z",
     lastError: null,
     ...overrides,
@@ -28,7 +29,7 @@ describe("technician offline write queue", () => {
     expect(isTechnicianQueuePartition("session-token".padEnd(32, "x"))).toBe(false);
   });
 
-  it("projects queued execution and status writes in queue order", () => {
+  it("projects queued execution and status writes by monotone sequence", () => {
     const current = {
       id: "wo-1",
       status: "IN_PROGRESS",
@@ -43,7 +44,14 @@ describe("technician offline write queue", () => {
 
     const projected = projectTechnicianWrites(current, [
       queuedWrite({
+        id: "write-3",
+        sequence: 3,
+        kind: "transition",
+        body: { status: "IN_PROGRESS" },
+      }),
+      queuedWrite({
         id: "write-1",
+        sequence: 1,
         kind: "execution",
         endpoint: "/api/work-orders/wo-1/execution",
         body: {
@@ -57,13 +65,9 @@ describe("technician offline write queue", () => {
       }),
       queuedWrite({
         id: "write-2",
+        sequence: 2,
         kind: "transition",
         body: { status: "BLOCKED" },
-      }),
-      queuedWrite({
-        id: "write-3",
-        kind: "transition",
-        body: { status: "IN_PROGRESS" },
       }),
     ]);
 
