@@ -8,10 +8,21 @@ const mocks = vi.hoisted(() => ({
   workOrderCreate: vi.fn(),
   workOrderCount: vi.fn(),
   auditCreate: vi.fn(),
+  transaction: vi.fn(),
+  recordIntegrationEvent: vi.fn(),
 }));
+
+const tx = {
+  workOrder: { create: mocks.workOrderCreate },
+  auditLog: { create: mocks.auditCreate },
+};
 
 vi.mock("@/lib/auth/request-auth", () => ({
   authenticateRequest: mocks.authenticateRequest,
+}));
+
+vi.mock("@/lib/integrations/event-log", () => ({
+  recordIntegrationEventInTransaction: mocks.recordIntegrationEvent,
 }));
 
 vi.mock("@/lib/db", () => ({
@@ -20,10 +31,9 @@ vi.mock("@/lib/db", () => ({
     asset: { findFirst: mocks.assetFindFirst },
     workOrder: {
       findMany: mocks.workOrderFindMany,
-      create: mocks.workOrderCreate,
       count: mocks.workOrderCount,
     },
-    auditLog: { create: mocks.auditCreate },
+    $transaction: mocks.transaction,
   },
 }));
 
@@ -55,6 +65,10 @@ describe("site-scoped work orders", () => {
     vi.clearAllMocks();
     mocks.authenticateRequest.mockResolvedValue(auth);
     mocks.siteFindFirst.mockResolvedValue({ id: "site-a" });
+    mocks.transaction.mockImplementation(
+      async (callback: (transaction: typeof tx) => Promise<unknown>) => callback(tx),
+    );
+    mocks.recordIntegrationEvent.mockResolvedValue({ event: { id: "event-1" }, replayed: false });
   });
 
   it("lists work orders directly by site, including requests without an asset", async () => {
@@ -75,7 +89,8 @@ describe("site-scoped work orders", () => {
     });
   });
 
-  it("creates an internal maintenance request anchored to the requested site without an asset", async () => {
+  it("creates work order, business audit and outbound event in one transaction", async () => {
+    const requestedAt = new Date("2026-08-08T09:30:00.000Z");
     mocks.workOrderCount.mockResolvedValue(0);
     mocks.workOrderCreate.mockResolvedValue({
       id: "wo-1",
@@ -86,6 +101,8 @@ describe("site-scoped work orders", () => {
       title: "Inspect utility area",
       type: "CORRECTIVE",
       priority: "NORMAL",
+      status: "REQUESTED",
+      requestedAt,
     });
     mocks.auditCreate.mockResolvedValue({ id: "audit-1" });
 
@@ -116,6 +133,23 @@ describe("site-scoped work orders", () => {
         action: "CREATED",
       }),
     });
+    expect(mocks.recordIntegrationEvent).toHaveBeenCalledWith(
+      tx,
+      expect.objectContaining({
+        organizationId: "org-a",
+        siteId: "site-a",
+        direction: "OUTBOUND",
+        channel: "webhook",
+        eventType: "work_order.created",
+        sourceId: "audit-1",
+        correlationId: "wo-1",
+        subjectId: "wo-1",
+        occurredAt: requestedAt,
+        payload: {
+          workOrder: expect.objectContaining({ id: "wo-1", assetCode: null }),
+        },
+      }),
+    );
   });
 
   it("rejects an asset that does not belong to the requested site", async () => {
@@ -135,8 +169,9 @@ describe("site-scoped work orders", () => {
     expect(response?.status).toBe(404);
     expect(mocks.assetFindFirst).toHaveBeenCalledWith({
       where: { id: "asset-b", siteId: "site-a", archivedAt: null },
-      select: { id: true },
+      select: { id: true, code: true },
     });
     expect(mocks.workOrderCreate).not.toHaveBeenCalled();
+    expect(mocks.transaction).not.toHaveBeenCalled();
   });
 });
