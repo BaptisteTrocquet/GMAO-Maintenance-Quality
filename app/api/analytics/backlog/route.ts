@@ -34,7 +34,9 @@ export async function GET(request: Request): Promise<Response> {
   }
 
   const auth = await authenticateRequest(request, parsed.data.organizationId);
-  if ("error" in auth) return auth.error;
+  if ("error" in auth) {
+    return auth.error ?? apiError(401, "UNAUTHENTICATED", "Authentication required");
+  }
   try {
     assertSitePermission(auth.tenant.scope, parsed.data.siteId, "work:read");
   } catch (error) {
