@@ -33,6 +33,22 @@ const FORBIDDEN_PROMPT_KEYS = new Set([
   "tokens",
 ]);
 
+const FORBIDDEN_AUDIT_KEYS = new Set([
+  ...FORBIDDEN_PROMPT_KEYS,
+  "prompt",
+  "messages",
+  "question",
+  "symptom",
+  "answer",
+  "summary",
+  "suggestion",
+  "content",
+  "excerpt",
+  "documentText",
+  "label",
+  "href",
+]);
+
 const MAX_DEPTH = 20;
 const MAX_KEYS = 20_000;
 
@@ -46,12 +62,12 @@ export class AiContextPolicyError extends Error {
   }
 }
 
-export function assertAiPromptContextSafe(value: unknown) {
+function assertObjectKeysSafe(value: unknown, forbidden: ReadonlySet<string>, contextLabel: string) {
   let visitedKeys = 0;
 
   function visit(current: unknown, depth: number) {
     if (depth > MAX_DEPTH) {
-      throw new AiContextPolicyError("INVALID_CONTEXT", "AI prompt context nesting is too deep");
+      throw new AiContextPolicyError("INVALID_CONTEXT", `${contextLabel} nesting is too deep`);
     }
     if (current === null || current === undefined) return;
     if (typeof current === "string" || typeof current === "number" || typeof current === "boolean") {
@@ -62,18 +78,18 @@ export function assertAiPromptContextSafe(value: unknown) {
       return;
     }
     if (typeof current !== "object") {
-      throw new AiContextPolicyError("INVALID_CONTEXT", "AI prompt context contains an unsupported value");
+      throw new AiContextPolicyError("INVALID_CONTEXT", `${contextLabel} contains an unsupported value`);
     }
 
     for (const [key, nested] of Object.entries(current as Record<string, unknown>)) {
       visitedKeys += 1;
       if (visitedKeys > MAX_KEYS) {
-        throw new AiContextPolicyError("INVALID_CONTEXT", "AI prompt context contains too many fields");
+        throw new AiContextPolicyError("INVALID_CONTEXT", `${contextLabel} contains too many fields`);
       }
-      if (FORBIDDEN_PROMPT_KEYS.has(key)) {
+      if (forbidden.has(key)) {
         throw new AiContextPolicyError(
           "FORBIDDEN_FIELD",
-          `AI prompt context contains forbidden field '${key}'`,
+          `${contextLabel} contains forbidden field '${key}'`,
         );
       }
       visit(nested, depth + 1);
@@ -81,4 +97,12 @@ export function assertAiPromptContextSafe(value: unknown) {
   }
 
   visit(value, 0);
+}
+
+export function assertAiPromptContextSafe(value: unknown) {
+  assertObjectKeysSafe(value, FORBIDDEN_PROMPT_KEYS, "AI prompt context");
+}
+
+export function assertAiAuditPayloadSafe(value: unknown) {
+  assertObjectKeysSafe(value, FORBIDDEN_AUDIT_KEYS, "AI audit payload");
 }
