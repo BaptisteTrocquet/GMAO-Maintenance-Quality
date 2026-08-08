@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { AccessDeniedError, assertSitePermission } from "@/lib/access-control";
 import { apiData, apiError } from "@/lib/api-response";
@@ -36,73 +37,98 @@ export async function PATCH(
   }
 
   const { workOrderId } = await params;
-  const [site, workOrder] = await Promise.all([
-    db.site.findFirst({
-      where: {
-        id: parsed.data.siteId,
-        organizationId: parsed.data.organizationId,
-        active: true,
-      },
-      select: {
-        id: true,
-        organization: { select: { timezone: true } },
-      },
-    }),
-    db.workOrder.findFirst({
-      where: {
-        id: workOrderId,
-        siteId: parsed.data.siteId,
-        site: { organizationId: parsed.data.organizationId, active: true },
-      },
-    }),
-  ]);
-  if (!site || !workOrder) {
+  const site = await db.site.findFirst({
+    where: {
+      id: parsed.data.siteId,
+      organizationId: parsed.data.organizationId,
+      active: true,
+    },
+    select: {
+      id: true,
+      organization: { select: { timezone: true } },
+    },
+  });
+  if (!site) {
     return apiError(404, "WORK_ORDER_NOT_FOUND", "Work order not found in site scope");
   }
-  if (workOrder.status === "COMPLETED" || workOrder.status === "CANCELLED") {
-    return apiError(409, "WORK_ORDER_NOT_RESCHEDULABLE", "Completed or cancelled work orders cannot be rescheduled");
-  }
 
-  let dates: ReturnType<typeof reschedulePlanningDates>;
   try {
-    dates = reschedulePlanningDates({
-      plannedStart: workOrder.plannedStart,
-      dueAt: workOrder.dueAt,
-      targetDate: parsed.data.targetDate,
-      timeZone: site.organization.timezone,
-    });
-  } catch {
-    return apiError(400, "INVALID_PLANNING_DATE", "Target date is not valid in the organization timezone");
-  }
-  if (dates.dueAt && dates.dueAt.getTime() < dates.plannedStart.getTime()) {
-    return apiError(400, "INVALID_PLANNING", "Rescheduling would place dueAt before plannedStart");
-  }
+    const updated = await db.$transaction(
+      async (tx) => {
+        const workOrder = await tx.workOrder.findFirst({
+          where: {
+            id: workOrderId,
+            siteId: parsed.data.siteId,
+            site: { organizationId: parsed.data.organizationId, active: true },
+          },
+        });
+        if (!workOrder) {
+          throw new Error("WORK_ORDER_NOT_FOUND");
+        }
+        if (workOrder.status === "COMPLETED" || workOrder.status === "CANCELLED") {
+          throw new Error("WORK_ORDER_NOT_RESCHEDULABLE");
+        }
 
-  const updated = await db.workOrder.update({
-    where: { id: workOrder.id },
-    data: {
-      plannedStart: dates.plannedStart,
-      dueAt: dates.dueAt,
-    },
-  });
-  await db.auditLog.create({
-    data: {
-      actorId: auth.session.user.id,
-      entityType: "WorkOrder",
-      entityId: workOrder.id,
-      action: "RESCHEDULED",
-      beforeJson: JSON.stringify({
-        plannedStart: workOrder.plannedStart,
-        dueAt: workOrder.dueAt,
-      }),
-      afterJson: JSON.stringify({
-        plannedStart: updated.plannedStart,
-        dueAt: updated.dueAt,
-        targetDate: parsed.data.targetDate,
-        timeZone: site.organization.timezone,
-      }),
-    },
-  });
+        let dates: ReturnType<typeof reschedulePlanningDates>;
+        try {
+          dates = reschedulePlanningDates({
+            plannedStart: workOrder.plannedStart,
+            dueAt: workOrder.dueAt,
+            targetDate: parsed.data.targetDate,
+            timeZone: site.organization.timezone,
+          });
+        } catch {
+          throw new Error("INVALID_PLANNING_DATE");
+        }
+        if (dates.dueAt && dates.dueAt.getTime() < dates.plannedStart.getTime()) {
+          throw new Error("INVALID_PLANNING");
+        }
 
-  return apiData(updated);
+        const saved = await tx.workOrder.update({
+          where: { id: workOrder.id },
+          data: {
+            plannedStart: dates.plannedStart,
+            dueAt: dates.dueAt,
+          },
+        });
+        await tx.auditLog.create({
+          data: {
+            actorId: auth.session.user.id,
+            entityType: "WorkOrder",
+            entityId: workOrder.id,
+            action: "RESCHEDULED",
+            beforeJson: JSON.stringify({
+              plannedStart: workOrder.plannedStart,
+              dueAt: workOrder.dueAt,
+            }),
+            afterJson: JSON.stringify({
+              plannedStart: saved.plannedStart,
+              dueAt: saved.dueAt,
+              targetDate: parsed.data.targetDate,
+              timeZone: site.organization.timezone,
+            }),
+          },
+        });
+        return saved;
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
+    return apiData(updated);
+  } catch (error) {
+    if (error instanceof Error) {
+      if (error.message === "WORK_ORDER_NOT_FOUND") {
+        return apiError(404, "WORK_ORDER_NOT_FOUND", "Work order not found in site scope");
+      }
+      if (error.message === "WORK_ORDER_NOT_RESCHEDULABLE") {
+        return apiError(409, "WORK_ORDER_NOT_RESCHEDULABLE", "Completed or cancelled work orders cannot be rescheduled");
+      }
+      if (error.message === "INVALID_PLANNING_DATE") {
+        return apiError(400, "INVALID_PLANNING_DATE", "Target date is not valid in the organization timezone");
+      }
+      if (error.message === "INVALID_PLANNING") {
+        return apiError(400, "INVALID_PLANNING", "Rescheduling would place dueAt before plannedStart");
+      }
+    }
+    throw error;
+  }
 }
