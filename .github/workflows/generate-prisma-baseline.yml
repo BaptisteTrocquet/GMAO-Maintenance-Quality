@@ -1,0 +1,34 @@
+name: Generate Prisma baseline
+
+on:
+  push:
+    branches:
+      - agent/e0-prisma-migration-baseline
+
+jobs:
+  baseline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Generate baseline SQL
+        run: |
+          mkdir -p generated
+          npx prisma migrate diff --from-empty --to-schema prisma/schema.prisma --script --output generated/migration.sql
+
+      - name: Upload baseline SQL
+        uses: actions/upload-artifact@v4
+        with:
+          name: prisma-baseline
+          path: generated/migration.sql
+          if-no-files-found: error
