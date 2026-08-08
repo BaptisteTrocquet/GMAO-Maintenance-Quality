@@ -48,6 +48,7 @@ type ApiResponse<T> = {
 const OFFLINE_PARTITION_HEADER = "x-opengmao-offline-partition";
 const OFFLINE_SOURCE_HEADER = "x-opengmao-offline-source";
 const OFFLINE_CACHED_AT_HEADER = "x-opengmao-offline-cached-at";
+const PARTITION_PATTERN = /^[a-f0-9]{32}$/;
 
 const buttonStyle = {
   minHeight: 44,
@@ -96,6 +97,7 @@ export default function TechnicianWorkOrder({
   const [offlineRead, setOfflineRead] = useState(false);
   const [cachedAt, setCachedAt] = useState("");
   const [online, setOnline] = useState(true);
+  const [cachePartition, setCachePartition] = useState(offlinePartition);
 
   useEffect(() => {
     const update = () => setOnline(navigator.onLine);
@@ -117,13 +119,19 @@ export default function TechnicianWorkOrder({
         `/api/work-orders/technician/${encodeURIComponent(workOrderId)}?${query.toString()}`,
         {
           cache: "no-store",
-          headers: offlinePartition ? { [OFFLINE_PARTITION_HEADER]: offlinePartition } : undefined,
+          headers: cachePartition ? { [OFFLINE_PARTITION_HEADER]: cachePartition } : undefined,
         },
       );
       const body = (await response.json()) as ApiResponse<{ workOrder: TechnicianWorkOrderData }>;
       if (!response.ok || !body.data) {
         throw new Error(body.error?.message ?? "Unable to load technician work order");
       }
+
+      const confirmedPartition = response.headers.get(OFFLINE_PARTITION_HEADER) ?? "";
+      if (PARTITION_PATTERN.test(confirmedPartition) && confirmedPartition !== cachePartition) {
+        setCachePartition(confirmedPartition);
+      }
+
       const next = body.data.workOrder;
       setWorkOrder(next);
       setLaborMinutes(String(next.laborMinutes ?? 0));
@@ -138,7 +146,7 @@ export default function TechnicianWorkOrder({
     } finally {
       setLoading(false);
     }
-  }, [offlinePartition, organizationId, siteId, workOrderId]);
+  }, [cachePartition, organizationId, siteId, workOrderId]);
 
   useEffect(() => {
     void load();
@@ -260,9 +268,9 @@ export default function TechnicianWorkOrder({
           <div className="muted">
             {writesDisabled
               ? "Read-only mode. Reconnect and refresh before recording maintenance work."
-              : offlinePartition
+              : cachePartition
                 ? "This work order is cached after successful online reads."
-                : "Offline cache is unavailable without an authenticated session."}
+                : "Offline cache is armed after the first authenticated online read."}
           </div>
         </div>
         <button
