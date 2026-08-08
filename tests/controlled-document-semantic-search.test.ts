@@ -62,8 +62,12 @@ function repository(input?: {
   many?: ControlledDocumentRevisionRecord[];
 }) {
   return {
-    findEffectiveRevision: vi.fn(async () => input?.one ?? revision()),
-    findEffectiveRevisionsByIds: vi.fn(async () => input?.many ?? [revision()]),
+    findEffectiveRevision: vi.fn(async () =>
+      input?.one === undefined ? revision() : input.one,
+    ),
+    findEffectiveRevisionsByIds: vi.fn(async () =>
+      input?.many === undefined ? [revision()] : input.many,
+    ),
   } satisfies ControlledDocumentSearchRepository;
 }
 
