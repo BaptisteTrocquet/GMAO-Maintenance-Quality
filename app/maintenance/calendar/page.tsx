@@ -12,6 +12,7 @@ import {
   shiftCalendarMonth,
   UNSCHEDULED_WORK_ORDER_LIMIT,
 } from "@/lib/maintenance/planning-calendar";
+import SavedPlanningViews from "@/app/maintenance/saved-planning-views";
 import PlanningCalendarClient from "./planning-calendar-client";
 
 function monthLabel(year: number, month: number) {
@@ -225,6 +226,12 @@ export default async function MaintenanceCalendarPage({
         <p className="muted" style={{ marginBottom: 0 }}>
           Drag a planned work order to another day, or use its date field and Move button. All changes go through the existing permission-checked, audited work-order API.
         </p>
+        <SavedPlanningViews
+          organizationId={organizationId}
+          siteId={siteId}
+          surface="CALENDAR"
+          currentConfig={{ month: month.key }}
+        />
         {truncated ? (
           <p className="muted" role="status" style={{ marginBottom: 0 }}>
             Calendar rendering is bounded to {PLANNING_CALENDAR_LIMIT} matching work orders for predictable performance.
