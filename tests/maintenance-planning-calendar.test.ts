@@ -3,8 +3,11 @@ import {
   buildCalendarGrid,
   buildPlanningCalendar,
   calendarSearchRange,
+  dateKeyInTimeZone,
   parseCalendarMonth,
+  rescheduleWorkOrderForDate,
   shiftCalendarMonth,
+  zonedDateTimeToUtc,
 } from "@/lib/maintenance/planning-calendar";
 
 const baseWorkOrder = {
@@ -189,5 +192,41 @@ describe("maintenance planning calendar", () => {
     });
 
     expect(calendar.flatMap((day) => day.items)).toHaveLength(0);
+  });
+
+  it("preserves local start and due times when a planned card moves across DST", () => {
+    const timeZone = "Europe/Paris";
+    const plannedStart = zonedDateTimeToUtc(
+      { year: 2026, month: 3, day: 28, hour: 8, minute: 30, second: 0 },
+      timeZone,
+    );
+    const dueAt = zonedDateTimeToUtc(
+      { year: 2026, month: 3, day: 28, hour: 17, minute: 0, second: 0 },
+      timeZone,
+    );
+
+    const result = rescheduleWorkOrderForDate({
+      plannedStart,
+      dueAt,
+      targetDateKey: "2026-03-30",
+      timeZone,
+    });
+
+    expect(result.plannedStart.toISOString()).toBe("2026-03-30T06:30:00.000Z");
+    expect(result.dueAt?.toISOString()).toBe("2026-03-30T15:00:00.000Z");
+    expect(dateKeyInTimeZone(result.plannedStart, timeZone)).toBe("2026-03-30");
+  });
+
+  it("plans unscheduled work at 08:00 local without silently moving its existing due date", () => {
+    const dueAt = new Date("2026-08-10T12:00:00.000Z");
+    const result = rescheduleWorkOrderForDate({
+      plannedStart: null,
+      dueAt,
+      targetDateKey: "2026-08-09",
+      timeZone: "Europe/Paris",
+    });
+
+    expect(result.plannedStart.toISOString()).toBe("2026-08-09T06:00:00.000Z");
+    expect(result.dueAt).toBe(dueAt);
   });
 });
