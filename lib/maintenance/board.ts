@@ -21,6 +21,8 @@ export const WORK_ORDER_BOARD_LIMIT = 500;
 
 export type WorkOrderBoardStatus = (typeof WORK_ORDER_BOARD_STATUSES)[number];
 export type WorkOrderDueFilter = "ALL" | "OVERDUE" | "DUE_7_DAYS" | "NO_DUE_DATE";
+export type WorkOrderPriorityFilter = "ALL" | Priority;
+export type WorkOrderAssignmentFilter = "ALL" | "UNASSIGNED" | "MY_WORK";
 
 export type WorkOrderBoardItem = {
   id: string;
@@ -47,37 +49,54 @@ export function buildWorkOrderBoardWhere(input: {
   organizationId: string;
   siteId: string;
   dueFilter: WorkOrderDueFilter;
+  priorityFilter?: WorkOrderPriorityFilter;
+  assignmentFilter?: WorkOrderAssignmentFilter;
+  userId?: string;
   now: Date;
 }): Prisma.WorkOrderWhereInput {
-  const scope: Prisma.WorkOrderWhereInput = {
-    siteId: input.siteId,
-    site: { organizationId: input.organizationId, active: true },
-  };
+  const filters: Prisma.WorkOrderWhereInput[] = [
+    {
+      siteId: input.siteId,
+      site: { organizationId: input.organizationId, active: true },
+    },
+  ];
 
   if (input.dueFilter === "OVERDUE") {
-    return {
-      ...scope,
+    filters.push({
       status: { in: [...ACTIVE_BOARD_STATUSES] },
       dueAt: { lt: input.now },
-    };
-  }
-
-  if (input.dueFilter === "DUE_7_DAYS") {
-    return {
-      ...scope,
+    });
+  } else if (input.dueFilter === "DUE_7_DAYS") {
+    filters.push({
       status: { in: [...ACTIVE_BOARD_STATUSES] },
       dueAt: {
         gte: input.now,
         lte: new Date(input.now.getTime() + 7 * 24 * 60 * 60 * 1000),
       },
-    };
+    });
+  } else {
+    filters.push({
+      status: { in: [...WORK_ORDER_BOARD_STATUSES] },
+      ...(input.dueFilter === "NO_DUE_DATE" ? { dueAt: null } : {}),
+    });
   }
 
-  return {
-    ...scope,
-    status: { in: [...WORK_ORDER_BOARD_STATUSES] },
-    ...(input.dueFilter === "NO_DUE_DATE" ? { dueAt: null } : {}),
-  };
+  if (input.priorityFilter && input.priorityFilter !== "ALL") {
+    filters.push({ priority: input.priorityFilter });
+  }
+
+  if (input.assignmentFilter === "UNASSIGNED") {
+    filters.push({ assigneeId: null, teamId: null });
+  } else if (input.assignmentFilter === "MY_WORK" && input.userId) {
+    filters.push({
+      OR: [
+        { assigneeId: input.userId },
+        { team: { members: { some: { userId: input.userId } } } },
+      ],
+    });
+  }
+
+  return { AND: filters };
 }
 
 export function isWorkOrderOverdue(item: Pick<WorkOrderBoardItem, "status" | "dueAt">, now: Date) {
