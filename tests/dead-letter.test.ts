@@ -36,7 +36,6 @@ vi.mock("@/lib/db", () => ({
 }));
 
 import {
-  IntegrationDeadLetterError,
   listOpenIntegrationDeadLetters,
   recordIntegrationDeadLetter,
   resolveIntegrationDeadLetter,
@@ -131,7 +130,7 @@ describe("integration dead-letter persistence", () => {
         attempts: 1,
         payload: { request: { headers: { Authorization: "Bearer secret-value" } } },
       }),
-    ).rejects.toMatchObject<Partial<IntegrationDeadLetterError>>({ code: "UNSAFE_PAYLOAD" });
+    ).rejects.toMatchObject({ code: "UNSAFE_PAYLOAD" });
     expect(mocks.transaction).not.toHaveBeenCalled();
   });
 
@@ -148,9 +147,7 @@ describe("integration dead-letter persistence", () => {
         attempts: 1,
         payload: { event: { id: "event-1" } },
       }),
-    ).rejects.toMatchObject<Partial<IntegrationDeadLetterError>>({
-      code: "TENANT_SCOPE_MISMATCH",
-    });
+    ).rejects.toMatchObject({ code: "TENANT_SCOPE_MISMATCH" });
     expect(mocks.deadLetterUpsert).not.toHaveBeenCalled();
   });
 
