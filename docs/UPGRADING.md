@@ -30,11 +30,19 @@ npm run upgrade:check
 
 That check rejects normal project scripts that use `prisma db push` or `prisma migrate reset`, verifies that the runtime container does not execute schema changes on startup, and flags common destructive SQL in non-initial migrations unless the migration contains the explicit reviewed marker described below.
 
-## Release pinning
+## Release pinning and supported upgrade baseline
 
-Until the E14 release/versioning process is completed, production operators should pin upgrades to an exact Git commit or immutable container-image digest. Do not deploy a moving branch or mutable `latest` tag and then assume it identifies the schema/application version that was installed.
+The formal release/versioning contract is documented in [`RELEASING.md`](RELEASING.md) and machine-readable in [`../release/release-policy.json`](../release/release-policy.json).
 
-A future formal release process should make the same procedure operate on explicit supported release versions.
+Production operators must deploy an immutable version tag or container-image digest associated with the reviewed release commit. Do not deploy a moving branch or mutable `latest` tag and then assume it identifies the schema/application version that was installed.
+
+The release policy pins the **previous supported release** to a full immutable commit SHA. CI checks a direct N-1 upgrade from that baseline to the current source line on the same PostgreSQL database. Older installations should follow the supported release chain unless a release note explicitly documents a wider tested upgrade range.
+
+Run the repository release gate with:
+
+```bash
+npm run release:check
+```
 
 ## Pre-upgrade checklist
 
@@ -126,6 +134,7 @@ export DATABASE_URL='postgresql://...'
 npm ci --omit=dev=false
 npm run prisma:generate
 npm run upgrade:check
+npm run release:check
 npm run prisma:deploy
 npm run prisma:status
 ```
@@ -210,8 +219,22 @@ Also verify representative tenant-scoped workflows and at least one controlled-d
 
 Monitor structured logs and application metrics for elevated failures before declaring the upgrade complete.
 
-## What this procedure does not yet claim
+## Automated previous-release upgrade drill
 
-The E14 mandatory check **“Upgrade from previous supported release tested”** remains separate. It can only be closed once the project has a formal release/versioning process that identifies a previous supported release and CI performs a real upgrade drill from that release's database/application state to the new one.
+`.github/workflows/upgrade-drill.yml` exercises the supported release boundary on disposable PostgreSQL for relevant pull requests and `main` changes.
 
-This runbook establishes the migration and rollback/forward strategy; it does not pretend a previous-release upgrade test exists before versioned releases exist.
+The workflow:
+
+1. reads the full SHA and version from `release/release-policy.json`;
+2. checks out that immutable previous supported release separately from the candidate source;
+3. verifies the baseline commit's `package.json` version matches the policy;
+4. installs the previous release with its own lockfile;
+5. applies its committed migrations and deterministic synthetic seed;
+6. captures IDs and stable fields for representative synthetic organization, site, asset, work order and part records;
+7. installs the current candidate and applies only its committed migrations to the **same database**;
+8. compares the historical records byte-for-byte before and after the upgrade;
+9. verifies Prisma migration status and runs the candidate database smoke check.
+
+The drill deliberately does not reseed before the comparison: the check is intended to prove migration compatibility and historical preservation, not to allow the current seed to repair or replace old state.
+
+A green drill proves the repository's declared N-1 path was exercised in CI. It does not replace production backup, restore or environment-specific compatibility checks.
