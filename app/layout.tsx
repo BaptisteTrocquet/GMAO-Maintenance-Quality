@@ -29,6 +29,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
               <Link href="/maintenance/calendar">Calendar</Link>
               <Link href="/maintenance/workload">Workload</Link>
               <Link href="/analytics/backlog">Backlog analytics</Link>
+              <Link href="/analytics/pm-compliance">PM compliance</Link>
               <Link href="/analytics/reliability">Reliability</Link>
               <Link href="/documents">Documents</Link>
               <Link href="/inventory">Inventory</Link>
