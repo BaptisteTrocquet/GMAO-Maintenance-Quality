@@ -27,18 +27,18 @@ describe("backlog analytics", () => {
 
   it("calculates open, overdue, unplanned, urgent and aging buckets from open work only", async () => {
     mocks.count
-      .mockResolvedValueOnce(2) // requested
-      .mockResolvedValueOnce(3) // approved
-      .mockResolvedValueOnce(4) // planned
-      .mockResolvedValueOnce(5) // in progress
-      .mockResolvedValueOnce(1) // blocked
-      .mockResolvedValueOnce(6) // overdue
-      .mockResolvedValueOnce(7) // unplanned
-      .mockResolvedValueOnce(8) // urgent
-      .mockResolvedValueOnce(9) // 0-6
-      .mockResolvedValueOnce(10) // 7-29
-      .mockResolvedValueOnce(11) // 30-89
-      .mockResolvedValueOnce(12); // 90+
+      .mockResolvedValueOnce(2)
+      .mockResolvedValueOnce(3)
+      .mockResolvedValueOnce(4)
+      .mockResolvedValueOnce(5)
+      .mockResolvedValueOnce(1)
+      .mockResolvedValueOnce(6)
+      .mockResolvedValueOnce(7)
+      .mockResolvedValueOnce(8)
+      .mockResolvedValueOnce(9)
+      .mockResolvedValueOnce(10)
+      .mockResolvedValueOnce(11)
+      .mockResolvedValueOnce(12);
 
     const result = await buildBacklogDashboard({ organizationId: "org-a", siteId: "site-a", now });
 
@@ -95,22 +95,24 @@ describe("backlog analytics", () => {
     expect(result.oldest).toEqual([]);
   });
 
-  it("uses non-overlapping aging boundaries and excludes future requested timestamps", async () => {
+  it("uses exact non-overlapping aging boundaries and excludes future requested timestamps", async () => {
     await buildBacklogDashboard({ organizationId: "org-a", siteId: "site-a", now });
 
     const agingCalls = mocks.count.mock.calls.slice(8, 12).map(([input]) => input.where.requestedAt);
     expect(agingCalls[0]).toEqual({
-      gte: new Date("2026-08-01T10:00:00.000Z"),
+      gt: new Date("2026-08-01T10:00:00.000Z"),
       lte: now,
     });
     expect(agingCalls[1]).toEqual({
-      gte: new Date("2026-07-09T10:00:00.000Z"),
-      lt: new Date("2026-08-01T10:00:00.000Z"),
+      lte: new Date("2026-08-01T10:00:00.000Z"),
+      gt: new Date("2026-07-09T10:00:00.000Z"),
     });
     expect(agingCalls[2]).toEqual({
-      gte: new Date("2026-05-10T10:00:00.000Z"),
-      lt: new Date("2026-07-09T10:00:00.000Z"),
+      lte: new Date("2026-07-09T10:00:00.000Z"),
+      gt: new Date("2026-05-10T10:00:00.000Z"),
     });
-    expect(agingCalls[3]).toEqual({ lt: new Date("2026-05-10T10:00:00.000Z") });
+    expect(agingCalls[3]).toEqual({
+      lte: new Date("2026-05-10T10:00:00.000Z"),
+    });
   });
 });
