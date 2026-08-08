@@ -1,0 +1,94 @@
+name: Release tag contract
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: read
+
+jobs:
+  verify-release-tag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout tagged source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Verify immutable version identity
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+
+          node <<'NODE'
+          const fs = require("node:fs");
+          const tag = process.env.RELEASE_TAG;
+          const packageVersion = JSON.parse(fs.readFileSync("package.json", "utf8")).version;
+          const policy = JSON.parse(fs.readFileSync("release/release-policy.json", "utf8"));
+          const expectedTag = `v${packageVersion}`;
+          if (tag !== expectedTag) throw new Error(`release tag ${tag} must equal ${expectedTag}`);
+          if (policy.currentVersion !== packageVersion) {
+            throw new Error(`release policy ${policy.currentVersion} must match package version ${packageVersion}`);
+          }
+          NODE
+
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Verify release and upgrade policy
+        run: |
+          npm run release:check
+          npm run upgrade:check
+
+      - name: Build tagged application image
+        run: docker build --pull --target runner --tag gmao-maintenance-quality:${{ github.ref_name }} .
+
+      - name: Build tagged migration image
+        run: docker build --target migration --tag gmao-maintenance-quality-migrations:${{ github.ref_name }} .
+
+      - name: Verify tagged image runtime identities
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(docker image inspect gmao-maintenance-quality:${GITHUB_REF_NAME} --format '{{.Config.User}}')" = "nextjs"
+          test "$(docker image inspect gmao-maintenance-quality-migrations:${GITHUB_REF_NAME} --format '{{.Config.User}}')" = "nextjs"
+          docker run --rm --entrypoint sh gmao-maintenance-quality-migrations:${GITHUB_REF_NAME} -c \
+            'test -x /app/node_modules/.bin/prisma && test ! -e /app/node_modules/vitest && test ! -e /app/node_modules/esbuild && test ! -e /usr/local/bin/npm'
+
+      - name: Scan tagged application image for critical vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          image-ref: gmao-maintenance-quality:${{ github.ref_name }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: "os,library"
+          severity: "CRITICAL"
+          version: "v0.73.0"
+          cache: "false"
+
+      - name: Scan tagged migration image for critical vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          image-ref: gmao-maintenance-quality-migrations:${{ github.ref_name }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: "os,library"
+          severity: "CRITICAL"
+          version: "v0.73.0"
+          cache: "false"
