@@ -7,20 +7,38 @@ type PackageJson = {
   version?: string;
 };
 
+type PackageLock = {
+  version?: string;
+  packages?: {
+    ""?: {
+      version?: string;
+    };
+  };
+};
+
 const root = process.cwd();
 
 async function main() {
-  const [packageJsonRaw, policyRaw, releasingGuide] = await Promise.all([
+  const [packageJsonRaw, packageLockRaw, policyRaw, releasingGuide] = await Promise.all([
     readFile(path.join(root, "package.json"), "utf8"),
+    readFile(path.join(root, "package-lock.json"), "utf8"),
     readFile(path.join(root, "release", "release-policy.json"), "utf8"),
     readFile(path.join(root, "docs", "RELEASING.md"), "utf8"),
   ]);
 
   const packageJson = JSON.parse(packageJsonRaw) as PackageJson;
+  const packageLock = JSON.parse(packageLockRaw) as PackageLock;
   const policy = JSON.parse(policyRaw) as ReleasePolicy;
   if (!packageJson.version) throw new Error("Release policy check failed: package.json version is missing");
 
   assertReleasePolicy(policy, packageJson.version);
+
+  const lockVersions = [packageLock.version, packageLock.packages?.[""]?.version];
+  if (lockVersions.some((version) => version !== packageJson.version)) {
+    throw new Error(
+      `Release policy check failed: package-lock.json must match package.json version ${packageJson.version}`,
+    );
+  }
 
   const requiredGuideTerms = [
     "Semantic Versioning",
