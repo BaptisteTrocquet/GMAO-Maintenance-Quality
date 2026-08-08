@@ -105,6 +105,8 @@ describe("notification center", () => {
           site: { organizationId: "org-a", active: true },
           status: "ACTIVE",
           remindAt: { lte: now },
+          dueAt: { gte: now },
+          workOrder: { status: { notIn: ["COMPLETED", "CANCELLED"] } },
         }),
         take: NOTIFICATION_REMINDER_LIMIT,
       }),
@@ -119,6 +121,21 @@ describe("notification center", () => {
           ],
         },
         take: NOTIFICATION_QUALITY_SCAN_LIMIT,
+      }),
+    );
+  });
+
+  it("keeps due reminders separate from overdue work-order notifications", async () => {
+    await buildNotificationCenter({ organizationId: "org-a", siteId: "site-a", role: "MAINTENANCE_MANAGER", now });
+
+    expect(mocks.reminderFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ dueAt: { gte: now } }),
+      }),
+    );
+    expect(mocks.workOrderFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ dueAt: { lt: now } }),
       }),
     );
   });
