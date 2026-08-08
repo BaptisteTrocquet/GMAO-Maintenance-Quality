@@ -23,6 +23,10 @@ async function demoScope() {
   return { organizationId: organization.id, siteId: site.id };
 }
 
+function unscheduledCard(page: import("@playwright/test").Page) {
+  return page.locator('article[aria-label*="WO-000001"][aria-label*="unscheduled item"]');
+}
+
 test("keyboard/date fallback sends a scoped planning PATCH", async ({ page }) => {
   const scope = await demoScope();
   await page.setExtraHTTPHeaders({
@@ -47,7 +51,7 @@ test("keyboard/date fallback sends a scoped planning PATCH", async ({ page }) =>
   const response = await page.goto("/maintenance/calendar?month=2026-02");
   expect(response?.ok()).toBe(true);
 
-  const card = page.locator('article[aria-label*="WO-000001"]').first();
+  const card = unscheduledCard(page);
   await expect(card).toBeVisible();
   const dateInput = card.getByLabel("Move WO-000001 to date");
   await dateInput.focus();
@@ -85,7 +89,7 @@ test("dragging an unscheduled work order onto a calendar day sends the same scop
   });
 
   await page.goto("/maintenance/calendar?month=2026-02");
-  const card = page.locator('article[aria-label*="WO-000001"]').first();
+  const card = unscheduledCard(page);
   const target = page.locator('section[data-date="2026-01-31"]');
   await expect(card).toBeVisible();
   await expect(target).toBeVisible();
