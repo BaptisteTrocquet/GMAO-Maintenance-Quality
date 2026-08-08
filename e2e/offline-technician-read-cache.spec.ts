@@ -2,6 +2,19 @@ import { expect, test } from "@playwright/test";
 import { db } from "../lib/db";
 import { createSession } from "../lib/auth/session";
 
+async function cachedTechnicianRequestCount(page: import("@playwright/test").Page) {
+  return page.evaluate(async () => {
+    const names = (await caches.keys()).filter((name) =>
+      name.startsWith("opengmao-technician-read-v1:"),
+    );
+    let count = 0;
+    for (const name of names) {
+      count += (await (await caches.open(name)).keys()).length;
+    }
+    return count;
+  });
+}
+
 test("technician reads fall back to a session-partitioned cache while writes stay disabled offline", async ({
   page,
   context,
@@ -46,8 +59,10 @@ test("technician reads fall back to a session-partitioned cache while writes sta
       )
       .toBe(true);
 
+    await expect(page.getByText(/Assigned work is cached after a successful online refresh/)).toBeVisible();
     await page.getByRole("button", { name: "Refresh assigned work" }).click();
     await expect(page.getByText("Live", { exact: true })).toBeVisible();
+    await expect.poll(() => cachedTechnicianRequestCount(page), { timeout: 10_000 }).toBeGreaterThan(0);
 
     await context.setOffline(true);
     await page.getByRole("button", { name: "Refresh assigned work" }).click();
@@ -60,9 +75,11 @@ test("technician reads fall back to a session-partitioned cache while writes sta
 
     await page.getByRole("link", { name: /WO-000001 · Investigate abnormal vibration/ }).click();
     await expect(page.getByRole("heading", { name: "WO-000001 · Investigate abnormal vibration" })).toBeVisible();
+    await expect(page.getByText(/This work order is cached after successful online reads/)).toBeVisible();
 
     await page.getByRole("button", { name: "Refresh work order" }).click();
     await expect(page.getByText("Live", { exact: true })).toBeVisible();
+    await expect.poll(() => cachedTechnicianRequestCount(page), { timeout: 10_000 }).toBeGreaterThan(1);
 
     await context.setOffline(true);
     await page.getByRole("button", { name: "Refresh work order" }).click();
