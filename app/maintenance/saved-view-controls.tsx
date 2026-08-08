@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import type { FormEvent } from "react";
 
 type Surface = "KANBAN" | "CALENDAR";
 type KanbanConfig = { dueFilter: "ALL" | "OVERDUE" | "DUE_7_DAYS" | "NO_DUE_DATE" };
@@ -57,13 +58,14 @@ export default function SavedViewControls({
   surface,
   currentConfig,
 }: Props) {
+  const currentDefaultName = defaultName(surface, currentConfig);
   const [views, setViews] = useState<SavedView[]>([]);
-  const [name, setName] = useState(() => defaultName(surface, currentConfig));
+  const [name, setName] = useState(() => currentDefaultName);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function loadViews(signal?: AbortSignal) {
+  const loadViews = useCallback(async (signal?: AbortSignal) => {
     const query = new URLSearchParams({ organizationId, siteId, surface });
     const response = await fetch(`/api/maintenance/saved-views?${query}`, { signal });
     const body = (await response.json()) as {
@@ -72,7 +74,7 @@ export default function SavedViewControls({
     };
     if (!response.ok) throw new Error(body.error?.message ?? "Saved views could not be loaded");
     setViews(body.data ?? []);
-  }
+  }, [organizationId, siteId, surface]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -87,11 +89,11 @@ export default function SavedViewControls({
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [organizationId, siteId, surface]);
+  }, [loadViews]);
 
   useEffect(() => {
-    setName(defaultName(surface, currentConfig));
-  }, [surface, currentConfig]);
+    setName(currentDefaultName);
+  }, [currentDefaultName]);
 
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
