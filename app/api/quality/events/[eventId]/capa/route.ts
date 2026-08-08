@@ -35,6 +35,10 @@ const approveSchema = scopeSchema.extend({
   action: z.literal("APPROVE"),
   approvalNote: z.string().trim().max(5000).nullable().optional(),
 });
+const activateAliasSchema = scopeSchema.extend({
+  action: z.literal("ACTIVATE"),
+  approvalNote: z.string().trim().max(5000).nullable().optional(),
+});
 const transitionSchema = scopeSchema.extend({
   action: z.literal("TRANSITION_ACTION"),
   actionId: z.string().min(1),
@@ -45,6 +49,7 @@ const readySchema = scopeSchema.extend({ action: z.literal("READY_FOR_EFFECTIVEN
 const patchSchema = z.discriminatedUnion("action", [
   saveSchema,
   approveSchema,
+  activateAliasSchema,
   transitionSchema,
   readySchema,
 ]);
@@ -137,7 +142,7 @@ export async function PATCH(
         }),
       );
     }
-    if (parsed.data.action === "APPROVE") {
+    if (parsed.data.action === "APPROVE" || parsed.data.action === "ACTIVATE") {
       return apiData(
         await approveCapa({
           organizationId: parsed.data.organizationId,
