@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import DashboardKpiCards from "./dashboard-kpi-cards";
 
 type DashboardData = {
   metrics: {
@@ -94,25 +95,13 @@ export default function PersonalDashboardClient({
   if (error) return <section className="card" role="alert">{error}</section>;
   if (!data) return null;
 
-  const metrics = [
-    ["My open work", data.metrics.openWork],
-    ["Blocked", data.metrics.blockedWork],
-    ["Overdue", data.metrics.overdueWork],
-    ["Due ≤ 7 days", data.metrics.dueSoonWork],
-    ["Urgent", data.metrics.urgentWork],
-    ["Pending approvals", data.metrics.pendingApprovals],
-  ] as const;
-
   return (
     <>
-      <div className="grid grid-4">
-        {metrics.map(([label, value]) => (
-          <div className="card" key={label}>
-            <div className="muted">{label}</div>
-            <div className="metric">{value}</div>
-          </div>
-        ))}
-      </div>
+      <DashboardKpiCards
+        organizationId={organizationId}
+        siteId={siteId}
+        metrics={data.metrics}
+      />
 
       <div className="grid grid-2 section">
         <section className="card responsive-table">
