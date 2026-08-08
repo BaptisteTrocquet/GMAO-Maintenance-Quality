@@ -149,7 +149,11 @@ function buildRequestUrl(
   query: RestConnectorRequest["query"],
 ) {
   const normalizedPath = path.trim();
-  if (!normalizedPath || normalizedPath.startsWith("//") || /^[a-z][a-z0-9+.-]*:/i.test(normalizedPath)) {
+  if (
+    !normalizedPath ||
+    normalizedPath.startsWith("//") ||
+    /^[a-z][a-z0-9+.-]*:/i.test(normalizedPath)
+  ) {
     throw new RestConnectorError("INVALID_REQUEST", "REST connector request path must be relative");
   }
 
@@ -169,7 +173,7 @@ function buildRequestUrl(
   return url;
 }
 
-function credentialHeaders(credential: RestConnectorCredential) {
+function credentialHeaders(credential: RestConnectorCredential): Record<string, string> {
   if (credential.kind === "none") return {};
   if (credential.kind === "bearer") {
     if (!credential.token.trim()) {
@@ -180,7 +184,12 @@ function credentialHeaders(credential: RestConnectorCredential) {
 
   const headerName = credential.headerName.trim();
   const normalized = normalizeHeaderName(headerName);
-  if (!headerName || normalized === "host" || normalized === "content-length" || normalized === "cookie") {
+  if (
+    !headerName ||
+    normalized === "host" ||
+    normalized === "content-length" ||
+    normalized === "cookie"
+  ) {
     throw new RestConnectorError("UNSAFE_HEADER", "API-key credential header name is not allowed");
   }
   if (!credential.value) {
@@ -292,7 +301,11 @@ export function createRestConnector(
       "REST connector timeoutMs must be between 100 and 60000 milliseconds",
     );
   }
-  if (!Number.isInteger(maxResponseBytes) || maxResponseBytes < 1 || maxResponseBytes > 10_000_000) {
+  if (
+    !Number.isInteger(maxResponseBytes) ||
+    maxResponseBytes < 1 ||
+    maxResponseBytes > 10_000_000
+  ) {
     throw new RestConnectorError(
       "INVALID_CONFIGURATION",
       "REST connector maxResponseBytes must be between 1 and 10000000 bytes",
@@ -354,7 +367,7 @@ export function createRestConnector(
         response = await transport({
           url: target.url,
           address: target.address,
-          family: target.family,
+          family: target.family === 6 ? 6 : 4,
           method: input.request.method,
           headers,
           body,
