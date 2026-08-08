@@ -19,7 +19,21 @@ async function demoScope() {
     select: { id: true },
   });
   if (!site) throw new Error("Synthetic demo site was not seeded");
-  return { organizationId: organization.id, siteId: site.id };
+
+  const workOrder = await prisma.workOrder.findUnique({
+    where: { number: "WO-000001" },
+    select: { number: true, siteId: true, plannedStart: true },
+  });
+  if (!workOrder || workOrder.siteId !== site.id || !workOrder.plannedStart) {
+    throw new Error("Synthetic planned work order was not seeded in the demo site");
+  }
+
+  return {
+    organizationId: organization.id,
+    siteId: site.id,
+    workOrderNumber: workOrder.number,
+    month: workOrder.plannedStart.toISOString().slice(0, 7),
+  };
 }
 
 test("calendar schedule handles are keyboard reachable", async ({ page }) => {
@@ -29,11 +43,11 @@ test("calendar schedule handles are keyboard reachable", async ({ page }) => {
     "x-site-id": scope.siteId,
   });
 
-  const response = await page.goto("/maintenance/calendar?month=2026-02");
+  const response = await page.goto(`/maintenance/calendar?month=${scope.month}`);
   expect(response?.ok()).toBe(true);
 
   const startHandle = page
-    .getByRole("button", { name: /Move WO-000001 planned start/i })
+    .getByRole("button", { name: new RegExp(`Move ${scope.workOrderNumber} planned start`, "i") })
     .first();
   await expect(startHandle).toBeVisible();
   await startHandle.focus();
