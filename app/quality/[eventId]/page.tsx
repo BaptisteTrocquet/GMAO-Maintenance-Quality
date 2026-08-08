@@ -4,17 +4,16 @@ import { notFound } from "next/navigation";
 import { db } from "@/lib/db";
 import { getQualityEvent, listQualityEventTimeline } from "@/lib/quality/events";
 
+type QualityTimeline = NonNullable<Awaited<ReturnType<typeof listQualityEventTimeline>>>;
+type QualityTimelineEntry = QualityTimeline[number];
+
 function formatDate(value: string | Date | null | undefined) {
   if (!value) return "—";
   const iso = value instanceof Date ? value.toISOString() : value;
   return `${iso.replace("T", " ").slice(0, 16)} UTC`;
 }
 
-function timelineDetail(entry: Awaited<ReturnType<typeof listQualityEventTimeline>> extends infer Result
-  ? Result extends Array<infer Item>
-    ? Item
-    : never
-  : never) {
+function timelineDetail(entry: QualityTimelineEntry) {
   const after = entry.after;
   if (!after) return "";
   if (entry.action === "CONTAINMENT_RECORDED" || entry.action === "CONTAINMENT_UPDATED") {
