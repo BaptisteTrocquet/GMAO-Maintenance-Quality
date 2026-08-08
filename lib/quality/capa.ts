@@ -3,11 +3,12 @@ import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 
 const CAPA_ENTITY = "QualityCapa";
+const EFFECTIVENESS_ENTITY = "QualityCapaEffectiveness";
 const QUALITY_EVENT_ENTITY = "QualityEvent";
 const ROOT_CAUSE_ENTITY = "QualityRootCause";
 const MAX_TRANSACTION_ATTEMPTS = 4;
 
-export type CapaStatus = "DRAFT" | "ACTIVE" | "READY_FOR_EFFECTIVENESS";
+export type CapaStatus = "DRAFT" | "ACTIVE" | "READY_FOR_EFFECTIVENESS" | "CLOSED";
 export type QualityActionType = "CORRECTIVE" | "PREVENTIVE";
 export type QualityActionStatus = "PLANNED" | "IN_PROGRESS" | "COMPLETED" | "CANCELLED";
 
@@ -24,6 +25,12 @@ export type QualityActionSnapshot = {
   completedAt: string | null;
 };
 
+export type CapaEffectivenessCheck = {
+  result: "EFFECTIVE" | "INEFFECTIVE";
+  summary: string | null;
+  verifiedAt: string | null;
+};
+
 export type CapaSnapshot = {
   eventId: string;
   organizationId: string;
@@ -35,6 +42,7 @@ export type CapaSnapshot = {
   updatedAt: string;
   activatedAt: string | null;
   readyForEffectivenessAt: string | null;
+  effectivenessChecks: CapaEffectivenessCheck[];
 };
 
 type QualityEventState = {
@@ -47,6 +55,15 @@ type RootCauseState = {
   organizationId: string;
   siteId: string;
   status: "DRAFT" | "CONFIRMED";
+};
+
+type EffectivenessState = {
+  organizationId: string;
+  siteId: string;
+  status: "PENDING" | "VERIFIED";
+  result: "EFFECTIVE" | "INEFFECTIVE" | null;
+  summary: string | null;
+  verifiedAt: string | null;
 };
 
 export class CapaError extends Error {
@@ -109,6 +126,24 @@ function parseRootCause(value: string | null): RootCauseState | null {
   }
 }
 
+function parseEffectiveness(value: string | null): EffectivenessState | null {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value) as Partial<EffectivenessState>;
+    if (
+      typeof parsed.organizationId !== "string" ||
+      typeof parsed.siteId !== "string" ||
+      (parsed.status !== "PENDING" && parsed.status !== "VERIFIED") ||
+      (parsed.result !== null && parsed.result !== "EFFECTIVE" && parsed.result !== "INEFFECTIVE") ||
+      !(parsed.summary === null || typeof parsed.summary === "string") ||
+      !(parsed.verifiedAt === null || typeof parsed.verifiedAt === "string")
+    ) return null;
+    return parsed as EffectivenessState;
+  } catch {
+    return null;
+  }
+}
+
 function parseCapa(value: string | null): CapaSnapshot | null {
   if (!value) return null;
   try {
@@ -123,7 +158,10 @@ function parseCapa(value: string | null): CapaSnapshot | null {
       typeof parsed.createdAt !== "string" ||
       typeof parsed.updatedAt !== "string"
     ) return null;
-    return parsed as CapaSnapshot;
+    return {
+      ...(parsed as CapaSnapshot),
+      effectivenessChecks: Array.isArray(parsed.effectivenessChecks) ? parsed.effectivenessChecks : [],
+    };
   } catch {
     return null;
   }
@@ -195,6 +233,44 @@ async function requireConfirmedRootCause(
 
 async function latestCapa(client: Pick<Prisma.TransactionClient, "auditLog">, eventId: string) {
   return parseCapa(await latestJson(client, CAPA_ENTITY, eventId));
+}
+
+export async function latestCapaSnapshot(
+  client: Pick<Prisma.TransactionClient, "auditLog">,
+  eventId: string,
+) {
+  const capa = await latestCapa(client, eventId);
+  if (!capa) return null;
+
+  const effectiveness = parseEffectiveness(
+    await latestJson(client, EFFECTIVENESS_ENTITY, eventId),
+  );
+  const scopedEffectiveness =
+    effectiveness &&
+    effectiveness.organizationId === capa.organizationId &&
+    effectiveness.siteId === capa.siteId
+      ? effectiveness
+      : null;
+
+  const effectivenessChecks: CapaEffectivenessCheck[] =
+    scopedEffectiveness?.status === "VERIFIED" && scopedEffectiveness.result
+      ? [
+          {
+            result: scopedEffectiveness.result,
+            summary: scopedEffectiveness.summary,
+            verifiedAt: scopedEffectiveness.verifiedAt,
+          },
+        ]
+      : [];
+
+  return {
+    ...capa,
+    status:
+      scopedEffectiveness?.status === "VERIFIED" && scopedEffectiveness.result === "EFFECTIVE"
+        ? ("CLOSED" as const)
+        : capa.status,
+    effectivenessChecks,
+  } satisfies CapaSnapshot;
 }
 
 async function validateOwners(
@@ -316,6 +392,7 @@ export async function saveCapaDraft(input: {
       updatedAt: now,
       activatedAt: null,
       readyForEffectivenessAt: null,
+      effectivenessChecks: [],
     };
     await appendSnapshot(tx, snapshot, {
       actorId: input.actorId,
