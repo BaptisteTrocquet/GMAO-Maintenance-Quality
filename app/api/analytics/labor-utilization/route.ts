@@ -2,10 +2,7 @@ import { z } from "zod";
 import { hasSiteAccess } from "@/lib/access-control";
 import { apiData, apiError } from "@/lib/api-response";
 import { AnalyticsDateRangeError } from "@/lib/analytics/date-range";
-import {
-  buildLaborUtilizationDashboard,
-  LaborUtilizationError,
-} from "@/lib/analytics/labor-utilization";
+import { buildLaborUtilization, LaborUtilizationError } from "@/lib/analytics/labor-utilization";
 import { authenticateRequest } from "@/lib/auth/request-auth";
 import { db } from "@/lib/db";
 import { can } from "@/lib/permissions";
@@ -29,12 +26,7 @@ export async function GET(request: Request): Promise<Response> {
     assetId: url.searchParams.get("assetId") || undefined,
   });
   if (!parsed.success) {
-    return apiError(
-      400,
-      "INVALID_QUERY",
-      "organizationId, siteId, from and to are required; dates must use YYYY-MM-DD",
-      parsed.error.flatten(),
-    );
+    return apiError(400, "INVALID_QUERY", "organizationId, siteId, from and to are required; dates must use YYYY-MM-DD", parsed.error.flatten());
   }
 
   const auth = await authenticateRequest(request, parsed.data.organizationId);
@@ -49,30 +41,22 @@ export async function GET(request: Request): Promise<Response> {
   }
 
   const site = await db.site.findFirst({
-    where: {
-      id: parsed.data.siteId,
-      organizationId: parsed.data.organizationId,
-      active: true,
-    },
+    where: { id: parsed.data.siteId, organizationId: parsed.data.organizationId, active: true },
     select: { organization: { select: { timezone: true } } },
   });
   if (!site) return apiError(404, "SITE_NOT_FOUND", "Active site not found in organization scope");
 
   try {
-    return apiData(
-      await buildLaborUtilizationDashboard({
-        organizationId: parsed.data.organizationId,
-        siteId: parsed.data.siteId,
-        timeZone: site.organization.timezone,
-        from: parsed.data.from,
-        to: parsed.data.to,
-        assetId: parsed.data.assetId,
-      }),
-    );
+    return apiData(await buildLaborUtilization({
+      organizationId: parsed.data.organizationId,
+      siteId: parsed.data.siteId,
+      timeZone: site.organization.timezone,
+      from: parsed.data.from,
+      to: parsed.data.to,
+      assetId: parsed.data.assetId,
+    }));
   } catch (error) {
-    if (error instanceof AnalyticsDateRangeError) {
-      return apiError(400, error.code, error.message);
-    }
+    if (error instanceof AnalyticsDateRangeError) return apiError(400, error.code, error.message);
     if (error instanceof LaborUtilizationError) {
       return apiError(error.code === "ASSET_NOT_FOUND" ? 404 : 400, error.code, error.message);
     }

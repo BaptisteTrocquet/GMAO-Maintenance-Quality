@@ -44,10 +44,7 @@ export default async function LaborUtilizationPage() {
         <div>
           <Link className="muted" href="/analytics/backlog">← Analytics</Link>
           <div className="title">Labor utilization</div>
-          <div className="muted">{site.code} · {site.name} · {site.organization.timezone}</div>
-        </div>
-        <div className="asset-status">
-          <Link className="table-link" href="/analytics/reliability">Reliability</Link>
+          <div className="muted">Recorded labor distribution · {site.code} · {site.name} · {site.organization.timezone}</div>
         </div>
       </div>
 
