@@ -24,19 +24,41 @@ Build a modern alternative to legacy CMMS/GMAO products with a clean UX, strong 
 - Next.js + TypeScript
 - local document-storage adapter ready to be replaced by S3/MinIO
 
-## Quick start
+## Quick start from a clean clone
+
+Prerequisites: Node.js 22 and Docker with Compose.
 
 ```bash
+nvm use
 cp .env.example .env
 docker compose up -d db
-npm install
-npm run prisma:generate
-npm run prisma:migrate
-npm run prisma:seed
+npm ci
+npm run db:bootstrap
 npm run dev
 ```
 
 Then open `http://localhost:3000`.
+
+`db:bootstrap` generates Prisma Client, applies the committed migration history and loads deterministic synthetic seed data.
+
+## Database migration workflow
+
+The Prisma schema and `prisma/migrations/` history must move together.
+
+For a local schema change, create and review a migration before committing:
+
+```bash
+npm run prisma:migrate -- --name describe_your_change
+npm run prisma:status
+```
+
+CI and deployed environments apply only committed migrations:
+
+```bash
+npm run prisma:deploy
+```
+
+Do not use `prisma db push` as the normal project migration path.
 
 ## Roadmap
 
