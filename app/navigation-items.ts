@@ -5,6 +5,7 @@ export const PRIMARY_NAVIGATION = [
   { href: "/assets", label: "Assets" },
   { href: "/assets/scan", label: "Scan QR" },
   { href: "/maintenance", label: "Maintenance" },
+  { href: "/maintenance/my-work", label: "My work" },
   { href: "/maintenance/kanban", label: "Kanban" },
   { href: "/maintenance/calendar", label: "Calendar" },
   { href: "/maintenance/workload", label: "Workload" },
