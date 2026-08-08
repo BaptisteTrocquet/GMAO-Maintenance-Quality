@@ -3,6 +3,7 @@ export const PRIMARY_NAVIGATION = [
   { href: "/search", label: "Search" },
   { href: "/notifications", label: "Notifications" },
   { href: "/assets", label: "Assets" },
+  { href: "/assets/scan", label: "Scan QR" },
   { href: "/maintenance", label: "Maintenance" },
   { href: "/maintenance/kanban", label: "Kanban" },
   { href: "/maintenance/calendar", label: "Calendar" },
