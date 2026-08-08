@@ -1,17 +1,21 @@
 import { z } from "zod";
 import { hasSiteAccess } from "@/lib/access-control";
 import { apiData, apiError } from "@/lib/api-response";
+import {
+  AnalyticsDateRangeError,
+  resolveAnalyticsDateRange,
+} from "@/lib/analytics/date-range";
 import { buildPmCompliance, PmComplianceError } from "@/lib/analytics/pm-compliance";
 import { authenticateRequest } from "@/lib/auth/request-auth";
 import { db } from "@/lib/db";
 import { can } from "@/lib/permissions";
 
-const timestampSchema = z.string().datetime({ offset: true });
+const calendarDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const querySchema = z.object({
   organizationId: z.string().min(1),
   siteId: z.string().min(1),
-  from: timestampSchema,
-  to: timestampSchema,
+  from: calendarDateSchema,
+  to: calendarDateSchema,
   assetId: z.string().min(1).optional(),
 });
 
@@ -28,7 +32,7 @@ export async function GET(request: Request): Promise<Response> {
     return apiError(
       400,
       "INVALID_QUERY",
-      "organizationId, siteId, from and to are required; dates must be ISO timestamps with an offset",
+      "organizationId, siteId, from and to are required; dates must use YYYY-MM-DD",
       parsed.error.flatten(),
     );
   }
@@ -50,23 +54,38 @@ export async function GET(request: Request): Promise<Response> {
       organizationId: parsed.data.organizationId,
       active: true,
     },
-    select: { id: true },
+    select: {
+      id: true,
+      organization: { select: { timezone: true } },
+    },
   });
   if (!site) {
     return apiError(404, "SITE_NOT_FOUND", "Active site not found in organization scope");
   }
 
   try {
+    const range = resolveAnalyticsDateRange({
+      from: parsed.data.from,
+      to: parsed.data.to,
+      timeZone: site.organization.timezone,
+    });
+    if (!range.from || !range.toExclusive) {
+      return apiError(400, "INVALID_DATE_RANGE", "from and to are required");
+    }
+
     return apiData(
       await buildPmCompliance({
         organizationId: parsed.data.organizationId,
         siteId: parsed.data.siteId,
-        from: new Date(parsed.data.from),
-        to: new Date(parsed.data.to),
+        from: range.from,
+        to: range.toExclusive,
         assetId: parsed.data.assetId,
       }),
     );
   } catch (error) {
+    if (error instanceof AnalyticsDateRangeError) {
+      return apiError(400, error.code, error.message);
+    }
     if (error instanceof PmComplianceError) {
       return apiError(
         error.code === "INVALID_DATE_RANGE" ? 400 : 404,
