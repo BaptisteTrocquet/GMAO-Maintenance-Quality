@@ -4,12 +4,12 @@ import { apiData, apiError } from "@/lib/api-response";
 import { authenticateRequest } from "@/lib/auth/request-auth";
 import {
   createQualityEvent,
+  listQualityEvents,
   QualityEventError,
   type QualityEventStatus,
   type QualityEventType,
   type QualitySeverity,
 } from "@/lib/quality/events";
-import { queryQualityEvents } from "@/lib/quality/queries";
 
 const eventTypes = [
   "NONCONFORMITY",
@@ -20,7 +20,7 @@ const eventTypes = [
   "OTHER",
 ] as const;
 const severities = ["LOW", "MEDIUM", "HIGH", "CRITICAL"] as const;
-const statuses = ["OPEN", "CONTAINMENT", "CONTAINED"] as const;
+const statuses = ["OPEN", "CONTAINED", "INVESTIGATING", "CLOSED"] as const;
 
 const createSchema = z.object({
   organizationId: z.string().min(1),
@@ -28,9 +28,12 @@ const createSchema = z.object({
   eventKey: z.string().trim().min(1).max(120),
   type: z.enum(eventTypes),
   severity: z.enum(severities),
-  title: z.string().trim().min(1).max(200),
-  description: z.string().trim().max(4000).nullable().optional(),
+  title: z.string().trim().min(1).max(240),
+  description: z.string().trim().max(5000).nullable().optional(),
   occurredAt: z.string().datetime().nullable().optional(),
+  assetId: z.string().min(1).nullable().optional(),
+  workOrderId: z.string().min(1).nullable().optional(),
+  documentIds: z.array(z.string().min(1)).max(50).optional(),
 });
 
 function authorize(
@@ -50,6 +53,9 @@ function authorize(
 function qualityError(error: QualityEventError) {
   const status =
     error.code === "SITE_NOT_FOUND" ||
+    error.code === "ASSET_NOT_FOUND" ||
+    error.code === "WORK_ORDER_NOT_FOUND" ||
+    error.code === "DOCUMENT_NOT_FOUND" ||
     error.code === "QUALITY_EVENT_NOT_FOUND" ||
     error.code === "CONTAINMENT_OWNER_NOT_FOUND"
       ? 404
@@ -85,7 +91,7 @@ export async function GET(request: Request) {
   const denied = authorize(auth.tenant.scope, siteId, "quality:read");
   if (denied) return denied;
 
-  return apiData(await queryQualityEvents({ organizationId, siteId, status, type, severity }));
+  return apiData(await listQualityEvents({ organizationId, siteId, status, type, severity }));
 }
 
 export async function POST(request: Request) {
@@ -116,6 +122,9 @@ export async function POST(request: Request) {
       title: parsed.data.title,
       description: parsed.data.description,
       occurredAt: parsed.data.occurredAt ? new Date(parsed.data.occurredAt) : null,
+      assetId: parsed.data.assetId,
+      workOrderId: parsed.data.workOrderId,
+      documentIds: parsed.data.documentIds,
       actorId: auth.session.user.id,
     });
     return apiData(result, { status: result.idempotent ? 200 : 201 });
