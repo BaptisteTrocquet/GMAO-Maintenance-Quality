@@ -21,12 +21,40 @@ export type SavedViewSnapshot = {
 
 export class SavedViewError extends Error {
   constructor(
-    public readonly code: "VIEW_NOT_FOUND" | "VIEW_NAME_CONFLICT" | "INVALID_VIEW_NAME",
+    public readonly code:
+      | "VIEW_NOT_FOUND"
+      | "VIEW_NAME_CONFLICT"
+      | "INVALID_VIEW_NAME"
+      | "INVALID_VIEW_FILTERS",
     message: string,
   ) {
     super(message);
     this.name = "SavedViewError";
   }
+}
+
+const KANBAN_DUE_FILTERS = new Set(["ALL", "OVERDUE", "DUE_7_DAYS", "NO_DUE_DATE"]);
+
+export function normalizeSavedViewFilters(
+  surface: SavedViewSurface,
+  filters: Record<string, string>,
+): Record<string, string> {
+  if (surface === "WORK_ORDER_KANBAN") {
+    const keys = Object.keys(filters);
+    if (keys.some((key) => key !== "due")) {
+      throw new SavedViewError(
+        "INVALID_VIEW_FILTERS",
+        "Work-order Kanban saved views only support the due filter",
+      );
+    }
+    const due = filters.due ?? "ALL";
+    if (!KANBAN_DUE_FILTERS.has(due)) {
+      throw new SavedViewError("INVALID_VIEW_FILTERS", "Unsupported work-order due filter");
+    }
+    return { due };
+  }
+
+  throw new SavedViewError("INVALID_VIEW_FILTERS", "Unsupported saved-view surface");
 }
 
 function parseSnapshot(value: string | null): SavedViewSnapshot | null {
@@ -56,7 +84,14 @@ function parseSnapshot(value: string | null): SavedViewSnapshot | null {
       filters[key] = filterValue;
     }
 
-    return { ...(parsed as SavedViewSnapshot), filters };
+    try {
+      return {
+        ...(parsed as SavedViewSnapshot),
+        filters: normalizeSavedViewFilters(parsed.surface as SavedViewSurface, filters),
+      };
+    } catch {
+      return null;
+    }
   } catch {
     return null;
   }
@@ -162,6 +197,7 @@ export async function createSavedView(input: {
   filters: Record<string, string>;
 }) {
   const name = assertName(input.name);
+  const filters = normalizeSavedViewFilters(input.surface, input.filters);
   await assertUniqueName({ ...input, name });
   const now = new Date().toISOString();
   const snapshot: SavedViewSnapshot = {
@@ -171,7 +207,7 @@ export async function createSavedView(input: {
     siteId: input.siteId,
     surface: input.surface,
     name,
-    filters: input.filters,
+    filters,
     active: true,
     createdAt: now,
     updatedAt: now,
@@ -211,11 +247,15 @@ export async function updateSavedView(input: {
   }
 
   const name = input.name === undefined ? previous.name : assertName(input.name);
+  const filters =
+    input.filters === undefined
+      ? previous.filters
+      : normalizeSavedViewFilters(input.surface, input.filters);
   await assertUniqueName({ ...input, name, excludeId: previous.id });
   const snapshot: SavedViewSnapshot = {
     ...previous,
     name,
-    filters: input.filters ?? previous.filters,
+    filters,
     updatedAt: new Date().toISOString(),
   };
 
