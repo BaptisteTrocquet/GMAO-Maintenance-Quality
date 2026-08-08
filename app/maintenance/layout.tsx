@@ -7,6 +7,7 @@ export default function MaintenanceLayout({ children }: { children: ReactNode })
       <nav className="card" aria-label="Maintenance workspace" style={{ marginBottom: 16 }}>
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
           <Link className="table-link" href="/maintenance">Overview</Link>
+          <Link className="table-link" href="/my-work">My work</Link>
           <Link className="table-link" href="/maintenance/kanban">Work-order Kanban</Link>
           <Link className="table-link" href="/maintenance/calendar">Calendar planning</Link>
         </div>
