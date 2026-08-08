@@ -1,8 +1,10 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { db } from "@/lib/db";
 import { getQualityEvent } from "@/lib/quality/events";
+import { storage, type StorageAdapter } from "@/lib/storage";
 
 const EVIDENCE_ENTITY = "QualityEvidenceAttachment";
+export const MAX_QUALITY_EVIDENCE_BYTES = 20 * 1024 * 1024;
 
 export type QualityEvidencePhase =
   | "EVENT"
@@ -23,7 +25,8 @@ export type QualityEvidenceSnapshot = {
   fileName: string;
   storageKey: string;
   mimeType: string | null;
-  sizeBytes: number | null;
+  sizeBytes: number;
+  checksum: string;
   description: string | null;
   createdById: string;
   createdAt: string;
@@ -34,12 +37,20 @@ export class QualityEvidenceError extends Error {
     public readonly code:
       | "QUALITY_EVENT_NOT_FOUND"
       | "EVENT_CLOSED"
-      | "INVALID_EVIDENCE_DATA",
+      | "INVALID_EVIDENCE_DATA"
+      | "FILE_REQUIRED"
+      | "FILE_TOO_LARGE"
+      | "EVIDENCE_NOT_FOUND"
+      | "FILE_INTEGRITY_FAILED",
     message: string,
   ) {
     super(message);
     this.name = "QualityEvidenceError";
   }
+}
+
+function sha256(data: Uint8Array) {
+  return createHash("sha256").update(data).digest("hex");
 }
 
 function parseEvidence(value: string | null): QualityEvidenceSnapshot | null {
@@ -60,7 +71,8 @@ function parseEvidence(value: string | null): QualityEvidenceSnapshot | null {
       typeof parsed.fileName !== "string" ||
       typeof parsed.storageKey !== "string" ||
       !(parsed.mimeType === null || typeof parsed.mimeType === "string") ||
-      !(parsed.sizeBytes === null || typeof parsed.sizeBytes === "number") ||
+      typeof parsed.sizeBytes !== "number" ||
+      typeof parsed.checksum !== "string" ||
       !(parsed.description === null || typeof parsed.description === "string") ||
       typeof parsed.createdById !== "string" ||
       typeof parsed.createdAt !== "string"
@@ -73,18 +85,20 @@ function parseEvidence(value: string | null): QualityEvidenceSnapshot | null {
   }
 }
 
-export async function addQualityEvidence(input: {
+function storageKeyFor(input: {
+  organizationId: string;
+  eventId: string;
+  evidenceId: string;
+  checksum: string;
+}) {
+  return `quality-evidence/${input.organizationId}/${input.eventId}/${input.evidenceId}/${input.checksum}`;
+}
+
+async function requireQualityEvent(input: {
   organizationId: string;
   siteId: string;
   eventId: string;
-  phase: QualityEvidencePhase;
-  kind: QualityEvidenceKind;
-  fileName: string;
-  storageKey: string;
-  mimeType?: string | null;
-  sizeBytes?: number | null;
-  description?: string | null;
-  actorId: string;
+  writable?: boolean;
 }) {
   const qualityEvent = await getQualityEvent({
     organizationId: input.organizationId,
@@ -97,31 +111,58 @@ export async function addQualityEvidence(input: {
       "Quality event not found in site scope",
     );
   }
-  if (qualityEvent.status === "CLOSED") {
+  if (input.writable && qualityEvent.status === "CLOSED") {
     throw new QualityEvidenceError(
       "EVENT_CLOSED",
       "Evidence cannot be added after the quality event is closed",
     );
   }
+  return qualityEvent;
+}
 
+export async function addQualityEvidence(input: {
+  organizationId: string;
+  siteId: string;
+  eventId: string;
+  phase: QualityEvidencePhase;
+  kind: QualityEvidenceKind;
+  fileName: string;
+  mimeType?: string | null;
+  description?: string | null;
+  actorId: string;
+  data: Uint8Array;
+  adapter?: StorageAdapter;
+}) {
   const fileName = input.fileName.trim();
-  const storageKey = input.storageKey.trim();
   const description = input.description?.trim() || null;
-  if (!fileName || !storageKey) {
+  if (!fileName) {
+    throw new QualityEvidenceError("INVALID_EVIDENCE_DATA", "Evidence requires a file name");
+  }
+  if (input.data.byteLength === 0) {
+    throw new QualityEvidenceError("FILE_REQUIRED", "Quality evidence file cannot be empty");
+  }
+  if (input.data.byteLength > MAX_QUALITY_EVIDENCE_BYTES) {
     throw new QualityEvidenceError(
-      "INVALID_EVIDENCE_DATA",
-      "Evidence requires a file name and storage key",
+      "FILE_TOO_LARGE",
+      `Quality evidence file cannot exceed ${MAX_QUALITY_EVIDENCE_BYTES} bytes`,
     );
   }
-  if (input.sizeBytes !== undefined && input.sizeBytes !== null && input.sizeBytes < 0) {
-    throw new QualityEvidenceError(
-      "INVALID_EVIDENCE_DATA",
-      "Evidence size cannot be negative",
-    );
-  }
+
+  await requireQualityEvent({ ...input, writable: true });
+
+  const id = randomUUID();
+  const checksum = sha256(input.data);
+  const storageKey = storageKeyFor({
+    organizationId: input.organizationId,
+    eventId: input.eventId,
+    evidenceId: id,
+    checksum,
+  });
+  const adapter = input.adapter ?? storage;
+  await adapter.put(storageKey, input.data);
 
   const snapshot: QualityEvidenceSnapshot = {
-    id: randomUUID(),
+    id,
     eventId: input.eventId,
     organizationId: input.organizationId,
     siteId: input.siteId,
@@ -130,35 +171,44 @@ export async function addQualityEvidence(input: {
     fileName,
     storageKey,
     mimeType: input.mimeType?.trim() || null,
-    sizeBytes: input.sizeBytes ?? null,
+    sizeBytes: input.data.byteLength,
+    checksum,
     description,
     createdById: input.actorId,
     createdAt: new Date().toISOString(),
   };
 
-  await db.auditLog.create({
-    data: {
-      actorId: input.actorId,
-      entityType: EVIDENCE_ENTITY,
-      entityId: snapshot.id,
-      action: "EVIDENCE_ATTACHED",
-      afterJson: JSON.stringify(snapshot),
-    },
-  });
-  await db.auditLog.create({
-    data: {
-      actorId: input.actorId,
-      entityType: "QualityEvent",
-      entityId: input.eventId,
-      action: "EVIDENCE_ATTACHED",
-      afterJson: JSON.stringify({
-        evidenceId: snapshot.id,
-        phase: snapshot.phase,
-        kind: snapshot.kind,
-        fileName: snapshot.fileName,
-      }),
-    },
-  });
+  try {
+    await db.$transaction(async (tx) => {
+      await tx.auditLog.create({
+        data: {
+          actorId: input.actorId,
+          entityType: EVIDENCE_ENTITY,
+          entityId: snapshot.id,
+          action: "EVIDENCE_ATTACHED",
+          afterJson: JSON.stringify(snapshot),
+        },
+      });
+      await tx.auditLog.create({
+        data: {
+          actorId: input.actorId,
+          entityType: "QualityEvent",
+          entityId: input.eventId,
+          action: "EVIDENCE_ATTACHED",
+          afterJson: JSON.stringify({
+            evidenceId: snapshot.id,
+            phase: snapshot.phase,
+            kind: snapshot.kind,
+            fileName: snapshot.fileName,
+            checksum: snapshot.checksum,
+          }),
+        },
+      });
+    });
+  } catch (error) {
+    await adapter.delete(storageKey).catch(() => undefined);
+    throw error;
+  }
 
   return snapshot;
 }
@@ -169,12 +219,12 @@ export async function listQualityEvidence(input: {
   eventId: string;
   phase?: QualityEvidencePhase;
 }) {
-  const qualityEvent = await getQualityEvent({
-    organizationId: input.organizationId,
-    siteId: input.siteId,
-    eventId: input.eventId,
-  });
-  if (!qualityEvent) return null;
+  try {
+    await requireQualityEvent(input);
+  } catch (error) {
+    if (error instanceof QualityEvidenceError && error.code === "QUALITY_EVENT_NOT_FOUND") return null;
+    throw error;
+  }
 
   const marker = `"eventId":"${input.eventId}","organizationId":"${input.organizationId}","siteId":"${input.siteId}"`;
   const records = await db.auditLog.findMany({
@@ -197,9 +247,51 @@ export async function listQualityEvidence(input: {
     ) {
       return [];
     }
-    return [{
-      ...evidence,
-      actorName: record.actor?.displayName ?? "System",
-    }];
+    return [{ ...evidence, actorName: record.actor?.displayName ?? "System" }];
   });
+}
+
+async function getQualityEvidence(input: {
+  organizationId: string;
+  siteId: string;
+  eventId: string;
+  evidenceId: string;
+}) {
+  await requireQualityEvent(input);
+  const record = await db.auditLog.findFirst({
+    where: { entityType: EVIDENCE_ENTITY, entityId: input.evidenceId },
+    select: { afterJson: true },
+  });
+  const evidence = parseEvidence(record?.afterJson ?? null);
+  if (
+    !evidence ||
+    evidence.organizationId !== input.organizationId ||
+    evidence.siteId !== input.siteId ||
+    evidence.eventId !== input.eventId
+  ) {
+    throw new QualityEvidenceError(
+      "EVIDENCE_NOT_FOUND",
+      "Quality evidence not found in site scope",
+    );
+  }
+  return evidence;
+}
+
+export async function readQualityEvidence(input: {
+  organizationId: string;
+  siteId: string;
+  eventId: string;
+  evidenceId: string;
+  adapter?: StorageAdapter;
+}) {
+  const evidence = await getQualityEvidence(input);
+  const adapter = input.adapter ?? storage;
+  const data = await adapter.get(evidence.storageKey);
+  if (sha256(data) !== evidence.checksum) {
+    throw new QualityEvidenceError(
+      "FILE_INTEGRITY_FAILED",
+      "Stored quality evidence does not match its recorded SHA-256 checksum",
+    );
+  }
+  return { ...evidence, data };
 }
