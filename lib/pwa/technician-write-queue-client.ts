@@ -157,7 +157,7 @@ export function projectTechnicianWrites<T extends {
   const projected = {
     ...workOrder,
     checkItems: workOrder.checkItems.map((item) => ({ ...item })),
-  };
+  } as T;
 
   for (const write of writes) {
     if (write.workOrderId !== workOrder.id) continue;
@@ -178,7 +178,7 @@ export function projectTechnicianWrites<T extends {
         };
       });
     } else if (write.kind === "transition" && typeof write.body.status === "string") {
-      projected.status = write.body.status;
+      (projected as { status: string }).status = write.body.status;
     }
   }
 
