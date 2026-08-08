@@ -3,7 +3,6 @@ import { AccessDeniedError, assertSitePermission } from "@/lib/access-control";
 import { apiData, apiError } from "@/lib/api-response";
 import { authenticateRequest } from "@/lib/auth/request-auth";
 import {
-  activateCapa,
   CapaError,
   getCapa,
   listCapaTimeline,
@@ -11,6 +10,7 @@ import {
   saveCapaDraft,
   transitionCapaAction,
 } from "@/lib/quality/capa";
+import { approveCapa, CapaApprovalError } from "@/lib/quality/capa-approval";
 
 const scopeSchema = z.object({
   organizationId: z.string().min(1),
@@ -31,7 +31,10 @@ const saveSchema = scopeSchema.extend({
   objective: z.string().trim().min(1).max(5000),
   actions: z.array(draftActionSchema).min(1).max(100),
 });
-const activateSchema = scopeSchema.extend({ action: z.literal("ACTIVATE") });
+const approveSchema = scopeSchema.extend({
+  action: z.literal("APPROVE"),
+  approvalNote: z.string().trim().max(5000).nullable().optional(),
+});
 const transitionSchema = scopeSchema.extend({
   action: z.literal("TRANSITION_ACTION"),
   actionId: z.string().min(1),
@@ -41,7 +44,7 @@ const transitionSchema = scopeSchema.extend({
 const readySchema = scopeSchema.extend({ action: z.literal("READY_FOR_EFFECTIVENESS") });
 const patchSchema = z.discriminatedUnion("action", [
   saveSchema,
-  activateSchema,
+  approveSchema,
   transitionSchema,
   readySchema,
 ]);
@@ -60,12 +63,12 @@ function authorize(
   }
 }
 
-function capaError(error: CapaError) {
+function capaError(error: CapaError | CapaApprovalError) {
   const status =
     error.code === "QUALITY_EVENT_NOT_FOUND" ||
     error.code === "CAPA_NOT_FOUND" ||
-    error.code === "ACTION_NOT_FOUND" ||
-    error.code === "ACTION_OWNER_NOT_FOUND"
+    (error instanceof CapaError &&
+      (error.code === "ACTION_NOT_FOUND" || error.code === "ACTION_OWNER_NOT_FOUND"))
       ? 404
       : 409;
   return apiError(status, error.code, error.message);
@@ -134,13 +137,14 @@ export async function PATCH(
         }),
       );
     }
-    if (parsed.data.action === "ACTIVATE") {
+    if (parsed.data.action === "APPROVE") {
       return apiData(
-        await activateCapa({
+        await approveCapa({
           organizationId: parsed.data.organizationId,
           siteId: parsed.data.siteId,
           eventId,
-          actorId: auth.session.user.id,
+          approverId: auth.session.user.id,
+          approvalNote: parsed.data.approvalNote,
         }),
       );
     }
@@ -166,7 +170,7 @@ export async function PATCH(
       }),
     );
   } catch (error) {
-    if (error instanceof CapaError) return capaError(error);
+    if (error instanceof CapaError || error instanceof CapaApprovalError) return capaError(error);
     throw error;
   }
 }
