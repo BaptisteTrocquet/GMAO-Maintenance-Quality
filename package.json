@@ -23,6 +23,9 @@
     "check": "npm run typecheck && npm run lint && npm run test && npm run sdk:build && npm run examples:check && npm run build",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
+    "prisma:migrate:deploy": "prisma migrate deploy",
+    "prisma:migrate:status": "prisma migrate status",
+    "prisma:migrate:drift": "prisma migrate diff --from-schema-datasource prisma/schema.prisma --to-schema prisma/schema.prisma --exit-code",
     "prisma:seed": "tsx prisma/seed.ts"
   },
   "dependencies": {
