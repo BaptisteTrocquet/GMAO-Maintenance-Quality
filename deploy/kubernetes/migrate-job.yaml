@@ -14,8 +14,8 @@ spec:
           type: RuntimeDefault
       containers:
         - name: migrate
-          # Build this tooling image from the same release source using Docker target
-          # "builder", publish it privately, then replace this placeholder digest.
+          # Build this image from the same release source using Docker target
+          # "migration", publish it privately, then replace this placeholder digest.
           image: ghcr.io/example/gmao-maintenance-quality-migrations@sha256:0000000000000000000000000000000000000000000000000000000000000000
           imagePullPolicy: IfNotPresent
           command:
