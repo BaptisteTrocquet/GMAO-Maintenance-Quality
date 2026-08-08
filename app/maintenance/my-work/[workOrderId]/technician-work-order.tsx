@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import WorkOrderCameraAttachments from "@/app/maintenance/[workOrderId]/work-order-camera-attachments";
 import {
   fetchTechnicianRead,
@@ -103,6 +103,7 @@ export default function TechnicianWorkOrder({
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const syncingRef = useRef(false);
   const [queuedWrites, setQueuedWrites] = useState(0);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -152,7 +153,7 @@ export default function TechnicianWorkOrder({
 
       let next = body.data.workOrder;
       if (isTechnicianQueuePartition(activePartition)) {
-        const queued = await listTechnicianWrites(activePartition, workOrderId);
+        const queued = await listTechnicianWrites(activePartition);
         setQueuedWrites(queued.length);
         next = projectTechnicianWrites(next, queued) as TechnicianWorkOrderData;
       } else {
@@ -179,13 +180,14 @@ export default function TechnicianWorkOrder({
       setQueuedWrites(0);
       return 0;
     }
-    const queued = await listTechnicianWrites(cachePartition, workOrderId);
+    const queued = await listTechnicianWrites(cachePartition);
     setQueuedWrites(queued.length);
     return queued.length;
-  }, [cachePartition, workOrderId]);
+  }, [cachePartition]);
 
   const syncQueue = useCallback(async () => {
-    if (!online || !isTechnicianQueuePartition(cachePartition) || syncing) return;
+    if (!online || !isTechnicianQueuePartition(cachePartition) || syncingRef.current) return;
+    syncingRef.current = true;
     setSyncing(true);
     setError("");
     try {
@@ -202,9 +204,10 @@ export default function TechnicianWorkOrder({
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Unable to sync queued work");
     } finally {
+      syncingRef.current = false;
       setSyncing(false);
     }
-  }, [cachePartition, load, online, syncing]);
+  }, [cachePartition, load, online]);
 
   useEffect(() => {
     if (!online || !isTechnicianQueuePartition(cachePartition)) return;
