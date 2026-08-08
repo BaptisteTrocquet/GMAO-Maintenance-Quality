@@ -76,6 +76,11 @@ function request(targetDateKey: string) {
   });
 }
 
+function requireResponse(response: Response | undefined) {
+  expect(response).toBeDefined();
+  return response as Response;
+}
+
 const params = { params: Promise.resolve({ workOrderId: "wo-1" }) };
 
 describe("calendar rescheduling API", () => {
@@ -97,7 +102,7 @@ describe("calendar rescheduling API", () => {
   });
 
   it("reschedules in the site timezone and records a RESCHEDULED audit event", async () => {
-    const response = await PATCH(request("2026-08-12"), params);
+    const response = requireResponse(await PATCH(request("2026-08-12"), params));
 
     expect(response.status).toBe(200);
     expect(mocks.workOrderUpdate).toHaveBeenCalledWith({
@@ -118,7 +123,7 @@ describe("calendar rescheduling API", () => {
   it("does not let a technician bypass work:manage through drag/drop", async () => {
     mocks.authenticateRequest.mockResolvedValue(auth("TECHNICIAN"));
 
-    const response = await PATCH(request("2026-08-12"), params);
+    const response = requireResponse(await PATCH(request("2026-08-12"), params));
 
     expect(response.status).toBe(403);
     expect(mocks.transaction).not.toHaveBeenCalled();
@@ -129,7 +134,7 @@ describe("calendar rescheduling API", () => {
   it("rejects completed work orders even for managers", async () => {
     mocks.workOrderFindFirst.mockResolvedValue({ ...existing, status: "COMPLETED" });
 
-    const response = await PATCH(request("2026-08-12"), params);
+    const response = requireResponse(await PATCH(request("2026-08-12"), params));
 
     expect(response.status).toBe(409);
     expect(mocks.workOrderUpdate).not.toHaveBeenCalled();
@@ -137,7 +142,7 @@ describe("calendar rescheduling API", () => {
   });
 
   it("rejects a move that would place planned start after the due date", async () => {
-    const response = await PATCH(request("2026-08-21"), params);
+    const response = requireResponse(await PATCH(request("2026-08-21"), params));
 
     expect(response.status).toBe(409);
     const body = (await response.json()) as { error: { code: string } };
@@ -147,7 +152,7 @@ describe("calendar rescheduling API", () => {
   });
 
   it("treats a drop on the current planned day as a no-op without audit noise", async () => {
-    const response = await PATCH(request("2026-08-10"), params);
+    const response = requireResponse(await PATCH(request("2026-08-10"), params));
 
     expect(response.status).toBe(200);
     expect(mocks.workOrderUpdate).not.toHaveBeenCalled();
@@ -157,7 +162,7 @@ describe("calendar rescheduling API", () => {
   it("does not reveal a site outside the requested organization", async () => {
     mocks.siteFindFirst.mockResolvedValue(null);
 
-    const response = await PATCH(request("2026-08-12"), params);
+    const response = requireResponse(await PATCH(request("2026-08-12"), params));
 
     expect(response.status).toBe(404);
     expect(mocks.transaction).not.toHaveBeenCalled();
