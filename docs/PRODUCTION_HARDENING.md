@@ -139,6 +139,10 @@ Restore into an isolated target first when diagnosing or validating backups. Do 
 
 The repository CI uses read-only repository-content permissions and locked npm dependencies. Production image builds must continue to use the committed lockfile.
 
+CI scans the **actual production image built in the same job** with Trivy. Both the GitHub Action commit and the Trivy scanner version are immutable/pinned by repository policy. The gate fails on fixed `CRITICAL` OS or library vulnerabilities; `ignore-unfixed` prevents an unavailable upstream fix from being mistaken for an operator-actionable patch.
+
+A non-blocking or unfixed finding is still a security-review input. Operators should rebuild regularly to consume patched base images and review HIGH findings according to exposure and exploitability. Scanner exceptions must be explicit reviewed decisions, not silent removal of the gate.
+
 The `npm run hardening:check` gate validates repository-controlled invariants including:
 
 - non-root production runtime;
@@ -149,7 +153,9 @@ The `npm run hardening:check` gate validates repository-controlled invariants in
 - empty secret placeholders in `.env.example`;
 - zero trusted proxy hops by default;
 - fail-safe unidentified-client rate limiting;
-- read-only GitHub Actions repository-content permission.
+- read-only GitHub Actions repository-content permission;
+- pinned Trivy action and scanner version;
+- scan of `gmao-maintenance-quality:ci` with a failing `CRITICAL` vulnerability threshold.
 
 A repository check cannot prove runtime firewall, IAM, TLS, kernel, orchestrator, or cloud-account posture. Those controls must be reviewed in the target environment.
 
@@ -167,4 +173,5 @@ Before exposing a deployment to users, confirm:
 - production database/storage least-privilege credentials;
 - readiness and monitoring alerts configured;
 - upgrade/recovery runbooks owned and tested;
+- Trivy production-image scan green or any accepted non-blocking findings explicitly reviewed;
 - `npm run hardening:check` and CI green for the deployed revision.
