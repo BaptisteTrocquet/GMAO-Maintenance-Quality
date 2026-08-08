@@ -76,6 +76,12 @@ export function validateProductionHardening(input: ProductionHardeningInputs) {
     if (!/VOLUME\s*\[\s*"\/app\/data"\s*\]/.test(runnerSection)) {
       violations.push("production container must declare /app/data as the persistence boundary");
     }
+    if (!/rm\s+-rf\s+[^\n\\]*\/usr\/local\/lib\/node_modules\/npm/.test(runnerSection)) {
+      violations.push("production runtime must remove the global npm package manager after build");
+    }
+    if (!/\/opt\/yarn-v\*/.test(runnerSection)) {
+      violations.push("production runtime must remove bundled Yarn after build");
+    }
   }
 
   if (SECRET_DOCKER_ARG_PATTERN.test(input.dockerfile)) {
