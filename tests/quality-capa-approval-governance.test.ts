@@ -58,7 +58,7 @@ const draft = {
 };
 
 let rootCauseStatus: "DRAFT" | "CONFIRMED";
-let draftAuthorIds: string[];
+let draftTimeline: Array<{ action: string; actorId: string | null }>;
 
 function installAuditReads() {
   mocks.auditFindFirst.mockImplementation(
@@ -71,9 +71,7 @@ function installAuditReads() {
       return null;
     },
   );
-  mocks.auditFindMany.mockImplementation(async () =>
-    draftAuthorIds.map((actorId) => ({ actorId })),
-  );
+  mocks.auditFindMany.mockImplementation(async () => draftTimeline);
 }
 
 describe("CAPA approval governance", () => {
@@ -87,7 +85,7 @@ describe("CAPA approval governance", () => {
     mocks.membershipFindMany.mockReset();
 
     rootCauseStatus = "CONFIRMED";
-    draftAuthorIds = ["draft-author"];
+    draftTimeline = [{ action: "CREATED", actorId: "draft-author" }];
     installAuditReads();
     mocks.transaction.mockImplementation(
       async (callback: (transaction: typeof tx) => Promise<unknown>) => callback(tx),
@@ -122,9 +120,12 @@ describe("CAPA approval governance", () => {
       where: {
         entityType: "QualityCapa",
         entityId: "event-1",
-        action: { in: ["CREATED", "PLAN_UPDATED"] },
+        action: {
+          in: ["CREATED", "PLAN_UPDATED", "APPROVED", "EFFECTIVENESS_FAILED", "REOPENED"],
+        },
       },
-      select: { actorId: true },
+      orderBy: { createdAt: "asc" },
+      select: { action: true, actorId: true },
     });
     expect(mocks.auditCreate).toHaveBeenNthCalledWith(
       1,
@@ -148,8 +149,12 @@ describe("CAPA approval governance", () => {
     );
   });
 
-  it("blocks approval by any user who authored or edited the CAPA draft", async () => {
-    draftAuthorIds = ["draft-author", "approver-1", "later-editor"];
+  it("blocks approval by any user who authored or edited the current CAPA draft", async () => {
+    draftTimeline = [
+      { action: "CREATED", actorId: "draft-author" },
+      { action: "PLAN_UPDATED", actorId: "approver-1" },
+      { action: "PLAN_UPDATED", actorId: "later-editor" },
+    ];
 
     await expect(
       approveCapaGoverned({
@@ -162,8 +167,11 @@ describe("CAPA approval governance", () => {
     expect(mocks.auditCreate).not.toHaveBeenCalled();
   });
 
-  it("blocks the original author even after a different user edited later", async () => {
-    draftAuthorIds = ["original-author", "later-editor"];
+  it("blocks the original author even after a different user edited later in the same draft", async () => {
+    draftTimeline = [
+      { action: "CREATED", actorId: "original-author" },
+      { action: "PLAN_UPDATED", actorId: "later-editor" },
+    ];
 
     await expect(
       approveCapaGoverned({
@@ -173,6 +181,24 @@ describe("CAPA approval governance", () => {
         approverId: "original-author",
       }),
     ).rejects.toMatchObject({ code: "CAPA_SELF_APPROVAL_NOT_ALLOWED" });
+  });
+
+  it("resets author separation after an ineffective CAPA starts a new draft cycle", async () => {
+    draftTimeline = [
+      { action: "CREATED", actorId: "approver-1" },
+      { action: "APPROVED", actorId: "approver-2" },
+      { action: "EFFECTIVENESS_FAILED", actorId: "verifier-1" },
+      { action: "PLAN_UPDATED", actorId: "later-editor" },
+    ];
+
+    await expect(
+      approveCapaGoverned({
+        organizationId: "org-a",
+        siteId: "site-a",
+        eventId: "event-1",
+        approverId: "approver-1",
+      }),
+    ).resolves.toMatchObject({ status: "ACTIVE", approvedById: "approver-1" });
   });
 
   it("blocks users without an allowed approval role or site access", async () => {
