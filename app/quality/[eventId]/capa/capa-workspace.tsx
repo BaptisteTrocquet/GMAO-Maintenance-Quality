@@ -19,6 +19,10 @@ function toLocalInput(value: string) {
   return new Date(date.getTime() - offset).toISOString().slice(0, 16);
 }
 
+function validLocalDate(value: string) {
+  return Boolean(value) && !Number.isNaN(new Date(value).getTime());
+}
+
 function initialActions(capa: CapaSnapshot | null): EditableAction[] {
   return (
     capa?.actions.map((action) => ({
@@ -104,6 +108,19 @@ export default function CapaWorkspace({
   }
 
   async function save() {
+    if (!objective.trim()) {
+      setMessage("CAPA objective is required.");
+      return false;
+    }
+    if (
+      actions.some(
+        (item) => !item.title.trim() || !item.ownerId || !validLocalDate(item.dueAt),
+      )
+    ) {
+      setMessage("Every CAPA action requires a title, owner and valid due date.");
+      return false;
+    }
+
     return run({
       action: "SAVE",
       objective,
@@ -119,6 +136,19 @@ export default function CapaWorkspace({
     const saved = await save();
     if (!saved) return;
     await run({ action: "ACTIVATE" });
+  }
+
+  async function submitEffectiveness() {
+    if (!effectivenessMethod.trim() || !effectivenessOwnerId || !validLocalDate(effectivenessDueAt)) {
+      setMessage("Effectiveness review requires a method, owner and valid due date.");
+      return;
+    }
+    await run({
+      action: "SUBMIT_EFFECTIVENESS",
+      method: effectivenessMethod,
+      ownerId: effectivenessOwnerId,
+      dueAt: new Date(effectivenessDueAt).toISOString(),
+    });
   }
 
   function addAction() {
@@ -343,18 +373,7 @@ export default function CapaWorkspace({
               />
             </label>
           </div>
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() =>
-              run({
-                action: "SUBMIT_EFFECTIVENESS",
-                method: effectivenessMethod,
-                ownerId: effectivenessOwnerId,
-                dueAt: new Date(effectivenessDueAt).toISOString(),
-              })
-            }
-          >
+          <button type="button" disabled={busy} onClick={submitEffectiveness}>
             Submit effectiveness review
           </button>
         </section>
@@ -378,14 +397,14 @@ export default function CapaWorkspace({
           <div className="asset-status">
             <button
               type="button"
-              disabled={busy}
+              disabled={busy || !effectivenessEvidence.trim()}
               onClick={() => run({ action: "VERIFY_EFFECTIVENESS", result: "EFFECTIVE", evidence: effectivenessEvidence })}
             >
               Effective — close CAPA
             </button>
             <button
               type="button"
-              disabled={busy}
+              disabled={busy || !effectivenessEvidence.trim()}
               onClick={() => run({ action: "VERIFY_EFFECTIVENESS", result: "INEFFECTIVE", evidence: effectivenessEvidence })}
             >
               Ineffective — reopen actions
