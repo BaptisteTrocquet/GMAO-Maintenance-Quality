@@ -57,9 +57,9 @@ describe("maintenance saved views", () => {
         entityType: "MaintenanceSavedView",
         actorId: "user-a",
         AND: [
-          { afterJson: { contains: '\"organizationId\":\"org-a\"' } },
-          { afterJson: { contains: '\"siteId\":\"site-a\"' } },
-          { afterJson: { contains: '\"userId\":\"user-a\"' } },
+          { afterJson: { contains: '"organizationId":"org-a"' } },
+          { afterJson: { contains: '"siteId":"site-a"' } },
+          { afterJson: { contains: '"userId":"user-a"' } },
         ],
       },
       orderBy: { createdAt: "asc" },
