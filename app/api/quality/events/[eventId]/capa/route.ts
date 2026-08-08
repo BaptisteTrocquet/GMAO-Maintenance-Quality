@@ -12,6 +12,10 @@ import {
   saveCapaDraft,
   verifyCapaEffectiveness,
 } from "@/lib/quality/capa";
+import {
+  assertIndependentCapaApprover,
+  CapaApprovalGuardError,
+} from "@/lib/quality/capa-approval";
 
 const scopeSchema = z.object({
   organizationId: z.string().min(1),
@@ -141,6 +145,12 @@ export async function PATCH(
     }
 
     if (parsed.data.action === "APPROVE") {
+      await assertIndependentCapaApprover({
+        organizationId: parsed.data.organizationId,
+        siteId: parsed.data.siteId,
+        eventId,
+        approverId: auth.session.user.id,
+      });
       return apiData(
         await approveCapa({
           organizationId: parsed.data.organizationId,
@@ -186,6 +196,9 @@ export async function PATCH(
       }),
     );
   } catch (error) {
+    if (error instanceof CapaApprovalGuardError) {
+      return apiError(409, error.code, error.message);
+    }
     if (error instanceof CapaError) return capaError(error);
     throw error;
   }
