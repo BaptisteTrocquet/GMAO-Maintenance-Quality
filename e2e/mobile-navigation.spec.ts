@@ -9,6 +9,9 @@ test("mobile navigation replaces the desktop sidebar and supports keyboard dismi
   const trigger = page.getByRole("button", { name: "Open navigation" });
   await expect(trigger).toBeVisible();
   await expect(trigger).toHaveAttribute("aria-expanded", "false");
+  const triggerBox = await trigger.boundingBox();
+  expect(triggerBox?.height ?? 0).toBeGreaterThanOrEqual(44);
+  expect(triggerBox?.width ?? 0).toBeGreaterThanOrEqual(44);
 
   await trigger.click();
   await expect(trigger).toHaveAttribute("aria-expanded", "true");
@@ -16,6 +19,9 @@ test("mobile navigation replaces the desktop sidebar and supports keyboard dismi
   await expect(drawer).toBeVisible();
   const close = drawer.getByRole("button", { name: "Close navigation" });
   await expect(close).toBeFocused();
+  const assetsLink = drawer.getByRole("link", { name: "Assets", exact: true });
+  const assetsBox = await assetsLink.boundingBox();
+  expect(assetsBox?.height ?? 0).toBeGreaterThanOrEqual(44);
   await expect(
     drawer.getByRole("navigation", { name: "Primary mobile navigation" }).getByRole("link", {
       name: "Dashboard",
