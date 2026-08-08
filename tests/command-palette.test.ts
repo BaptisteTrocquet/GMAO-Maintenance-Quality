@@ -34,10 +34,11 @@ describe("command palette helpers", () => {
     });
   });
 
-  it("keeps quick actions deterministic with global search first", () => {
-    expect(COMMAND_PALETTE_QUICK_ACTIONS[0]).toMatchObject({
-      key: "action:search",
-      href: "/search",
-    });
+  it("keeps quick actions deterministic with notifications before Kanban", () => {
+    expect(COMMAND_PALETTE_QUICK_ACTIONS.slice(0, 3)).toEqual([
+      expect.objectContaining({ key: "action:search", href: "/search" }),
+      expect.objectContaining({ key: "action:notifications", href: "/notifications" }),
+      expect.objectContaining({ key: "action:kanban", href: "/maintenance/kanban" }),
+    ]);
   });
 });
