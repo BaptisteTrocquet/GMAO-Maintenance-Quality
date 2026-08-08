@@ -61,8 +61,9 @@ async function post(request: Request) {
 
 describe("asset QR scan API", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     mocks.authenticateRequest.mockResolvedValue(auth());
+    mocks.assertSitePermission.mockImplementation(() => undefined);
     mocks.siteFindFirst.mockResolvedValue({ id: "site-a" });
     mocks.assetFindFirst.mockResolvedValue({ id: "asset-1", code: "A-001", name: "Demo Asset" });
   });
