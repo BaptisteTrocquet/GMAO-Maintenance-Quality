@@ -43,21 +43,25 @@ describe("backlog analytics API", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.authenticateRequest.mockResolvedValue(auth());
-    mocks.siteFindFirst.mockResolvedValue({ id: "site-a" });
+    mocks.siteFindFirst.mockResolvedValue({
+      id: "site-a",
+      organization: { timezone: "Europe/Paris" },
+    });
     mocks.buildBacklogDashboard.mockResolvedValue({ empty: true, totalOpen: 0, oldest: [] });
   });
 
-  it("forwards only validated organization/site scope to the analytics service", async () => {
+  it("forwards validated organization/site scope and organization timezone", async () => {
     const response = await GET(request());
 
     await expectStatus(response, 200);
     expect(mocks.siteFindFirst).toHaveBeenCalledWith({
       where: { id: "site-a", organizationId: "org-a", active: true },
-      select: { id: true },
+      select: { id: true, organization: { select: { timezone: true } } },
     });
     expect(mocks.buildBacklogDashboard).toHaveBeenCalledWith({
       organizationId: "org-a",
       siteId: "site-a",
+      timeZone: "Europe/Paris",
     });
   });
 
