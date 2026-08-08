@@ -4,7 +4,12 @@ import { notFound } from "next/navigation";
 import { db } from "@/lib/db";
 import { getQualityEvent } from "@/lib/quality/events";
 import { getCapa, listCapaTimeline } from "@/lib/quality/capa";
+import {
+  getCapaEffectiveness,
+  listCapaEffectivenessTimeline,
+} from "@/lib/quality/effectiveness";
 import CapaWorkspace from "./capa-workspace";
+import EffectivenessWorkspace from "./effectiveness-workspace";
 
 function formatDate(value: string | Date | null | undefined) {
   if (!value) return "—";
@@ -30,25 +35,33 @@ export default async function CapaPage({
     );
   }
 
-  const [qualityEvent, scoped, timeline, memberships] = await Promise.all([
-    getQualityEvent({ organizationId, siteId, eventId }),
-    getCapa({ organizationId, siteId, eventId }),
-    listCapaTimeline({ organizationId, siteId, eventId }),
-    db.organizationMembership.findMany({
-      where: {
-        organizationId,
-        active: true,
-        user: { active: true },
-        OR: [{ allSites: true }, { siteMemberships: { some: { siteId } } }],
-      },
-      select: {
-        userId: true,
-        user: { select: { displayName: true } },
-      },
-      orderBy: { user: { displayName: "asc" } },
-    }),
-  ]);
+  const [qualityEvent, scoped, timeline, effectiveness, effectivenessTimeline, memberships] =
+    await Promise.all([
+      getQualityEvent({ organizationId, siteId, eventId }),
+      getCapa({ organizationId, siteId, eventId }),
+      listCapaTimeline({ organizationId, siteId, eventId }),
+      getCapaEffectiveness({ organizationId, siteId, eventId }),
+      listCapaEffectivenessTimeline({ organizationId, siteId, eventId }),
+      db.organizationMembership.findMany({
+        where: {
+          organizationId,
+          active: true,
+          user: { active: true },
+          OR: [{ allSites: true }, { siteMemberships: { some: { siteId } } }],
+        },
+        select: {
+          userId: true,
+          user: { select: { displayName: true } },
+        },
+        orderBy: { user: { displayName: "asc" } },
+      }),
+    ]);
   if (!qualityEvent || !scoped) notFound();
+
+  const members = memberships.map((membership) => ({
+    id: membership.userId,
+    displayName: membership.user.displayName,
+  }));
 
   return (
     <>
@@ -61,6 +74,7 @@ export default async function CapaPage({
         <div className="asset-status">
           <span className="badge">{qualityEvent.status}</span>
           <span className="badge">{scoped.capa?.status ?? "NOT STARTED"}</span>
+          {effectiveness ? <span className="badge">EFFECTIVENESS {effectiveness.status}</span> : null}
         </div>
       </div>
 
@@ -70,11 +84,35 @@ export default async function CapaPage({
         eventId={eventId}
         eventStatus={qualityEvent.status}
         initialCapa={scoped.capa}
-        members={memberships.map((membership) => ({
-          id: membership.userId,
-          displayName: membership.user.displayName,
-        }))}
+        members={members}
       />
+
+      <EffectivenessWorkspace
+        organizationId={organizationId}
+        siteId={siteId}
+        eventId={eventId}
+        capaStatus={scoped.capa?.status ?? null}
+        initialEffectiveness={effectiveness}
+        members={members}
+      />
+
+      {effectivenessTimeline?.length ? (
+        <section className="card section">
+          <h2>Effectiveness timeline</h2>
+          <ol className="timeline">
+            {effectivenessTimeline.map((entry) => (
+              <li key={entry.id}>
+                <time>{formatDate(entry.createdAt)}</time>
+                <strong>{entry.action}</strong>
+                <span>
+                  {entry.actorName}
+                  {entry.after.summary ? ` · ${entry.after.summary}` : ""}
+                </span>
+              </li>
+            ))}
+          </ol>
+        </section>
+      ) : null}
 
       <section className="card section">
         <h2>CAPA timeline</h2>
