@@ -57,12 +57,17 @@ describe("reliability analytics", () => {
     expect(sqlText(0)).toContain('AS "excludedIncomplete"');
     expect(sqlText(0)).toContain('wo."startedAt" >= wo."requestedAt"');
     expect(sqlText(0)).toContain("wo.type = 'CORRECTIVE'");
-    expect(sqlText(1)).toContain('SELECT MAX(previous."completedAt")');
-    expect(sqlText(1)).toContain("previous.status = 'COMPLETED'");
-    expect(sqlText(1)).toContain('previous."completedAt" < wo."requestedAt"');
-    expect(sqlText(1)).toContain('AS "previousCompletedAt"');
-    expect(sqlText(1)).toContain('"requestedAt" - "previousCompletedAt"');
-    expect(sqlText(1)).toContain("wo.status <> 'CANCELLED'");
+
+    const mtbfSql = sqlText(1);
+    expect(mtbfSql).toContain("WITH scoped AS MATERIALIZED");
+    expect(mtbfSql).toContain("UNION ALL");
+    expect(mtbfSql).toContain('MAX("repairCompletedAt") OVER');
+    expect(mtbfSql).toContain('PARTITION BY "assetId"');
+    expect(mtbfSql).toContain('ORDER BY "eventAt", "eventKind"');
+    expect(mtbfSql).toContain("ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING");
+    expect(mtbfSql).toContain('"failureRequestedAt" - "previousCompletedAt"');
+    expect(mtbfSql).toContain("status <> 'CANCELLED'");
+    expect(mtbfSql).not.toContain('SELECT MAX(previous."completedAt")');
   });
 
   it("defines missing samples as null KPI values while preserving incomplete-data counts", async () => {
