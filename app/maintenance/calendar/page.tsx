@@ -193,7 +193,7 @@ export default async function MaintenanceCalendarPage({
           </Link>
         </div>
         <p className="muted" style={{ marginBottom: 0 }}>
-          Drag a START or DUE marker to another day. For keyboard planning, open Move under the marker and choose a target date. Every change still goes through the permission-checked and audited work-order API.
+          Drag a START or DUE marker to another day. Moving START also preserves any due-date offset in local calendar days. For keyboard planning, open Move under the marker and choose a target date. Every change still goes through the permission-checked and audited work-order API.
         </p>
         {truncated ? (
           <p className="muted" role="status" style={{ marginBottom: 0 }}>
@@ -297,6 +297,7 @@ export default async function MaintenanceCalendarPage({
                             workOrderId={item.id}
                             field="plannedStart"
                             instant={item.plannedStart?.toISOString() ?? null}
+                            dueAt={item.dueAt?.toISOString() ?? null}
                             sourceDateKey={day.dateKey}
                             label={`START ${item.plannedTime ?? ""}`.trim()}
                           />
@@ -367,6 +368,7 @@ export default async function MaintenanceCalendarPage({
                     workOrderId={workOrder.id}
                     field="plannedStart"
                     instant={null}
+                    dueAt={workOrder.dueAt?.toISOString() ?? null}
                     sourceDateKey={null}
                     label="PLAN"
                   />
